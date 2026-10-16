@@ -220,6 +220,68 @@ if [ -n "${MGMT_KEY}" ]; then
   rm -f /tmp/cpa-probe.$$
 fi
 
+# The dashboard is served from an unauthenticated resource route, so the checks
+# below make sure the shipped page is the tabbed one (accounts first, password
+# dialog for writes) and that its credential-free read model carries every
+# setting the page can write.
+page="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/dashboard" 2>/dev/null || true)"
+page_checks=(
+  'data-tab="accounts"|账号管理 tab'
+  'id="pane-models"|模型 tab'
+  'id="keyList"|Key 余量列表'
+  'id="credModal"|保存密码弹窗'
+)
+# Matching happens in the shell: the page is larger than a pipe buffer, so
+# 'printf | grep -q' would let grep exit early and pipefail would then report the
+# pipeline as failed even on a match.
+for entry in "${page_checks[@]}"; do
+  marker="${entry%%|*}"
+  label="${entry##*|}"
+  if [[ "${page}" == *"${marker}"* ]]; then
+    printf '  PASS  %-46s\n' "dashboard page: ${label}"
+    PASS=$((PASS + 1))
+  else
+    printf '  FAIL  %-46s marker %s missing\n' "dashboard page: ${label}" "${marker}"
+    FAIL=$((FAIL + 1))
+  fi
+done
+if [[ "${page}" == *"只读"* ]]; then
+  printf '  FAIL  %-46s the page still has a read-only mode\n' "dashboard page: editable without a credential"
+  FAIL=$((FAIL + 1))
+else
+  printf '  PASS  %-46s\n' "dashboard page: editable without a credential"
+  PASS=$((PASS + 1))
+fi
+
+editable="$(printf '%s' "${state}" | python3 -c '
+import sys, json
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit
+fields = ["timeout_seconds", "key_cooldown_seconds", "max_retries", "debug"]
+missing = [field for field in fields if field not in payload]
+print("ok" if not missing else "missing:" + ",".join(missing))
+' 2>/dev/null || echo missing)"
+if [ "${editable}" = "ok" ]; then
+  printf '  PASS  %-46s\n' "state carries the editable settings"
+  PASS=$((PASS + 1))
+else
+  printf '  FAIL  %-46s %s\n' "state carries the editable settings" "${editable:-unreadable}"
+  FAIL=$((FAIL + 1))
+fi
+
+if printf '%s' "${state}" | grep -q '"windows"\|"masked"'; then
+  # The state payload may only ever carry masked credentials.
+  if printf '%s' "${state}" | grep -qE '"key"\s*:\s*"oc_sk_[A-Za-z0-9]{16,}"'; then
+    printf '  FAIL  %-46s a full key leaked into the state payload\n' "state payload hides secrets"
+    FAIL=$((FAIL + 1))
+  else
+    printf '  PASS  %-46s\n' "state payload hides secrets"
+    PASS=$((PASS + 1))
+  fi
+fi
+
 echo
 echo "== ${PASS} passed, ${FAIL} failed =="
 [ "${FAIL}" -eq 0 ]
