@@ -31,6 +31,7 @@ type Window struct {
 type Snapshot struct {
 	KeyName string   `json:"key_name"`
 	Masked  string   `json:"masked"`
+	Enabled bool     `json:"enabled"`
 	Windows []Window `json:"windows,omitempty"`
 	Error   string   `json:"error,omitempty"`
 }
@@ -53,20 +54,45 @@ type usageWindow struct {
 	ResetsAt string  `json:"resetsAt"`
 }
 
-// Fetch queries the usage endpoint for every enabled credential. Individual
-// failures are reported per credential rather than failing the whole call.
+// Fetch queries the usage endpoint for every configured credential, including
+// the ones that are currently switched off: the dashboard shows the remaining
+// quota of a key before the operator turns it back on. Individual failures are
+// reported per credential rather than failing the whole call, and the requests
+// run a few at a time so a long key list does not serialise the page load.
 func Fetch(ctx context.Context, settings config.Settings, pool *keys.Pool) []Snapshot {
-	credentials := settings.EnabledKeys()
-	out := make([]Snapshot, 0, len(credentials))
-	for _, credential := range credentials {
-		snapshot := Snapshot{KeyName: credential.Name, Masked: credential.Masked()}
-		windows, errFetch := fetchOne(ctx, settings, credential)
-		if errFetch != nil {
-			snapshot.Error = errFetch.Error()
-		} else {
-			snapshot.Windows = windows
+	credentials := settings.Keys
+	out := make([]Snapshot, len(credentials))
+	const parallelism = 4
+	semaphore := make(chan struct{}, parallelism)
+	done := make(chan int, len(credentials))
+	launched := 0
+	for index, credential := range credentials {
+		out[index] = Snapshot{
+			KeyName: credential.Name,
+			Masked:  credential.Masked(),
+			Enabled: credential.EnabledOrDefault(),
 		}
-		out = append(out, snapshot)
+		if strings.TrimSpace(credential.Key) == "" {
+			out[index].Error = "未配置 Key 内容"
+			continue
+		}
+		launched++
+		go func(index int, credential config.Key) {
+			semaphore <- struct{}{}
+			defer func() { <-semaphore; done <- index }()
+			windows, errFetch := fetchOne(ctx, settings, credential)
+			if errFetch != nil {
+				out[index].Error = errFetch.Error()
+				return
+			}
+			out[index].Windows = windows
+		}(index, credential)
+	}
+	// Every launched worker is drained before returning: the snapshots it writes
+	// must not be handed to the caller while a goroutine still owns an index.
+	// A cancelled context makes fetchOne return promptly, so this cannot block.
+	for range launched {
+		<-done
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].KeyName < out[j].KeyName })
 	_ = pool

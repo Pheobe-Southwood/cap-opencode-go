@@ -316,3 +316,38 @@ func TestModelRowsDoNotRediscoverRenamedModels(t *testing.T) {
 		t.Errorf("renamed rows = %d, discovered rows = %d; want 1 and 1", renamed, discovered)
 	}
 }
+
+// The dashboard is editable without a management credential, so every setting it
+// can write has to be readable from the credential-free state payload — and the
+// payload must never carry a stored secret.
+func TestStatePayloadExposesEditableSettingsWithoutSecrets(t *testing.T) {
+	runtime := New(rolesChat())
+	settings := config.Default()
+	settings.RequestTimeoutSeconds = 321
+	settings.KeyCooldownSeconds = 7
+	settings.MaxRetries = 5
+	settings.Debug = true
+	settings.StateDir = "/tmp/opencode-go-state"
+	settings.Keys = []config.Key{{Name: "main", Key: "oc_sk_super_secret_value_1234", Weight: 2, Enabled: boolPointer(true)}}
+	runtime.applySettings(settings)
+
+	payload := runtime.StatePayload()
+	if payload.TimeoutSeconds != 321 || payload.KeyCooldownSeconds != 7 || payload.MaxRetries != 5 {
+		t.Errorf("timeout/cooldown/retries = %d/%d/%d", payload.TimeoutSeconds, payload.KeyCooldownSeconds, payload.MaxRetries)
+	}
+	if !payload.Debug || payload.StateDir != "/tmp/opencode-go-state" {
+		t.Errorf("debug/state dir = %v/%q", payload.Debug, payload.StateDir)
+	}
+	raw, errMarshal := json.Marshal(payload)
+	if errMarshal != nil {
+		t.Fatalf("marshal payload: %v", errMarshal)
+	}
+	if strings.Contains(string(raw), "oc_sk_super_secret_value_1234") {
+		t.Error("the state payload must never contain a key secret")
+	}
+	if !strings.Contains(string(raw), "oc_sk_su") {
+		t.Error("the masked key should still be reported so the page can identify it")
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
