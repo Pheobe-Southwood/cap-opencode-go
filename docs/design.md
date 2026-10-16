@@ -28,6 +28,37 @@ OpenCode Go 的 37 个模型分布在 4 个上游端点上，若用一个 provid
 仅 `-ldflags -X main.role=…` 不同。代价是插件列表里多三行、配置里多三个 `enabled: true`，
 换来的收益是插件里没有一行协议转换逻辑。
 
+### 2.1 上游协议是硬绑定的（实测矩阵）
+
+合并成一个 `.so` 的前提是"插件自己会翻译"，否则必须让上游接受跨协议调用。2026-10 直接对着
+`https://opencode.ai/inference/go/v1` 探测（每个组合一次极小的真实请求，均带
+`x-opencode-session`，`User-Agent: Go-http-client/1.1`）：
+
+| 模型（协议族） | `/chat/completions` | `/responses` | `/messages` | GenAI `:generateContent` |
+|---|---|---|---|---|
+| `deepseek-v4.1-flash`（chat） | 200 | 200 | 200 | **400 `ModelProtocolUnsupported`** |
+| `claude-haiku-5-5`（messages） | **400** | **400** | 200 | **400** |
+| `grok-4.7`（responses） | **400** | 200 | **400** | **400** |
+| `gemini-4-argon-contributor`（gemini） | **400** | **400** | **400** | 200 |
+| `gpt-6-luna` / `muse-spark-1.3`（responses） | — | 200 | **400** | — |
+
+即：chat 族模型接受 chat / messages / responses 三种协议，**专有协议模型只接受自己那一种**，
+且 gemini 协议只对 gemini 族开放。若把四个面合并成一个声明全部格式的插件，宿主会把客户端协议
+**直通**给插件（第 1 条选择逻辑），于是上面每一个 `400` 组合都会变成客户端可见的失败
+——今天这些组合全部可用，靠的正是宿主按"该面声明的格式"做翻译。
+
+### 2.2 为什么不做真正的单文件合并
+
+- 宿主的注册契约是**一个插件 = 一个 record = 一个 provider = 一组声明格式**
+  （`internal/pluginhost/adapters_executors.go` 里 `seenProviders` / `claimedProviders` 去重，
+  `rpc_schema.go` 的 `Capabilities` 只有一个 executor），没有"一个插件声明多个 provider"的入口；
+- 唯一能让单文件覆盖全部组合的做法是在插件内实现协议转换，而宿主的翻译器在
+  `internal/translator/{openai,claude,codex,gemini}`（约 3.5 万行），外部模块**无法 import 内部包**
+  （`sdk/translator` 本身就依赖 `internal/thinking`），只能整段复制并长期跟随上游演进；
+- 流式保真、`codex` 双向翻译的已知怪癖（见第 5.5 节、README「已知取舍」）都要在插件里重新踩一遍。
+
+因此 v1.5 的取舍是：**保留四个面，把呈现与管理负担收敛到一个产品**（见第 7.7 节）。
+
 ## 3. 共享配置
 
 宿主只把 `plugins.configs.<pluginID>` 交给对应实例，实例之间无法互相读取配置。
@@ -178,6 +209,30 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   所以页面**不做任何自动重试循环**，只在弹窗里提示
 - **状态呈现**：`dirty = countEdits() > 0` 同时驱动三处 —— 保存按钮的高亮与角标、
   标题旁的状态 chip、以及对应 Tab 上的小圆点，保证「有没有没保存的东西」在任何 Tab 都看得见
+
+## 7.7 四个协议面当一个产品管理（v1.5）
+
+宿主的插件列表按 `.so` 文件逐行渲染（`DiscoverPluginFiles` → 每行一个 entry），四行无法从插件侧
+隐藏或合并。能做的是让这四行**读起来是一个产品的四个面**：
+
+- **同一个图标**：`internal/brand` 内嵌 OpenCode 官方 mark（`internal/brand/opencode.svg`，
+  来自 <https://opencode.ai/favicon.svg>，去掉外层包装与无用的 `prefers-color-scheme` 样式块），
+  注册元数据下发 `data:image/svg+xml;base64,…`。宿主的插件行与侧边栏菜单图标都从
+  `Metadata.Logo` 取值，且管理中心的 `VM()` 明确放行 `data:`，所以一处声明同时点亮两处，
+  不需要额外静态资源路由，也不产生网络请求。仪表盘页头与 favicon 复用同一份字符串
+  （`dashboard.Page()` 注入 `__BRAND_MARK__` / `__BRAND_FAVICON__`），三者不会漂移
+- **角色化命名**：`roles.Role.Label` —— 主面是产品名 `OpenCode Go`，从属面追加 `· Responses` /
+  `· Messages` / `· Gemini`；`Metadata.Name` 直接用这个值，单测保证四个名称互不相同、
+  且只有主面可以只叫产品名
+- **零配置从属面**：`configFields(role)` 只对 chat 面返回字段。从属面的配置块只有 `enabled`
+  （加载开关），它们读主面发布的 `shared.json`；把字段列在它们的表单里只会让人以为要配两遍。
+  插件仍保留「`shared.json` 缺失时回退解析自身配置」的旧行为，因此旧配置不会被打破
+- **仪表盘的「协议面」卡片**：`/api/state` 的 `siblings[]` 现在带 `label` / `protocol` / `formats` /
+  `endpoint` / `main` / `model_count` / `models`（每面最多 5 个示例 id），数据全部来自
+  `roles.All` 与 resolver，不增加任何上游调用。页面据此逐面说明"负责什么协议、哪些模型依赖它、
+  是不是配置入口"，并写明四个 `.so` 必须同版本、停用或缺失某面会让该协议族模型无法路由
+- **从属面版本无法在插件侧读取**（从属面不注册管理路由），所以「同版本」只能作为约定写在
+  卡片与 README 里；升级时用 `scripts/install.sh <版本>` 一次装四个
 
 ## 8. 版本兼容
 

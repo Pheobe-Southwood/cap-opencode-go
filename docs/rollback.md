@@ -97,7 +97,24 @@ v1.4（含 1.4.1）只改了页面与只读接口，没有新增任何落盘物�
 
 因此「删除插件 → 没有任何残留」的结论不变，`scripts/uninstall.sh` 也无需改动。
 
-## 8. 常见疑问
+## 8. v1.5 之后仍然零残留
+
+v1.5.0 只改了注册元数据（名称、图标、配置字段声明）与页面呈现，图标是**编译期内嵌**的
+`internal/brand/opencode.svg`（以 data URI 随注册负载下发），没有任何新的落盘物：
+
+| 位置 | v1.5.0 之后 |
+|---|---|
+| `plugins/linux/amd64/*.so` | 只有插件库（v1.5.0 与保留的旧版本） |
+| `data/cap-opencode-go/` | 仍然只有 `shared.json`（+ 可选 `debug.log`） |
+| `config.yaml` | 只多了 2 行说明性注释；写入完全走宿主的配置 API |
+| 浏览器 | 与 v1.4 相同：默认不存任何东西，`sessionStorage` 只在操作者主动勾选时使用 |
+| 插件图标资源 | 不存在独立文件／路由，随 `.so` 一起消失 |
+
+**注意**：三个从属面的 `plugins.configs.<id>` 块不能删——`enabled: true` 是宿主的加载开关，
+删掉它们就等于卸载对应协议族（该族模型随即不可路由）。回滚清单仍与 v1.1.1 一致：
+4 个 `.so` + 4 个 `plugins.configs.*` 块 + `data/cap-opencode-go/`。
+
+## 9. 常见疑问
 
 **会不会影响我原有的 `openai-compatibility` / `gemini` 组？**
 不会。插件只通过 `model_router` 在运行期认领模型 ID，不读写这些配置块。

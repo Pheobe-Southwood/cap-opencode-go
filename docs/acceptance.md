@@ -1,9 +1,142 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.4.1）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.5.0）
 
-> v1.4.1（= v1.4.0 的仪表盘改造 + 一处并行取额度的收尾竞态修复）在生产实例 127.0.0.1:8317
-> 热重载实测：**22 passed, 0 failed**；隔离实例 **26 passed, 0 failed**；
-> 无头浏览器逐条验证了 Tab 默认页、各 Key 剩余额度、保存按钮高亮、密码弹窗与合并写。
-> 下面是本轮的完整记录，其后是历史记录（v1.3.0 别名重命名、v1.2.0、v1.1.1）。
+> v1.5.0（四个协议面的品牌整合：统一 OpenCode 图标、角色化命名、从属面零配置、仪表盘「协议面」卡片）
+> 在生产实例 127.0.0.1:8317 热重载实测：**22 passed, 0 failed**（未提供管理密钥，故 4 项品牌检查跳过）；
+> 隔离实例 **30 passed, 0 failed**；无头浏览器验证了「插件管理」四行的图标与命名、侧边栏入口图标、
+> 仪表盘品牌与协议面卡片（桌面 + 手机）。
+> 下面是本轮的完整记录，其后是历史记录（v1.4.1 仪表盘改造、v1.3.0 别名重命名、v1.2.0、v1.1.1）。
+
+---
+
+## v1.5.0 四个协议面品牌整合（生产实例热重载 + 隔离实例 30 项 + 无头浏览器）
+
+本轮不改变任何协议/路由行为：四个 `.so` 依然各声明一种上游协议，全部协议翻译仍由 CPA 完成。
+改变的是「插件管理」里那四行如何呈现，以及管理负担如何收敛到一个产品（方案与理由见
+[design.md](design.md) §2.1 / §2.2 / §7.7）。
+
+### 1. 生产实例：热重载部署，进程未重启
+
+```
+# 装新版本（新增版本号文件，绝不覆盖已 dlopen 的 .so；旧版本留着随时可回滚）
+$ CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.5.0
+installed /root/cliproxyapi/plugins/linux/amd64/cap-opencode-go-v1.5.0.so
+installed …-responses-v1.5.0.so   installed …-messages-v1.5.0.so   installed …-gemini-v1.5.0.so
+
+# 原地补两行注释（保持 inode），fsnotify → ApplyConfig → 按版本号选中最新的 .so
+$ python3 /tmp/touch_config_150.py
+touched
+$ ls -i config.yaml
+10653636 config.yaml        # inode 前后一致，监听器没有跟丢
+```
+
+| 断言 | 结果 | 证据 |
+|---|---|---|
+| 热重载到 1.5.0 | ✅ | `/api/state` → `version=1.5.0`（改前 `1.4.1`），37 个模型 id 与 Key 池 `[('main', True)]` 不变 |
+| 进程未重启 | ✅ | PID `3194299` 全程不变（`systemctl status` 仍显示 05:21:58 启动、ELAPSED 连续增长），管理页面会话未中断 |
+| 四个面都真的换了 | ✅ | 热重载后立刻跑验收：chat / responses / gemini 三个协议族的直连与跨协议调用全部 200（messages 族因操作者关闭了全部 messages 模型而 SKIP，与 v1.4.1 相同）。热重载不重打 `pluginhost: plugin registered` 日志，所以这里以「各族请求真的通」为准 |
+| 生产页面 = 仓库源码 | ✅ | 用 `go run` 生成 `dashboard.Page("cap-opencode-go","chat")` 与生产 `GET /v0/resource/plugins/cap-opencode-go/dashboard` **字节一致**（各 96 460 bytes，`diff` 退出码 0） |
+| 品牌已在生产页面生效 | ✅ | 生产 HTML 含 `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,…">`、`class="brand-mark"`（3 处）与「协议面」卡片标记 |
+| 配置只被注释动过 | ✅ | sha256 `e4b5c63c…` → `28a8cf3f…`，inode 未变；新增内容就是 2 行 `# (v1.5.0: …)` 注释 |
+| 无残留 | ✅ | `data/cap-opencode-go/` 仍然只有 `shared.json`；插件目录 21 个 `.so`（v1.2.0 / v1.3.0 / v1.4.0 / v1.4.1 / v1.5.0 四份 + 用量插件） |
+| 官方验收脚本 | ✅ | **22 passed, 0 failed** |
+
+```
+$ CPA_BASE=http://127.0.0.1:8317 CPA_CLIENT_KEY=sk-… bash scripts/acceptance.sh
+served models: chat=CatJam responses=gpt-6-luna gemini=gemini-4-argon messages=none
+
+  PASS  chat/completions non-stream                    200  444 bytes
+  PASS  chat/completions stream                        200  1202 bytes
+  PASS  chat model via claude client                   200  274 bytes
+  PASS  chat model via responses client                200  854 bytes
+  PASS  responses non-stream                           200  2854 bytes
+  PASS  responses stream                               200  11153 bytes
+  PASS  responses model via chat client                200  540 bytes
+  PASS  responses model via claude client              200  2076 bytes
+  PASS  gemini generateContent                         200  574 bytes
+  PASS  gemini streamGenerateContent                   200  1202 bytes
+  PASS  gemini model via chat client                   200  374 bytes
+  SKIP  messages family                                no messages model enabled
+  PASS  /v1/models catalogue                           16 models
+  PASS  dashboard state resource … PASS  state payload hides secrets
+
+== 22 passed, 0 failed ==
+```
+
+（生产实例没有可用的管理密钥明文，故新增的 4 项品牌检查在生产运行时跳过；它们由隔离实例覆盖。）
+
+### 2. 隔离实例：30 passed, 0 failed
+
+隔离实例 `127.0.0.1:8399`：v8.0.27 + 插件 v1.5.0，配置同生产（同一个 Key、同一批模型设置），
+额外把唯一的 messages 模型 `claude-haiku-5-5` 打开、把偶发上游地域限制的 `cat-jam-free` 关掉，
+因此四个协议族全部被真实请求覆盖：
+
+```
+served models: chat=DeepSeek-V4.1-Flash responses=gpt-6-luna gemini=gemini-4-argon messages=claude-haiku-5-5
+
+  PASS  chat/completions non-stream / stream · chat model via claude client · chat model via responses client
+  PASS  responses non-stream / stream · responses model via chat client · responses model via claude client
+  PASS  gemini generateContent / streamGenerateContent · gemini model via chat client
+  PASS  messages non-stream / stream
+  PASS  /v1/models catalogue                           16 models
+  PASS  sidebar menu entry                             OpenCode Go /v0/resource/plugins/cap-opencode-go/dashboard
+  PASS  plugin faces                                   cap-opencode-go(-gemini|-messages|-responses)
+  PASS  plugin icon                                    same data:icon on all four rows
+  PASS  plugin names                                   OpenCode Go / · Gemini / · Messages / · Responses
+  PASS  plugin config                                  main 14 fields, siblings 0
+  PASS  dashboard state resource · live model list resource (37) · quota resource · management protocol probe
+  PASS  dashboard page: 账号管理 tab / 模型 tab / Key 余量列表 / 保存密码弹窗 / editable without a credential
+  PASS  state carries the editable settings · state payload hides secrets
+
+== 30 passed, 0 failed ==
+```
+
+四行品牌检查各自证明什么：
+
+| 检查 | 证明 |
+|---|---|
+| `plugin faces` | `/v8/management/plugins` 里四个 id 齐全（不是三个也不是五个） |
+| `plugin icon` | 四行的 `logo` 都以 `data:image/svg+xml;base64,` 开头 —— 同一个内嵌 OpenCode mark |
+| `plugin names` | `metadata.name` 恰好是 `OpenCode Go` / `· Responses` / `· Messages` / `· Gemini` |
+| `plugin config` | 主面 14 个配置字段、三个从属面 0 个 —— 「只有主插件要配置」在接口层成立 |
+
+### 3. 无头浏览器实测（真实管理中心 + 插件 iframe）
+
+隔离实例上用 Playwright 打开 `management.html` → 登录 → 「插件管理」→ 侧边栏 `OpenCode Go`：
+
+| 断言 | 结果 | 证据 |
+|---|---|---|
+| 插件管理四行都显示 OpenCode 图标 | ✅ | 四个 `article` 各有一个 36px 图标盒，`img.src` 是 data URI 且 `img.complete && naturalWidth > 0`（真的解码成图，不是坏图占位） |
+| 四行名称一眼可辨 | ✅ | 行标题依次 `OpenCode Go`、`OpenCode Go · Gemini`、`OpenCode Go · Messages`、`OpenCode Go · Responses` |
+| 侧边栏入口同源同图 | ✅ | 侧边栏 `OpenCode Go` 链接内 `<img src="data:image/svg+xml;base64,…">`，同样加载成功 |
+| 仪表盘品牌 | ✅ | `<title>OpenCode Go</title>`、`.brand-mark svg` 实测 26×26 CSS px、`link[rel=icon]` 是同一 data URI |
+| 「协议面」卡片 | ✅ | 四张卡：主面标「配置入口」，从属面标「零配置」；每卡显示协议（`OpenAI Chat Completions` / `OpenAI Responses（Codex）` / `Anthropic Messages` / `Google GenAI`）、声明格式（`openai` / `codex + openai-response` / `claude` / `gemini`）、上游端点、插件 ID、provider、承载模型数与示例 id，以及"缺失即该族模型不可路由"的说明 |
+| 手机端 | ✅ | 390×844：协议面单列（`grid-template-columns` 只有 1 列）、4 张卡、无横向溢出；工具栏图标 26px，「配置入口」标签不换行挤压 |
+| 页面无脚本错误 | ✅ | `pageerror` 与 `console.error` 均为空（桌面与手机两次登录都没有） |
+
+### 4. 截图
+
+`docs/screenshots/`：`plugin-list.png`（插件管理四行 + 图标）、`desktop-accounts.png`、
+`desktop-models.png`、`desktop-status.png`（协议面卡片）、`desktop-settings.png`、
+`desktop-save-password.png`、`mobile-accounts.png`、`mobile-models.png`、`mobile-model-settings.png`、
+`mobile-save-password.png`、`mobile-status.png`（手机端协议面）。
+
+### 5. 顺带坐实的上游事实（本轮为决策做的探测）
+
+合并成一个 `.so` 的前提是"插件自己会翻译"，否则跨协议请求必须被上游接受。2026-10 直接对
+`https://opencode.ai/inference/go/v1` 逐个组合探测（每组合一次极小真实请求，带
+`x-opencode-session` 与 `User-Agent: Go-http-client/1.1`，否则 Cloudflare 会先挡）：
+
+| 模型（协议族） | `/chat/completions` | `/responses` | `/messages` | GenAI |
+|---|---|---|---|---|
+| `deepseek-v4.1-flash`（chat） | 200 | 200 | 200 | **400** |
+| `claude-haiku-5-5`（messages） | **400** | **400** | 200 | **400** |
+| `grok-4.7`（responses） | **400** | 200 | **400** | **400** |
+| `gemini-4-argon-contributor`（gemini） | **400** | **400** | **400** | 200 |
+
+失败一律是 `400 ModelProtocolUnsupported`。即：chat 族通吃 chat/messages/responses，
+专有协议模型只吃自己那一种，gemini 协议只对 gemini 族开放 —— 所以"单文件合并 + 宿主直通"会让
+上表每个 400 组合从"现在能用"变成"客户端报错"，只剩"在插件里重写协议转换"一条路（约 3.5 万行，
+且被 `internal/` 挡住无法复用）。结论与取舍记录在 [design.md](design.md) §2.1–2.2。
 
 ---
 

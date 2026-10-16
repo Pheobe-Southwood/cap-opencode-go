@@ -53,6 +53,13 @@ CPA 的插件 executor 以**声明式协议格式**工作：插件声明自己�
 其余三个实例按 mtime 惰性读取。四个实例都声明 `model_router`，只认领自己协议族且被启用的模型，
 因此可以稳定压过内置 provider 的同名模型（例如现网由 codex OAuth 提供的 `gpt-6-luna`）。
 
+**v1.5 起，「插件管理」里的四行读起来是一个产品的四个协议面**：四个 `.so` 声明同一个
+OpenCode 图标（`internal/brand` 内嵌的官方 mark，以 data URI 下发，侧边栏入口同源同图）、
+名称分别是 `OpenCode Go` / `OpenCode Go · Responses` / `OpenCode Go · Messages` / `OpenCode Go · Gemini`，
+并且**只有主插件声明配置字段**——另外三个的配置块只有 `enabled`，它们读主插件发布的共享快照，
+把字段列在它们的表单里只会误导。四个面必须同版本安装；面的职责、承载模型与缺失后果在仪表盘
+「状态 → 协议面」里逐面写明。为什么不能合并成一个 `.so` 见 [docs/design.md](docs/design.md)。
+
 数据流：
 
 ```
@@ -209,7 +216,7 @@ models:
 |---|---|
 | **账号管理**（默认） | 汇总条（启用 Key 数 / 最低剩余 / 冷却中 / 余量更新时间）；每个 Key 一张卡片：名称、掩码、健康状态、权重、启用开关、移除，以及 5 小时 / 本周 / 本月三条**剩余**进度条（含重置时间）；折叠的「添加 Key」表单；底部「轮换与故障转移」摘要 |
 | **模型** | 统计 chip（模型 id / 本实例提供 / 已关闭 / 上游新增 / 已下线 / 已修改，点一下即按它筛选）；搜索 + 协议 + 状态筛选、「启用/停用筛选结果」、「从上游刷新」；每个模型一行，点「设置」展开别名 / 上游协议 / 代理 / 探测协议 / 恢复默认 |
-| **状态** | 运行状态（版本、协议族、Base URL、Session、代理、状态文件、启动时间与运行时长）；上游模型列表（数量、拉取时间、结果）；4 个插件实例；「关于与帮助」 |
+| **状态** | 运行状态（版本、协议族、Base URL、Session、代理、状态文件、启动时间与运行时长）；上游模型列表（数量、拉取时间、结果）；**协议面**卡片（四个 `.so` 各自的协议、插件 ID、承载模型、配置归属与缺失后果）；「关于与帮助」 |
 | **设置** | Base URL、Session、代理、超时/冷却/重试、状态目录与调试日志；底部「待保存的修改」逐条列出本次改动，可一键放弃 |
 
 保存按钮：**没有改动时是灰的；一旦有改动就亮起来**，角标显示改动条数（`保存 3`），
@@ -223,9 +230,40 @@ models:
 |---|---|---|
 | ![状态](docs/screenshots/desktop-status.png) | ![设置](docs/screenshots/desktop-settings.png) | ![保存密码](docs/screenshots/desktop-save-password.png) |
 
+| 桌面端 · 状态 | 桌面端 · 设置 | 保存前弹出密码框 |
+|---|---|---|
+| ![状态](docs/screenshots/desktop-status.png) | ![设置](docs/screenshots/desktop-settings.png) | ![保存密码](docs/screenshots/desktop-save-password.png) |
+
+| 「插件管理」里的四个协议面 | 手机端 · 协议面 |
+|---|---|
+| ![插件管理](docs/screenshots/plugin-list.png) | ![手机协议面](docs/screenshots/mobile-status.png) |
+
 | 手机端 · 账号管理 | 手机端 · 模型 | 手机端 · 逐模型设置 | 手机端 · 密码框 |
 |---|---|---|---|
 | ![手机账号](docs/screenshots/mobile-accounts.png) | ![手机模型](docs/screenshots/mobile-models.png) | ![手机模型设置](docs/screenshots/mobile-model-settings.png) | ![手机密码](docs/screenshots/mobile-save-password.png) |
+
+### 插件管理里的四个协议面（v1.5）
+
+CPA 的插件列表是「一个 `.so` 一行」，而本插件按上游协议族拆成四个 `.so`，于是那里会出现四行。
+这四行现在被组织成一个产品的四个面，而不是四个要分别照管的插件：
+
+| 行 | 协议 | 需要配置吗 | 这只面负责 |
+|---|---|---|---|
+| `OpenCode Go` | `openai` → `/chat/completions` | **是（唯一配置入口）** | Key 池、29 个 chat 模型、仪表盘与全部设置 |
+| `OpenCode Go · Responses` | `codex` + `openai-response` → `/responses` | 否（零配置） | Grok / GPT / Muse 系模型 |
+| `OpenCode Go · Messages` | `claude` → `/messages` | 否（零配置） | Claude 系模型 |
+| `OpenCode Go · Gemini` | `gemini` → `models/{id}:generateContent` | 否（零配置） | Gemini 系模型 |
+
+- **图标**：四行与侧边栏入口都用 OpenCode 官方 mark（`internal/brand/opencode.svg`，
+  取自 <https://opencode.ai/favicon.svg>，以 `data:image/svg+xml;base64,…` 内嵌下发，
+  不依赖任何外部请求）。OpenCode 图标 © SST（MIT），此处仅用于标识本插件对接的上游服务。
+- **零配置**：三个从属面的 `plugins.configs.<id>` 只需要 `enabled: true`；它们的配置字段不再出现在
+  表单里（`configFields()` 只对主面返回字段）。旧配置里写在从属面的字段仍会被解析，但只有
+  `shared.json` 缺失时才会被使用，正常运行时以主面发布的快照为准。
+- **同版本**：四个 `.so` 必须一起升级。从属面不注册管理路由，插件侧读不到它们的版本，
+  因此这条只能靠约定——升级时把四个文件一起换掉（`scripts/install.sh <版本>` 一次装四个）。
+- **缺失/停用的后果**：该协议族的模型无法路由（例如停用 `…-gemini` 后 Gemini 族模型不可用），
+  其它协议族不受影响。「状态 → 协议面」里逐面标注了这一条。
 
 ### 保存与密码（v1.4 起没有「只读」模式）
 
@@ -353,8 +391,9 @@ CPA_MGMT_KEY=mgmt-key \
 bash scripts/acceptance.sh
 ```
 
-26 项检查覆盖 4 个协议族的流式/非流式、跨协议调用、模型目录、侧边栏入口、状态与额度接口，
-以及仪表盘页面本身（Tab 骨架、账号管理、密码弹窗、无只读模式）与状态接口是否携带可编辑字段、是否隐藏密钥。
+30 项检查覆盖 4 个协议族的流式/非流式、跨协议调用、模型目录、侧边栏入口、状态与额度接口、
+四个协议面的品牌元数据（同一个图标、四个名称、只有主面带配置字段），以及仪表盘页面本身
+（Tab 骨架、账号管理、密码弹窗、无只读模式）与状态接口是否携带可编辑字段、是否隐藏密钥。
 在 v8.0.27 上的实测结果见 [docs/acceptance.md](docs/acceptance.md)。
 
 ---
@@ -368,7 +407,8 @@ internal/plugin/       RPC 分发、注册、模型路由、executor、管理页
 internal/upstream/     上游 HTTP、逐模型传输、失败切换
 internal/keys/         Key 池：加权轮询与冷却
 internal/config/       配置解析、默认值、共享快照
-internal/roles/        4 个协议族的路径与格式定义
+internal/roles/        4 个协议族的路径、格式与展示名
+internal/brand/        OpenCode 图标（内嵌 SVG）与产品名 / 仓库地址（唯一品牌来源）
 internal/models/       模型目录（id → 协议族）
 internal/quota/        /usage 额度读取
 internal/dashboard/    内置中文仪表盘（embed 字符串）
@@ -379,6 +419,21 @@ docs/                  design / rollback / acceptance
 ---
 
 ## 11. 变更记录
+
+### 1.5.0
+
+- **四个协议面读起来是一个产品**：「插件管理」里四行现在共用 OpenCode 官方图标
+  （内嵌 SVG 的 data URI，插件行与侧边栏入口同源同图），名称改为
+  `OpenCode Go` / `· Responses` / `· Messages` / `· Gemini`
+- **从属面零配置**：只有主插件声明配置字段，三个从属面的表单不再列出无效字段
+  （它们读主插件发布的 `shared.json`，自身配置块只需要 `enabled`）
+- 仓库链接修正为实际的 GitHub 仓库，并从 `internal/brand` 统一注入插件元数据与仪表盘
+- 仪表盘「状态」页把「插件实例」升级为「**协议面**」卡片：逐面显示协议 / 声明格式 / 上游端点 /
+  插件 ID / provider / 承载模型与示例 id，并区分「配置入口」与「零配置」，
+  写明“四个 `.so` 必须同版本、停用或缺失某面会让该协议族模型无法路由”
+- 「账号管理」汇总条新增「协议面 4 个」；工具栏与 favicon 使用同一 OpenCode mark
+- 验收脚本新增 4 项品牌检查（四行齐全、图标一致、名称正确、只有主面带配置字段），
+  隔离实例 30 项全过
 
 ### 1.4.1
 
