@@ -1,4 +1,61 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.2.0）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.3.0）
+
+> v1.3.0 在生产实例 127.0.0.1:8317 实测：**15 passed, 0 failed**（messages 协议族仍因操作者
+> 关闭了 `claude-haiku-5-5` 而 SKIP）。本轮把别名从「额外注册一个 id」改成**重命名**，
+> 因此重点验收「模型列表与路由都只认别名」，并顺带验证了**不重启服务的配置热重载**。
+
+## v1.3.0 别名重命名验收（生产实例，热重载，未重启进程）
+
+部署方式：`scripts/install.sh 1.3.0` 把 4 个新 `.so` 放进插件目录（**保留** v1.2.0 的 4 个文件），
+然后**原地**（保持 inode）在 config.yaml 的插件块上方补一行版本注释 → fsnotify 检测到内容变化 →
+`pluginHost.ApplyConfig` 重新扫描插件目录 → 按版本号选中 1.3.0 并热加载。进程始终是同一个：
+
+```
+PID 3194299  STARTED Fri Oct 16 05:21:57 2026  ELAPSED 12:32   # 整个替换过程未重启
+```
+
+| 断言 | 结果 | 证据 |
+|---|---|---|
+| 别名取代原名（HTTP 列表） | ✅ | `/v1/models` 从 16 项变 15 项：有 `gemini-4-argon`，**没有** `gemini-4-argon-contributor` |
+| 别名取代原名（Gemini 列表） | ✅ | `/v1beta/models` 只返回一条 `models/gemini-4-argon`；v1.2.0 时是两条同名的 `models/gemini-4-argon-contributor` |
+| 别名仍然真实可用 | ✅ | `POST /v1beta/models/gemini-4-argon:generateContent` → **200**，上游回显 `"modelVersion":"gemini-4-argon-contributor"` |
+| 原名不再可调用 | ✅ | `POST /v1beta/models/gemini-4-argon-contributor:generateContent` → **400** `model_not_found`（`unknown provider for model …`） |
+| 改写在执行层发生 | ✅ | 隔离实例 `debug: true` 的 trace：`requested=gemini-4-argon` / `upstream=gemini-4-argon-contributor` |
+| 仪表盘一行一个真实模型 | ✅ | `/api/state`：`version=1.3.0`，37 行；`{id: gemini-4-argon-contributor, client_ids: [gemini-4-argon], aliased: true}`，无独立别名行 |
+| 官方验收脚本 | ✅ | `gemini=gemini-4-argon`（脚本改为取 `client_ids[0]`）；**15 passed, 0 failed** |
+| 零残留不变 | ✅ | 未新增任何落盘物：仍只有 `data/cap-opencode-go/shared.json`（+ 可选 `debug.log`），别名只存在宿主拥有的 config.yaml 里 |
+
+```
+$ CPA_BASE=http://127.0.0.1:8317 CPA_CLIENT_KEY=sk-… bash scripts/acceptance.sh
+== OpenCode Go acceptance @ http://127.0.0.1:8317 ==
+served models: chat=deepseek-v4-pro responses=gpt-6-luna gemini=gemini-4-argon messages=none
+
+  PASS  chat/completions non-stream                    200  553 bytes
+  PASS  chat/completions stream                        200  2829 bytes
+  PASS  chat model via claude client                   200  279 bytes
+  PASS  chat model via responses client                200  875 bytes
+  PASS  responses non-stream                           200  1086 bytes
+  PASS  responses stream                               200  11753 bytes
+  PASS  responses model via chat client                200  531 bytes
+  PASS  responses model via claude client              200  2042 bytes
+  PASS  gemini generateContent                         200  571 bytes
+  PASS  gemini streamGenerateContent                   200  1206 bytes
+  PASS  gemini model via chat client                   200  374 bytes
+  SKIP  messages family                                no messages model enabled
+  PASS  /v1/models catalogue                           15 models
+  PASS  dashboard state resource
+  PASS  live model list resource                       upstream 37 models
+  PASS  quota resource
+
+== 15 passed, 0 failed ==
+```
+
+回滚路径（同样不用重启）：删除插件目录里的 `cap-opencode-go*-v1.3.0.so`，再原地补一行注释 →
+热重载回 v1.2.0。v1.2.0 的 `.so` 一直留在原地就是为了这个。
+
+---
+
+# 验收记录（插件 v1.2.0）
 
 > v1.2.0 在生产实例 127.0.0.1:8317 实测：**15 passed, 0 failed**（同上基线，消息协议族仍因
 > 操作者关闭了 `claude-haiku-5-5` 而 SKIP）。本轮新增的接口（协议探测）是管理鉴权路由，
