@@ -109,8 +109,12 @@ if typeStr != "response.completed" && typeStr != "response.incomplete" { return 
   因此它既不会成为新的免鉴权写入面，也不会被跨站页面触发
 - `models` 里出现的、目录里没有的 id 会被**自动纳入可服务集合**（协议族取配置值或推断值），
   因此上游上新模型时无需重新编译
-- 别名在解析层展开：`Resolver` 同时注册别名条目，`Upstream()` 把别名映射回真实 id，
-  执行器据此改写请求体里的 `model` 字段；真实 id 永远优先于别名
+- 别名是**重命名**（对齐 CPA 自己的模型别名语义）：`Resolver` 用一个别名条目**替换**原名条目，
+  `Entry.BaseID` 记住被替换的真实 id，`Upstream()` 把别名映射回它，执行器据此改写请求体里的
+  `model` 字段（gemini 改 URL 路径）。原名不再注册、不再认领，因此模型列表与路由都只认别名
+- 多个别名 = 同一模型的多个对外名（CPA「同一 name 重复配不同 alias」的等价物）；
+  真实模型 id 永远优先于别名：冲突的别名被拒绝并记录在 `Resolver.Shadowed()`（值为声明它的模型 id），
+  某个模型的别名若全部被拒绝，它保留自己的原名继续提供。仪表盘按 `BaseID` 归组，一个真实模型一行
 
 ## 6. 模型认领（model_router）
 

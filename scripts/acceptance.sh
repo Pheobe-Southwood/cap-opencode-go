@@ -68,8 +68,11 @@ try:
 except Exception:
     raise SystemExit
 for row in payload.get("models", []):
-    if row.get("enabled") and row.get("family") == family and not row.get("is_alias"):
-        print(row["id"])
+    if row.get("enabled") and row.get("family") == family:
+        # An alias replaces the model id, so the id clients must call is the
+        # first client-facing one; the configured id is only the config key.
+        clients = row.get("client_ids") or []
+        print(clients[0] if clients else row["id"])
         break
 ' "$1" 2>/dev/null || true
 }

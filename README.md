@@ -9,7 +9,8 @@
 - 侧边栏「插件」组内出现 `OpenCode Go` 入口，与 token 用量插件平级
 - **界面跟随管理中心的深色/浅色主题**（实时同步），并在手机宽度下自动改为单列卡片布局
 - **插件页不需要密码**：写入凭据直接复用管理中心已经存好的登录态，插件自己不保存任何密码
-- **逐模型别名**：模型列表从上游 `/models` 接口实时拉取，每个模型都能定义任意别名
+- **逐模型别名（重命名语义）**：别名会**替代**原名成为唯一的对外模型 id，模型列表与路由都只认别名，
+  与 CPA 自身的模型别名行为一致
 - 逐模型选择是否走代理（直连 / 代理），真实生效
 - **逐模型「设置」按钮**：别名 / 协议 / 代理收进展开面板，折叠时用 chip 显示已改动的项
 - **模型搜索框 + 吸顶筛选行**：按 ID / 名称 / 别名搜索，按协议族与状态过滤
@@ -79,7 +80,7 @@ CPA 的插件 executor 以**声明式协议格式**工作：插件声明自己�
 export PATH=/opt/go/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 
-make build VERSION=1.2.0   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.2.0.so
+make build VERSION=1.3.0   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.3.0.so
 make test           # 单元测试
 make vet
 ```
@@ -92,7 +93,7 @@ make vet
 ## 4. 安装
 
 ```bash
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.2.0
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.3.0
 ```
 
 脚本只做两件事：把 4 个 `.so` 复制到 `$CPA_ROOT/plugins/linux/amd64/`，并打印需要粘贴的 YAML。
@@ -161,23 +162,33 @@ plugins:
 `gemini-4-argon-contributor` 实测**必须直连**；`gpt-6-luna` / `grok-4.7` 等 responses 家族
 实测**必须走代理**（直连返回 `403 unsupported_country_region_territory`），因此安装示例里已分别设置。
 
-### 模型别名
+### 模型别名（重命名）
 
-给模型配别名后，客户端既可以用原名也可以直接用别名调用，别名与原模型共享协议、代理与 Key：
+别名是**重命名**，不是新增：配置后客户端只能看到、也只能调用别名，原名在模型列表与路由上都不再存在。
+这与 CPA 自身的模型别名（`oauth-model-alias` 的 `alias`、`openai-compatibility` 的 `alias`）行为一致 ——
+上游仍然是原名，客户端只认别名，别名继承基础模型的协议族、代理与 Key：
 
 ```yaml
 models:
+  "deepseek-v4.1-flash":
+    aliases: ["DeepSeek-V4.1-Flash"]   # 数组；仪表盘里用逗号分隔填写
   "grok-4.7":
     enabled: true
     proxy: proxy
-    aliases: ["grok", "grok4"]      # 数组；仪表盘里用逗号分隔填写
+    aliases: ["grok", "grok4"]         # 多个别名 = 同一模型的多个对外名
 ```
 
-- 别名会被注册进 `/v1/models`（`owned_by: opencode`），因此可以直接被客户端发现
-- 路由阶段按别名认领，执行阶段由插件把请求体里的 `model` 改写成真实上游 id
-- 别名与真实模型 id 冲突时**真实 id 优先**，冲突会以「别名被占用」标记显示在仪表盘上
+上例中 `/v1/models` 只会列出 `DeepSeek-V4.1-Flash`、`grok` 与 `grok4`；
+请求 `deepseek-v4.1-flash` 会得到 `400 model_not_found`，因为该 id 已经不存在了。
+
+- 别名会注册进 `/v1/models`（`owned_by: opencode`）与 `/v1beta/models`（gemini 客户端的 `models/<别名>`）
+- 路由阶段按别名认领，执行阶段由插件把请求体里的 `model`（gemini 是 URL 路径）改写成真实上游 id
+- 多个别名等价于 CPA 的「同一 name 重复配不同 alias」：一个上游模型对外暴露多个名字
+- 别名与**任何真实模型 id** 冲突时**真实 id 优先**：该别名被忽略并在仪表盘标记「别名被占用」；
+  若某模型的别名全部被忽略，它保留自己的原名继续提供（不会凭空消失）
 - 关闭某模型时，它的别名一并失效
 - 别名不会跨协议族：别名继承基础模型的协议族（例如 `responses`）
+- 仪表盘里每个真实模型只有一行，行上直接显示「对外 id」；别名一栏填写后原名即被替换
 
 > 上游新增的模型（`/api/models` 里标记「上游新增」）默认**不启用**。在仪表盘上给它选一个「上游协议」并打开开关即可使用，无需重新编译插件。
 
@@ -315,6 +326,15 @@ docs/                  design / rollback / acceptance
 ---
 
 ## 11. 变更记录
+
+### 1.3.0
+
+- **别名改为重命名语义**：`models.<id>.aliases` 现在会**替代**原名 —— 别名是唯一的对外 id，
+  `/v1/models` 与 `/v1beta/models` 只列出别名，原名请求返回 `400 model_not_found`，
+  与 CPA 自身的模型别名（`alias` / `oauth-model-alias`）一致
+- 多个别名 = 同一上游模型的多个对外名；别名继承协议族、代理、Key 与启用开关
+- 真实模型 id 仍然优先：冲突的别名被忽略并标注「别名被占用」，别名全部被忽略时模型保留原名
+- 仪表盘：每个真实模型一行，行上显示「对外 id」，别名输入框注明「填写后原名不再对外提供」
 
 ### 1.2.0
 

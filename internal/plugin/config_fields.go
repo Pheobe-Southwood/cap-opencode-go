@@ -9,7 +9,7 @@ func configFields() []pluginapi.ConfigField {
 	return []pluginapi.ConfigField{
 		{Name: "base-url", Type: pluginapi.ConfigFieldTypeString, Description: "OpenCode Go 接口基址，默认 https://opencode.ai/inference/go/v1。"},
 		{Name: "keys", Type: pluginapi.ConfigFieldTypeArray, Description: "多账号 Key 列表：[{name, key, weight, enabled}]。"},
-		{Name: "models", Type: pluginapi.ConfigFieldTypeObject, Description: "逐模型设置：{\"<model-id>\": {enabled, proxy, family}}，proxy 取 inherit/proxy/direct。"},
+		{Name: "models", Type: pluginapi.ConfigFieldTypeObject, Description: "逐模型设置：{\"<model-id>\": {enabled, proxy, family, aliases}}，proxy 取 inherit/proxy/direct。aliases 会替代原名对外提供（多个别名 = 同一模型的多个对外名）。"},
 		{Name: "models-default", Type: pluginapi.ConfigFieldTypeObject, Description: "未单独列出的模型使用的默认设置。"},
 		{Name: "default-proxy", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"inherit", "proxy", "direct"}, Description: "模型未指定代理时的默认策略。"},
 		{Name: "proxy-url", Type: pluginapi.ConfigFieldTypeString, Description: "插件使用的代理地址；留空则继承 CPA 的全局 proxy-url。"},

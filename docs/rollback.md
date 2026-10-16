@@ -69,7 +69,21 @@ v1.2.0 只改了页面代码与新增一个**由插件自己声明的管理路�
 
 因此回滚清单与 v1.1.1 完全一致：4 个 `.so` + 4 个 `plugins.configs.*` 块 + `data/cap-opencode-go/`。
 
-## 6. 常见疑问
+## 6. v1.3.0 之后仍然零残留
+
+v1.3.0 只改了内存里的**解析结果**与页面渲染，没有任何新的落盘物：
+
+| 新东西 | 卸载后 |
+|---|---|
+| 别名重命名（`Entry.BaseID`、`Resolver.Shadowed()` 归属） | 纯内存结构，随进程消失 |
+| `/api/models` 的 `client_ids` / `aliased` / `shadowed_aliases` 字段 | 只是响应体里的字段，不写任何文件 |
+| 页面显示「对外 id」 | 只存在于 `.so` 里的 HTML 字符串 |
+
+别名本身仍然只写在宿主拥有的 `config.yaml`（`plugins.configs.cap-opencode-go.models.<id>.aliases`）里，
+插件从不写 config.yaml，也不为别名建立任何索引文件或缓存。
+因此回滚清单与 v1.1.1 / v1.2.0 完全一致：4 个 `.so` + 4 个 `plugins.configs.*` 块 + `data/cap-opencode-go/`。
+
+## 7. 常见疑问
 
 **会不会影响我原有的 `openai-compatibility` / `gemini` 组？**
 不会。插件只通过 `model_router` 在运行期认领模型 ID，不读写这些配置块。
