@@ -210,6 +210,9 @@ models:
 |---|---|---|
 | ![手机端](docs/screenshots/mobile-models.png) | ![手机端设置](docs/screenshots/mobile-model-settings.png) | ![桌面端](docs/screenshots/desktop.png) |
 
+> 截图为 v1.2.0 界面。v1.3.0 起别名是**重命名**：`gemini-4-argon-contributor` 不再单独成行，
+> 而是同一行上显示「对外 `gemini-4-argon`」，别名输入框也标注了「填写后原名不再对外提供」。
+
 - **模型与别名**（页面第一块）：搜索框（ID / 名称 / 别名）、协议筛选、状态筛选、
   「启用/停用筛选结果」批量操作、「从上游刷新」；筛选行在滚动时吸顶
 - **逐模型设置**：默认只显示「显示名 + 状态/协议 chip + 上游 id + 启用开关 + 设置按钮」，
