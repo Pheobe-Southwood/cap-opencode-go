@@ -80,7 +80,7 @@ CPA 的插件 executor 以**声明式协议格式**工作：插件声明自己�
 export PATH=/opt/go/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 
-make build VERSION=1.3.0   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.3.0.so
+make build VERSION=1.4.1   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.4.1.so
 make test           # 单元测试
 make vet
 ```
@@ -93,7 +93,7 @@ make vet
 ## 4. 安装
 
 ```bash
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.3.0
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.4.1
 ```
 
 脚本只做两件事：把 4 个 `.so` 复制到 `$CPA_ROOT/plugins/linux/amd64/`，并打印需要粘贴的 YAML。
@@ -203,44 +203,55 @@ models:
 
 侧边栏「插件」组 → `OpenCode Go`（iframe，路径 `/v0/resource/plugins/cap-opencode-go/dashboard`）。
 
-页面结构：**顶部操作栏**（标题 + 同步状态 + 「重载」「保存」）→ 运行状态（可折叠）→ 模型与别名 →
-额度余量 → Key 池 → 插件实例 → 高级设置。
+页面分 4 个 Tab，**默认打开「账号管理」**——打开页面第一眼就是各 Key 的剩余额度：
 
-| 手机端（模型列表） | 手机端（逐模型设置） | 桌面端 |
+| Tab | 内容 |
+|---|---|
+| **账号管理**（默认） | 汇总条（启用 Key 数 / 最低剩余 / 冷却中 / 余量更新时间）；每个 Key 一张卡片：名称、掩码、健康状态、权重、启用开关、移除，以及 5 小时 / 本周 / 本月三条**剩余**进度条（含重置时间）；折叠的「添加 Key」表单；底部「轮换与故障转移」摘要 |
+| **模型** | 统计 chip（模型 id / 本实例提供 / 已关闭 / 上游新增 / 已下线 / 已修改，点一下即按它筛选）；搜索 + 协议 + 状态筛选、「启用/停用筛选结果」、「从上游刷新」；每个模型一行，点「设置」展开别名 / 上游协议 / 代理 / 探测协议 / 恢复默认 |
+| **状态** | 运行状态（版本、协议族、Base URL、Session、代理、状态文件、启动时间与运行时长）；上游模型列表（数量、拉取时间、结果）；4 个插件实例；「关于与帮助」 |
+| **设置** | Base URL、Session、代理、超时/冷却/重试、状态目录与调试日志；底部「待保存的修改」逐条列出本次改动，可一键放弃 |
+
+保存按钮：**没有改动时是灰的；一旦有改动就亮起来**，角标显示改动条数（`保存 3`），
+标题旁的 chip 同步显示「3 项未保存」，对应 Tab 上出现小圆点。
+
+| 桌面端 · 账号管理（默认 Tab） | 桌面端 · 模型 |
+|---|---|
+| ![账号管理](docs/screenshots/desktop-accounts.png) | ![模型](docs/screenshots/desktop-models.png) |
+
+| 桌面端 · 状态 | 桌面端 · 设置 | 保存前弹出密码框 |
 |---|---|---|
-| ![手机端](docs/screenshots/mobile-models.png) | ![手机端设置](docs/screenshots/mobile-model-settings.png) | ![桌面端](docs/screenshots/desktop.png) |
+| ![状态](docs/screenshots/desktop-status.png) | ![设置](docs/screenshots/desktop-settings.png) | ![保存密码](docs/screenshots/desktop-save-password.png) |
 
-> 截图为 v1.2.0 界面。v1.3.0 起别名是**重命名**：`gemini-4-argon-contributor` 不再单独成行，
-> 而是同一行上显示「对外 `gemini-4-argon`」，别名输入框也标注了「填写后原名不再对外提供」。
+| 手机端 · 账号管理 | 手机端 · 模型 | 手机端 · 逐模型设置 | 手机端 · 密码框 |
+|---|---|---|---|
+| ![手机账号](docs/screenshots/mobile-accounts.png) | ![手机模型](docs/screenshots/mobile-models.png) | ![手机模型设置](docs/screenshots/mobile-model-settings.png) | ![手机密码](docs/screenshots/mobile-save-password.png) |
 
-- **模型与别名**（页面第一块）：搜索框（ID / 名称 / 别名）、协议筛选、状态筛选、
-  「启用/停用筛选结果」批量操作、「从上游刷新」；筛选行在滚动时吸顶
-- **逐模型设置**：默认只显示「显示名 + 状态/协议 chip + 上游 id + 启用开关 + 设置按钮」，
-  点「设置」才展开别名 / 上游协议 / 代理 / 探测协议 / 恢复默认
-- **额度余量**：逐 Key 显示 5 小时 / 本周 / 本月已用百分比与重置时间（数据来自 `GET {base}/usage`）
-- **Key 池**：名称、掩码 Key、权重、启用、成功/失败计数、冷却状态；行内表单添加、一键移除
-- **高级设置**：base-url、session、代理、超时、冷却、状态目录
+### 保存与密码（v1.4 起没有「只读」模式）
 
-### 为什么不需要密码
+页面**不读取 Key 明文，也不需要预先登录**：显示用的数据全部来自插件自己的免鉴权只读接口，
+所以在任何情况下都能查看和编辑，不存在「只读」。只有**写**的时候才需要管理凭证：
 
-插件页**不实现任何认证**，也从不询问密码：
-
-- 写入仍然走 CPA 自己的 `/v8/management/config/plugins/configs/<id>`（Bearer 管理密钥），
-  但密钥是从管理中心自己的浏览器存储 `localStorage['cli-proxy-auth']` 里**静默读取**的
-  （zustand persist 名 + `enc::v1::` 混淆；旧版 `localStorage['managementKey']` 作为兜底）。
-  管理中心登录时勾了「记住密码」就一定能读到；在别的标签页勾上后本页会自动变为可写（监听 `storage` 事件）
-- 读不到的场合（没勾「记住密码」，浏览器里根本不存在密钥）页面进入**只读模式**：
-  顶部显示「只读」并给出一次性解决提示，保存按钮禁用，**不弹任何密码框**；
-  状态、额度、模型列表照常显示（这些走插件自己的免鉴权只读接口）
-- 插件自身不在磁盘上保存任何凭据，`sessionStorage` 也不再用
+- 管理中心登录时勾了「记住密码」→ 页面**静默复用** `localStorage['cli-proxy-auth']` 里的管理密钥
+  （zustand persist + `enc::v1::` 混淆；旧版 `localStorage['managementKey']` 兜底），不会打扰你
+- 没勾「记住密码」→ 点「保存」时**弹一次密码框**（输入 WebUI 密码 / 管理密钥）。
+  输错会在框内提示「连续输错 5 次会临时封禁当前 IP」；勾上「在本标签页内记住」后，
+  本次标签页会话里不再重复询问（存 `sessionStorage`，关掉标签页即失效）
+- 保存是**合并写**：页面把改动记成一份补丁（`models.<id>` 的字段、`keys` 的增删改、若干顶层标量），
+  保存时先读回宿主当前的配置块，把补丁叠上去再 PUT。因此页面从不需要 Key 明文，
+  也不会覆盖它没读到的字段（手改过的配置、`extra-headers`、`models-default` 等原样保留）；
+  Key 的增删只影响卡片上列出的那些名字
+- 插件自身不在磁盘上保存任何凭据；只有主动勾选「在本标签页内记住」时，
+  密码才会写进浏览器 `sessionStorage`
 
 ### 手机端布局
 
-- 页面是「顶部操作栏 + 单块可滚动区域」的 flex 列，**刻意不放底部固定条**：
+- 页面是「顶部操作栏 + Tab 条 + 单块可滚动区域」的 flex 列，**刻意不放底部固定条**：
   管理中心在手机上会用自己的 `min-height:100vh` 撑页面，iframe 下方可能留出一条它自己的空白，
   任何贴底元素都会浮在那条空白上方。操作栏放在顶部后，页面在 iframe 底边自然结束
 - 顶部内容按**实测**的管理中心 header 高度（`--host-header`）下移，header 不会压住插件内容
-- ≤900px 收窄为两列，≤640px 变单列卡片、表格转成带标签的分块、按钮等宽
+- Tab 条在窄屏可横向滑动；≤900px 收窄为两列，≤640px 变单列卡片、模型设置面板单列、
+  密码框变成贴底 bottom sheet、按钮等宽，可点区域 ≥ 40px 高
 
 写入后宿主热重载并回调 `plugin.reconfigure`，插件**不直接写 config.yaml**。
 
@@ -248,12 +259,13 @@ models:
 
 - `GET /v0/resource/plugins/cap-opencode-go/api/state` — 配置与运行状态（不含上游调用）
 - `GET /v0/resource/plugins/cap-opencode-go/api/models[?refresh=1]` — 上游模型列表与本插件配置的合并视图（上游结果缓存 5 分钟）
-- `GET /v0/resource/plugins/cap-opencode-go/api/quota`
+- `GET /v0/resource/plugins/cap-opencode-go/api/quota` — 每个 Key 的 5 小时 / 本周 / 本月用量（含已停用的 Key）
 
 需要鉴权的接口（宿主管理中间件校验，与其它管理 API 同一把密钥）：
 
 - `GET /v0/management/opencode-go/probe?model=<id>` — 逐个协议族发一次最小请求，返回哪一族真正可用
   （`/v8/management/opencode-go/probe` 亦可，页面优先用 v8 前缀）
+- `GET|PUT /v8/management/config/plugins/configs/cap-opencode-go` — 仅在点「保存」时调用
 
 ---
 
@@ -279,21 +291,34 @@ CPA 的文件监听器（fsnotify）会在 **config.yaml 内容变化**时重新
 
 ```bash
 # 升级：装新 .so（旧版本文件留着，随时可回滚），再原地改一行 config.yaml 触发重载
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.3.0
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.4.1
+
+# 原地改一行注释（保持 inode）即可触发重载：把标记行在「有/无 -note」之间来回切
 python3 - <<'PY'
 path = "/root/cliproxyapi/config.yaml"
-with open(path) as fh: text = fh.read()
-text = text.replace("# (v1.3.0:", "# (v1.3.0-note:", 1)   # 任何内容变化都行
-with open(path, "r+") as fh: fh.write(text); fh.truncate()
+with open(path) as handle:
+    text = handle.read()
+marker = "# (v1.4.1"
+tainted = marker + "-note:"
+if tainted in text:
+    text = text.replace(tainted, marker + ":", 1)
+else:
+    text = text.replace(marker + ":", tainted, 1)
+with open(path, "r+") as handle:
+    handle.write(text)
+    handle.truncate()
 PY
-
-# 回滚：删掉新版本 .so，再原地改回去 → 热重载回上一版
-rm -f /root/cliproxyapi/plugins/linux/amd64/cap-opencode-go*-v1.3.0.so
 ```
 
-**注意**：必须是**原地写入**（保持 inode，例如 `python3` 的 `r+` 或 `>>` 追加）。
-`sed -i` / 编辑器的"临时文件 + rename"会替换 inode，文件监听器跟丢目标，
-之后任何改动都不会触发重载 —— 此时需要重启服务一次，监听器才会重新挂到新 inode 上。
+**两条注意**：
+
+1. 必须是**原地写入**（保持 inode，例如 `python3` 的 `r+` 或 `>>` 追加）。
+   `sed -i` / 编辑器的“临时文件 + rename”会替换 inode，文件监听器跟丢目标，
+   之后任何改动都不会触发重载 —— 此时需要重启服务一次，监听器才会重新挂到新 inode 上。
+2. **绝不要覆盖正在使用的 `.so` 文件**：宿主把它 `dlopen` 进了地址空间，
+   原地重写同一个文件会让进程在读到被改写的页时直接段错误（实测：`cp` 覆盖后宿主 SIGSEGV 退出，
+   日志停在崩溃前的最后一条请求）。升级一律**新增一个版本号文件**（`…-v1.4.1.so`），
+   等热重载退役旧实例后再删旧文件；回滚就是删掉新版本文件再原地改一次 config.yaml。
 
 ---
 
@@ -328,7 +353,8 @@ CPA_MGMT_KEY=mgmt-key \
 bash scripts/acceptance.sh
 ```
 
-17 项检查覆盖 4 个协议族的流式/非流式、跨协议调用、模型目录、侧边栏入口、状态与额度接口。
+26 项检查覆盖 4 个协议族的流式/非流式、跨协议调用、模型目录、侧边栏入口、状态与额度接口，
+以及仪表盘页面本身（Tab 骨架、账号管理、密码弹窗、无只读模式）与状态接口是否携带可编辑字段、是否隐藏密钥。
 在 v8.0.27 上的实测结果见 [docs/acceptance.md](docs/acceptance.md)。
 
 ---
@@ -353,6 +379,28 @@ docs/                  design / rollback / acceptance
 ---
 
 ## 11. 变更记录
+
+### 1.4.1
+
+- 修掉并行取额度时的收尾竞态：`context` 取消路径上不再把仍在写入的切片交回调用方。
+  生产调用传的是 `context.Background()`，实际不可达；`go test -race` 现在覆盖这条路径
+
+### 1.4.0
+
+- **仪表盘改为 Tab 结构**，默认「账号管理」：打开即见各 Key 的剩余额度
+  （5 小时 / 本周 / 本月三条剩余进度条 + 重置时间），Key 的权重 / 启用 / 移除可以就地改
+- 新增「状态」「设置」两个 Tab：运行状态、上游模型列表、4 个插件实例、关于与帮助；
+  Base URL / Session / 代理 / 超时 / 冷却 / 重试 / 状态目录 / 调试日志集中在「设置」，
+  底部「待保存的修改」逐条列出改动并可一键放弃
+- **保存按钮会亮**：没有改动时置灰，有改动时高亮并在角标显示改动条数，对应 Tab 出现小圆点
+- **取消「只读模式」**：显示用的数据全部来自免鉴权只读接口，任何情况下都能查看和编辑；
+  只有写的时候才要凭证 —— 管理中心存了就直接复用，没勾「记住密码」就弹一次密码框
+  （可勾「在本标签页内记住」，只写 `sessionStorage`，关闭标签页即失效）
+- **保存改为合并写**：页面只记录改动补丁，保存时读回宿主的配置块再叠加，
+  因此不再需要 Key 明文，也不会覆盖页面没读到的字段
+- 手机端适配重做：Tab 条横向滑动、单列卡片、模型设置面板单列、密码框变成底部弹层
+- 额度接口现在也统计**已停用**的 Key，多个 Key 并行拉取；`/api/state` 增加
+  `timeout_seconds` / `key_cooldown_seconds` / `max_retries` / `debug` / `state_dir`
 
 ### 1.3.0
 

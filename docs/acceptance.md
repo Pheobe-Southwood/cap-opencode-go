@@ -1,8 +1,120 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.3.0）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.4.1）
+
+> v1.4.1（= v1.4.0 的仪表盘改造 + 一处并行取额度的收尾竞态修复）在生产实例 127.0.0.1:8317
+> 热重载实测：**22 passed, 0 failed**；隔离实例 **26 passed, 0 failed**；
+> 无头浏览器逐条验证了 Tab 默认页、各 Key 剩余额度、保存按钮高亮、密码弹窗与合并写。
+> 下面是本轮的完整记录，其后是历史记录（v1.3.0 别名重命名、v1.2.0、v1.1.1）。
+
+---
+
+## v1.4.1 仪表盘验收（生产实例热重载 + 隔离实例 + 无头浏览器）
+
+本轮把仪表盘改成 Tab 结构（默认「账号管理」看各 Key 剩余额度）、保存按钮按未保存改动高亮、
+取消「只读模式」（改成保存时按需输入 WebUI 密码），保存从「整块覆盖」改为「补丁合并」。
+
+### 1. 生产实例：热重载部署，进程未重启
+
+```
+# 装新版本（旧版本文件留着，随时可回滚）
+$ CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.4.1
+installed /root/cliproxyapi/plugins/linux/amd64/cap-opencode-go-v1.4.1.so
+installed …-responses-v1.4.1.so   installed …-messages-v1.4.1.so   installed …-gemini-v1.4.1.so
+
+# 原地补一行注释（保持 inode），fsnotify → ApplyConfig → 按版本号选中最新的 .so
+$ python3 /tmp/touch_config.py
+config rewritten in place
+$ ls -i config.yaml
+10653636 config.yaml        # inode 前后一致，监听器没有跟丢
+```
+
+| 断言 | 结果 | 证据 |
+|---|---|---|
+| 热重载到 1.4.1 | ✅ | `/api/state` → `version=1.4.1`（改前 `1.3.0`），37 个模型 id 不变，Key 池不变；生产实际部署顺序是先 1.4.0、随后为带上竞态修复再热重载到 1.4.1，两次都是同一个进程 |
+| 进程未重启 | ✅ | PID `3194299` 全程不变（`ELAPSED` 从 2h07m 连续增长），管理页面会话没有中断 |
+| 页面换成 Tab 版 | ✅ | `GET /v0/resource/plugins/cap-opencode-go/dashboard` 含 `data-tab="accounts"`、`id="keyList"`、`id="credModal"`，且**不再含**「只读模式」字样 |
+| 只读接口带上可编辑字段 | ✅ | `/api/state` 新增 `timeout_seconds` / `key_cooldown_seconds` / `max_retries` / `debug` / `state_dir` |
+| 额度接口覆盖全部 Key | ✅ | `/api/quota` → `[('main', True, ['5 小时','本周','本月'])]`，并新增 `enabled` 字段 |
+| 官方验收脚本 | ✅ | **22 passed, 0 failed**（messages 协议族因操作者关闭了全部 messages 模型而 SKIP） |
+
+```
+$ CPA_BASE=http://127.0.0.1:8317 CPA_CLIENT_KEY=sk-… bash scripts/acceptance.sh
+served models: chat=CatJam responses=gpt-6-luna gemini=gemini-4-argon messages=none
+
+  PASS  chat/completions non-stream                    200  456 bytes
+  PASS  chat/completions stream                        200  975 bytes
+  PASS  chat model via claude client                   200  272 bytes
+  PASS  chat model via responses client                200  968 bytes
+  PASS  responses non-stream                           200  2844 bytes
+  PASS  responses stream                               200  11584 bytes
+  PASS  responses model via chat client                200  530 bytes
+  PASS  responses model via claude client              200  2042 bytes
+  PASS  gemini generateContent                         200  571 bytes
+  PASS  gemini streamGenerateContent                   200  1202 bytes
+  PASS  gemini model via chat client                   200  373 bytes
+  SKIP  messages family                                no messages model enabled
+  PASS  /v1/models catalogue                           16 models
+  PASS  dashboard state resource
+  PASS  live model list resource                       upstream 37 models
+  PASS  quota resource
+  PASS  dashboard page: 账号管理 tab
+  PASS  dashboard page: 模型 tab
+  PASS  dashboard page: Key 余量列表
+  PASS  dashboard page: 保存密码弹窗
+  PASS  dashboard page: editable without a credential
+  PASS  state carries the editable settings
+  PASS  state payload hides secrets
+
+== 22 passed, 0 failed ==
+```
+
+（脚本新增的 7 项就是上面这些 UI 断言；它用 bash 的 `[[ … == *marker* ]]` 匹配而不是
+`printf | grep -q`：页面比管道缓冲区大，`grep -q` 提前退出会被 `pipefail` 记成失败。）
+
+### 2. 页面实测（无头 Chromium，驱动真实管理中心 iframe）
+
+隔离实例 `127.0.0.1:8318`（v8.0.27 + 插件 v1.4.x、模型配置与生产一致），
+用 Playwright 打开 `management.html` → 登录 → 点侧边栏 `OpenCode Go`：
+
+| 断言 | 结果 | 证据 |
+|---|---|---|
+| 默认 Tab 是「账号管理」 | ✅ | 首屏 `aria-selected=true` 的 Tab = `accounts`；`#keyList` 直接列出 `main oc_sk_cd…q2N4` |
+| 看得到各 Key 剩余额度 | ✅ | `5 小时 剩余 98%（已用 2% · 22 分钟后重置）`、`本周 剩余 93%`、`本月 剩余 82%`；汇总条 `最低剩余 82% main · 本月` |
+| 保存按钮只在有改动时亮 | ✅ | 干净时 `class="save-btn"` + `disabled`；改一个别名 → `class="save-btn is-dirty"`、角标 2、chip「2 项未保存」、模型 Tab 出现小圆点 |
+| 没有只读模式 | ✅ | 页面无「只读」字样；未登录到管理中心凭证时仍可编辑，点保存才弹框 |
+| 没勾「记住密码」→ 弹密码框 | ✅ | 点保存 → `#credModal` 显示；输入错误密码 → 框内提示「WebUI 密码不正确（HTTP 401）。连续输错 5 次会临时封禁当前 IP」（只失败 1 次）；输入正确密码 → 保存成功，toast「已保存 2 项修改」 |
+| 勾了「在本标签页内记住」→ 不再问 | ✅ | 同一会话第二次保存（切换模型开关）无弹框直接成功 |
+| 勾了管理中心「记住密码」→ 不弹框 | ✅ | 另一浏览器上下文登录时勾选 → `localStorage['cli-proxy-auth']` 携带密钥（未勾时同一位置为空）→ 保存直接成功 |
+| 增删 Key 是合并写 | ✅ | 加 `backup`（权重 3）→ config.yaml 出现该 Key 且 `main` 的明文 Key 原样保留；插件热重载后 `/api/state` 的 `keys` = `[backup:3, main:1]`；删除后再保存 → 配置只剩 `main`（明文未变） |
+| 顶层字段同样是合并写 | ✅ | 只改「请求超时 → 777」，config.yaml 里 `request-timeout-seconds: 777`，`base-url` / `default-proxy` / `models.*` 全部原样 |
+| 页面无脚本错误 | ✅ | 生产页面在无头浏览器里 `pageerror` / `console.error` 均为空，模型 Tab 渲染 37 行 |
+
+### 3. 隔离实例全量验收
+
+```
+$ CPA_BASE=http://127.0.0.1:8318 CPA_CLIENT_KEY=sk-test-… CPA_MGMT_KEY=test-… bash scripts/acceptance.sh
+  PASS  chat/completions non-stream … PASS  management protocol probe
+  PASS  dashboard page: 账号管理 tab … PASS  state payload hides secrets
+== 26 passed, 0 failed ==
+```
+
+### 4. 截图
+
+`docs/screenshots/`：`desktop-accounts.png`（默认 Tab）、`desktop-models.png`、`desktop-status.png`、
+`desktop-settings.png`、`desktop-save-password.png`、`mobile-accounts.png`、`mobile-models.png`、
+`mobile-model-settings.png`、`mobile-save-password.png`（390×844，密码框为底部弹层）。
+
+### 5. 本轮踩到的宿主侧陷阱（已写入 README / rollback）
+
+- **不要覆盖正在使用的 `.so`**：隔离实例上用 `cp` 原地覆盖已 `dlopen` 的库，
+  宿主随即 SIGSEGV 退出（日志停在崩溃前最后一条请求）。升级必须新增版本号文件。
+- 同上，删除正在使用的 `.so` 对运行中的进程无害（inode 仍在），但**下一次重载/重启就会退到旧版本**，
+  所以升级时旧文件要留、新文件要装，别在中间态停留。
 
 > v1.3.0 在生产实例 127.0.0.1:8317 实测：**15 passed, 0 failed**（messages 协议族仍因操作者
-> 关闭了 `claude-haiku-5-5` 而 SKIP）。本轮把别名从「额外注册一个 id」改成**重命名**，
-> 因此重点验收「模型列表与路由都只认别名」，并顺带验证了**不重启服务的配置热重载**。
+> 关闭了 `claude-haiku-5-5` 而 SKIP）。该轮把别名从「额外注册一个 id」改成**重命名**，
+> 重点验收「模型列表与路由都只认别名」，并顺带验证了**不重启服务的配置热重载**。
+
+---
 
 ## v1.3.0 别名重命名验收（生产实例，热重载，未重启进程）
 

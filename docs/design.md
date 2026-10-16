@@ -158,6 +158,27 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   写进 `--host-header`；父页面不可访问（跨域/独立打开）时为 0，不影响渲染
 - 主题与 header 高度都只在**读**父文档，不修改宿主页面（早期版本曾考虑注入 CSS，已否决）
 
+## 7.6 仪表盘：读模型、改动补丁与凭证
+
+页面挂在免鉴权的资源路由上（`/v0/resource/plugins/<id>/dashboard`），所以**页面永远不接触密钥**，
+也**不需要预先登录**：
+
+- **读**：`/api/state` + `/api/models` + `/api/quota` 三个插件自有接口就是页面的读模型，
+  它们只返回解析后的设置与掩码 Key。状态接口因此必须携带页面可写的**每一个**字段
+  （超时 / 冷却 / 重试 / 状态目录 / debug …），否则「无凭证也能编辑」就不成立；
+  这条约束由 `TestStatePayloadExposesEditableSettingsWithoutSecrets` 守住
+- **写**：页面把操作者的改动记成补丁（`edits = {top, models, keys:{add,del,set}}`），
+  点保存时才 `GET /v8/management/config/plugins/configs/<id>` 读回宿主当前配置块，
+  把补丁叠上去再 `PUT`。好处有三：页面从不持有 Key 明文就能增删 Key；
+  页面没读到的字段（`extra-headers`、`models-default`、别人手改的配置）不会被覆盖；
+  删除 Key 只影响卡片上列出的那些名字，别的 Key 原样保留
+- **凭证**：写入需要宿主管理密钥。优先级是「本标签页会话里记住的」→「管理中心
+  `localStorage['cli-proxy-auth']` 里存的」→「弹一次密码框」。401/403 时只重试一次，
+  并把已缓存的凭证丢掉、在弹窗里显示原因；宿主对同一 IP 连续 5 次失败会封禁 30 分钟，
+  所以页面**不做任何自动重试循环**，只在弹窗里提示
+- **状态呈现**：`dirty = countEdits() > 0` 同时驱动三处 —— 保存按钮的高亮与角标、
+  标题旁的状态 chip、以及对应 Tab 上的小圆点，保证「有没有没保存的东西」在任何 Tab 都看得见
+
 ## 8. 版本兼容
 
 插件 ABI 是 `dlopen` + C ABI（`ABIVersion = 1`，注册 `schema_version = 6`），
