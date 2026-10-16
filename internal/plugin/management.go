@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -135,11 +136,19 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 	}
 }
 
-// ModelRow describes one model id for the dashboard.
+// ModelRow describes one model for the dashboard. It is keyed by the configured
+// model id, because that is what the operator edits; the ids clients may call
+// are reported separately.
 type ModelRow struct {
-	// ID is the id clients call, which may be an alias.
+	// ID is the configured model id, i.e. the key under plugin config models.
 	ID string `json:"id"`
-	// Upstream is the id sent to OpenCode Go.
+	// ClientIDs lists every id clients can call for this model: the aliases that
+	// replaced it, or ID itself when no alias is in effect.
+	ClientIDs []string `json:"client_ids"`
+	// Aliased reports whether an alias replaced ID as the client-facing name.
+	Aliased bool `json:"aliased"`
+	// Upstream is the id sent to OpenCode Go. It always equals ID: an alias
+	// renames the client-facing id, never the upstream one.
 	Upstream string `json:"upstream"`
 	// DisplayName is the user-facing label.
 	DisplayName string `json:"display_name"`
@@ -151,25 +160,24 @@ type ModelRow struct {
 	Enabled bool `json:"enabled"`
 	// Proxy is the egress policy for the id.
 	Proxy string `json:"proxy"`
-	// Aliases lists the aliases configured on the base model.
+	// Aliases lists the aliases configured on the model, including any that were
+	// rejected.
 	Aliases []string `json:"aliases"`
 	// Served reports whether this provider build (role) serves the id.
 	Served bool `json:"served"`
-	// Catalogued reports whether the base model is in the built-in catalogue.
+	// Catalogued reports whether the model is in the built-in catalogue.
 	Catalogued bool `json:"catalogued"`
-	// IsAlias reports whether the row is an alias of another model.
-	IsAlias bool `json:"is_alias"`
-	// BaseID is the model an alias points at.
-	BaseID string `json:"base_id,omitempty"`
 	// Discovered reports an id the upstream publishes but the plugin does not
 	// serve yet; the operator opts in by assigning a family.
 	Discovered bool `json:"discovered,omitempty"`
 	// UpstreamAvailable reports whether the upstream still publishes the model.
 	UpstreamAvailable bool `json:"upstream_available"`
-	// AliasShadowed reports an alias that could not be used because the id is
-	// already taken.
-	AliasShadowed bool   `json:"alias_shadowed,omitempty"`
-	Note          string `json:"note,omitempty"`
+	// AliasShadowed reports that at least one configured alias was rejected
+	// because its id belongs to another model.
+	AliasShadowed bool `json:"alias_shadowed,omitempty"`
+	// ShadowedAliases lists the rejected aliases, so the operator can fix them.
+	ShadowedAliases []string `json:"shadowed_aliases,omitempty"`
+	Note            string   `json:"note,omitempty"`
 }
 
 // StatePayload is the dashboard's read model. Secrets are never included.
@@ -251,45 +259,52 @@ type UpstreamSummary struct {
 // modelRows merges the configured models with the live upstream list. When
 // upstreamIDs is nil the upstream is not consulted and availability is reported
 // optimistically.
+//
+// The resolver publishes client-facing ids, so a model renamed by its aliases
+// yields one entry per alias. Rows are regrouped by the configured model: the
+// dashboard shows one row per real model, carrying every id it answers to.
 func (r *Runtime) modelRows(upstreamIDs []string) []ModelRow {
 	resolver := r.Resolver()
 	settings := r.Settings()
 
-	known := make(map[string]struct{}, len(upstreamIDs))
-	for _, id := range upstreamIDs {
-		known[id] = struct{}{}
-	}
 	consulted := len(upstreamIDs) > 0
 	shadowed := resolver.Shadowed()
 
 	rows := make([]ModelRow, 0, len(resolver.Entries())+len(upstreamIDs))
-	seen := make(map[string]struct{}, len(resolver.Entries()))
+	index := make(map[string]int, len(resolver.Entries()))
+	seen := make(map[string]struct{}, len(resolver.Entries())+len(upstreamIDs))
 	for _, entry := range resolver.Entries() {
+		// Both ids count as covered: the alias is what clients call, and the
+		// model id it replaced is what the live upstream list still publishes,
+		// so neither may come back as a "discovered" row.
 		seen[entry.ID] = struct{}{}
-		baseID := entry.ID
-		if entry.Alias {
-			baseID = entry.Upstream
+		seen[entry.BaseID] = struct{}{}
+		if position, exists := index[entry.BaseID]; exists {
+			rows[position].ClientIDs = append(rows[position].ClientIDs, entry.ID)
+			rows[position].Aliased = rows[position].Aliased || entry.Alias
+			continue
 		}
-		row := ModelRow{
-			ID:                entry.ID,
-			Upstream:          entry.Upstream,
+		setting := settings.ModelConfig(entry.BaseID)
+		rejected := shadowedAliases(shadowed, entry.BaseID)
+		rows = append(rows, ModelRow{
+			ID:                entry.BaseID,
+			ClientIDs:         []string{entry.ID},
+			Aliased:           entry.Alias,
+			Upstream:          entry.BaseID,
 			DisplayName:       entry.DisplayName,
 			Family:            string(entry.Family),
 			FamilySource:      string(entry.FamilySource),
 			Enabled:           entry.Enabled,
-			Proxy:             settings.ModelConfig(baseID).Proxy,
-			Aliases:           settings.ModelConfig(baseID).Aliases,
+			Proxy:             setting.Proxy,
+			Aliases:           setting.Aliases,
 			Served:            entry.Enabled && entry.Family == r.role.Name,
 			Catalogued:        entry.Catalogued,
-			IsAlias:           entry.Alias,
-			UpstreamAvailable: !consulted || containsString(upstreamIDs, entry.Upstream),
+			UpstreamAvailable: !consulted || containsString(upstreamIDs, entry.BaseID),
+			AliasShadowed:     len(rejected) > 0,
+			ShadowedAliases:   rejected,
 			Note:              entry.Note,
-			AliasShadowed:     shadowed[entry.ID] != "",
-		}
-		if entry.Alias {
-			row.BaseID = entry.Upstream
-		}
-		rows = append(rows, row)
+		})
+		index[entry.BaseID] = len(rows) - 1
 	}
 
 	// Ids the upstream publishes that nobody serves yet.
@@ -300,6 +315,7 @@ func (r *Runtime) modelRows(upstreamIDs []string) []ModelRow {
 		family, source := settings.FamilyWithSource(id)
 		rows = append(rows, ModelRow{
 			ID:                id,
+			ClientIDs:         []string{id},
 			Upstream:          id,
 			DisplayName:       id,
 			Family:            string(family),
@@ -311,6 +327,19 @@ func (r *Runtime) modelRows(upstreamIDs []string) []ModelRow {
 		})
 	}
 	return rows
+}
+
+// shadowedAliases lists the aliases one model declared that had to be rejected,
+// sorted so the dashboard renders them deterministically.
+func shadowedAliases(shadowed map[string]string, baseID string) []string {
+	var out []string
+	for alias, owner := range shadowed {
+		if owner == baseID {
+			out = append(out, alias)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func containsString(values []string, target string) bool {

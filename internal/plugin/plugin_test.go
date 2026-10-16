@@ -195,3 +195,124 @@ func TestTerminalEventPayload(t *testing.T) {
 		}
 	}
 }
+
+// An alias replaces the model id, so the host must be told about the alias only:
+// registering both would put the id the alias renamed back into /v1/models.
+func TestModelsAreRegisteredUnderTheAliasOnly(t *testing.T) {
+	runtime := New(rolesChat())
+	settings := config.Default()
+	settings.Models = map[string]config.ModelSetting{
+		"deepseek-v4.1-flash": {Aliases: []string{"DeepSeek-V4.1-Flash"}},
+		"grok-4.7":            {Aliases: []string{"grok"}},
+	}
+	runtime.applySettings(settings)
+
+	var decoded struct {
+		Models []struct {
+			ID   string `json:"ID"`
+			Name string `json:"Name"`
+		} `json:"Models"`
+	}
+	if errUnmarshal := json.Unmarshal(envelopeResult(t, runtime.handleStaticModels(nil)), &decoded); errUnmarshal != nil {
+		t.Fatalf("model response is invalid: %v", errUnmarshal)
+	}
+	registered := make(map[string]string, len(decoded.Models))
+	for _, model := range decoded.Models {
+		registered[model.ID] = model.Name
+	}
+
+	if _, exists := registered["deepseek-v4.1-flash"]; exists {
+		t.Error("the renamed model id must not be registered")
+	}
+	name, exists := registered["DeepSeek-V4.1-Flash"]
+	if !exists {
+		t.Fatal("the alias must be registered for the chat build")
+	}
+	// The host prints Name in the Gemini model list, so it has to be the
+	// client-facing id rather than the upstream one.
+	if name != "DeepSeek-V4.1-Flash" {
+		t.Errorf("Name = %q, want the client-facing id", name)
+	}
+	if _, exists := registered["grok"]; exists {
+		t.Error("an alias must inherit the protocol family of its model")
+	}
+}
+
+// The dashboard edits configuration per real model, so a renamed model must stay
+// one row carrying every id it answers to.
+func TestModelRowsGroupAliasedModels(t *testing.T) {
+	runtime := New(rolesChat())
+	settings := config.Default()
+	settings.Models = map[string]config.ModelSetting{
+		"deepseek-v4.1-flash": {Aliases: []string{"DeepSeek-V4.1-Flash"}},
+		// A rejected alias: the id belongs to the model above.
+		"grok-4.7": {Aliases: []string{"deepseek-v4.1-flash"}},
+	}
+	runtime.applySettings(settings)
+
+	rows := runtime.modelRows(nil)
+	byID := make(map[string]ModelRow, len(rows))
+	for _, row := range rows {
+		if _, duplicate := byID[row.ID]; duplicate {
+			t.Fatalf("duplicate row for %s", row.ID)
+		}
+		byID[row.ID] = row
+	}
+
+	renamed, ok := byID["deepseek-v4.1-flash"]
+	if !ok {
+		t.Fatal("the renamed model lost its row")
+	}
+	if !renamed.Aliased || len(renamed.ClientIDs) != 1 || renamed.ClientIDs[0] != "DeepSeek-V4.1-Flash" {
+		t.Errorf("renamed row = %+v", renamed)
+	}
+	if _, exists := byID["DeepSeek-V4.1-Flash"]; exists {
+		t.Error("an alias must not get a row of its own any more")
+	}
+
+	loser, ok := byID["grok-4.7"]
+	if !ok {
+		t.Fatal("the model with the rejected alias lost its row")
+	}
+	if loser.Aliased || len(loser.ClientIDs) != 1 || loser.ClientIDs[0] != "grok-4.7" {
+		t.Errorf("a model with no usable alias must keep its own id: %+v", loser)
+	}
+	if !loser.AliasShadowed || len(loser.ShadowedAliases) != 1 || loser.ShadowedAliases[0] != "deepseek-v4.1-flash" {
+		t.Errorf("the rejection must be reported on the declaring row: %+v", loser)
+	}
+}
+
+// The live upstream list still publishes the id an alias renamed; it must not
+// come back as a second, "discovered" row for the same model.
+func TestModelRowsDoNotRediscoverRenamedModels(t *testing.T) {
+	runtime := New(rolesChat())
+	settings := config.Default()
+	settings.Models = map[string]config.ModelSetting{
+		"deepseek-v4.1-flash": {Aliases: []string{"DeepSeek-V4.1-Flash"}},
+	}
+	runtime.applySettings(settings)
+
+	var renamed, discovered int
+	for _, row := range runtime.modelRows([]string{"deepseek-v4.1-flash", "brand-new-model"}) {
+		switch row.ID {
+		case "deepseek-v4.1-flash":
+			renamed++
+			if row.Discovered {
+				t.Error("the renamed model must not be reported as discovered")
+			}
+			if !row.UpstreamAvailable {
+				t.Error("the upstream still publishes the model, so it must count as available")
+			}
+		case "DeepSeek-V4.1-Flash":
+			t.Error("an alias must never be a row of its own")
+		case "brand-new-model":
+			discovered++
+			if !row.Discovered {
+				t.Error("an id nobody serves must be reported as discovered")
+			}
+		}
+	}
+	if renamed != 1 || discovered != 1 {
+		t.Errorf("renamed rows = %d, discovered rows = %d; want 1 and 1", renamed, discovered)
+	}
+}

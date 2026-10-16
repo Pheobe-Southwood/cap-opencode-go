@@ -353,13 +353,17 @@ func (r *Runtime) models() []pluginapi.ModelInfo {
 	entries := resolver.EntriesForFamily(r.role.Name)
 	out := make([]pluginapi.ModelInfo, 0, len(entries))
 	for _, entry := range entries {
+		// ID is the id clients call. A model renamed by an alias is published
+		// under that alias alone, and Name has to follow it: the host prints
+		// Name in the Gemini model list, so pointing it at the upstream id
+		// would expose the id the alias replaced.
 		out = append(out, pluginapi.ModelInfo{
 			ID:                         entry.ID,
 			Object:                     "model",
 			Created:                    r.startedAt.Unix(),
 			OwnedBy:                    "opencode",
 			DisplayName:                entry.DisplayName,
-			Name:                       entry.Upstream,
+			Name:                       entry.ID,
 			Description:                entry.Note,
 			SupportedGenerationMethods: []string{"chat"},
 		})
