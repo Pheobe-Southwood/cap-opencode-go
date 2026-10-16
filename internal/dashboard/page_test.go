@@ -81,8 +81,19 @@ func TestPageModelControls(t *testing.T) {
 		}
 	}
 	// Settings inputs are only rendered by the expandable panel.
-	if !strings.Contains(document, "if(editable && isOpen)") {
+	if !strings.Contains(document, "if(isOpen)") {
 		t.Error("the settings panel must be rendered only when expanded")
+	}
+	// An alias replaces the model id, so the row has to say which id clients
+	// actually call; there is no separate alias row any more.
+	if !strings.Contains(document, "row.client_ids") {
+		t.Error("the page must show the client-facing ids of a renamed model")
+	}
+	if !strings.Contains(document, "row.aliased") {
+		t.Error("the page must know whether an alias renamed the model")
+	}
+	if strings.Contains(document, "row.is_alias") || strings.Contains(document, "row.base_id") {
+		t.Error("alias rows no longer exist; the page must not depend on them")
 	}
 }
 

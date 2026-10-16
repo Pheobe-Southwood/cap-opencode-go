@@ -261,7 +261,7 @@ const pageTemplate = `<!doctype html>
           <option value="disabled">已关闭</option>
           <option value="discovered">上游新增（未启用）</option>
           <option value="missing">上游已下线</option>
-          <option value="alias">仅别名</option>
+          <option value="alias">已被别名替代</option>
           <option value="inferred">协议为推测</option>
         </select>
         <div class="bulk">
@@ -621,7 +621,7 @@ const pageTemplate = `<!doctype html>
     var stateFilter = el('stateFilter').value;
     if(family && current.family !== family) return false;
     if(filter){
-      var haystack = (row.id + ' ' + (row.display_name || '') + ' ' + (row.aliases || []).join(' ') + ' ' + (row.upstream || '')).toLowerCase();
+      var haystack = (row.id + ' ' + (row.display_name || '') + ' ' + (row.aliases || []).join(' ') + ' ' + (row.client_ids || []).join(' ') + ' ' + (row.upstream || '')).toLowerCase();
       if(haystack.indexOf(filter) < 0) return false;
     }
     switch(stateFilter){
@@ -629,8 +629,8 @@ const pageTemplate = `<!doctype html>
       case 'disabled': return !current.enabled;
       case 'discovered': return !!row.discovered;
       case 'missing': return row.upstream_available === false;
-      case 'alias': return !!row.is_alias;
-      case 'inferred': return !row.is_alias && row.family_source === 'inferred';
+      case 'alias': return !!row.aliased;
+      case 'inferred': return row.family_source === 'inferred';
       default: return true;
     }
   }
@@ -641,9 +641,10 @@ const pageTemplate = `<!doctype html>
   }
 
   // Bulk assignment over the current filter result, so an operator can curate a
-  // long model list without clicking every switch.
+  // long model list without clicking every switch. Every row is a real model,
+  // even when an alias renamed it.
   function setEnabledForFiltered(enabled){
-    var rows = filteredRows().filter(function(row){ return !row.is_alias; });
+    var rows = filteredRows();
     if(!rows.length){ text(el('modelHint'), '当前筛选没有可操作的模型'); return; }
     rows.forEach(function(row){
       var entry = modelEntry(row.id);
@@ -664,12 +665,12 @@ const pageTemplate = `<!doctype html>
     var familyLabel = FAMILY_LABEL[current.family] || current.family;
     if(current.family !== ROLE) familyLabel += ' · 其他实例';
     badges.push('<span class="pill' + (servedHere ? ' ok' : '') + '">' + esc(familyLabel) + '</span>');
-    if(!row.is_alias && row.family_source === 'inferred') badges.push('<span class="pill warn" title="按模型 ID 前缀推测，可用「探测协议」确认">协议推测</span>');
+    if(row.family_source === 'inferred') badges.push('<span class="pill warn" title="按模型 ID 前缀推测，可用「探测协议」确认">协议推测</span>');
     if(row.discovered) badges.push('<span class="pill accent">上游新增</span>');
-    if(row.is_alias) badges.push('<span class="pill accent">别名 → ' + esc(row.base_id || '') + '</span>');
+    if(row.aliased) badges.push('<span class="pill accent" title="客户端只能看到这些 id；原名已不再提供">对外 ' + esc((row.client_ids || []).join(', ')) + '</span>');
     if(row.upstream_available === false) badges.push('<span class="pill err">上游已下线</span>');
-    if(row.alias_shadowed) badges.push('<span class="pill err">别名被占用</span>');
-    if(current.entry.aliases && current.entry.aliases.length) badges.push('<span class="pill accent">别名 ' + current.entry.aliases.length + '</span>');
+    if(row.alias_shadowed) badges.push('<span class="pill err" title="与真实模型 id 冲突，已忽略：' + esc((row.shadowed_aliases || []).join(', ')) + '">别名被占用</span>');
+    if(!row.aliased && current.entry.aliases && current.entry.aliases.length) badges.push('<span class="pill err" title="别名未生效，该模型仍用自己的原名">别名未生效</span>');
     if(current.entry.proxy && current.entry.proxy !== 'inherit') badges.push('<span class="pill accent">' + esc(current.entry.proxy === 'proxy' ? '走代理' : '直连') + '</span>');
     if(row.note) badges.push('<span class="pill warn">注意</span>');
     return badges;
@@ -694,7 +695,6 @@ const pageTemplate = `<!doctype html>
     var current = modelStateOf(row);
     var isOpen = !!expanded[row.id];
     var aliasValue = (current.entry.aliases || row.aliases || []).join(', ');
-    var editable = !row.is_alias;
     var head = '<div class="model-top">' +
         '<span class="model-name">' + esc(row.display_name || row.id) + '</span>' +
         '<span class="model-badges">' + badgeList(row, current).join(' ') + '</span>' +
@@ -702,17 +702,18 @@ const pageTemplate = `<!doctype html>
           '<input type="checkbox" data-model-enabled="' + esc(row.id) + '"' + (current.enabled ? ' checked' : '') + '>' +
           '<span class="hint">' + (current.enabled ? '启用' : '关闭') + '</span>' +
         '</label>' +
-        (editable
-          ? '<button class="ghost small settings-toggle" type="button" data-model-settings="' + esc(row.id) + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '">' + (isOpen ? '收起设置' : '设置') + '</button>'
-          : '') +
+        '<button class="ghost small settings-toggle" type="button" data-model-settings="' + esc(row.id) + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '">' + (isOpen ? '收起设置' : '设置') + '</button>' +
       '</div>' +
-      '<div class="model-id">' + esc(row.id) + (row.upstream && row.upstream !== row.id ? ' → ' + esc(row.upstream) : '') + '</div>';
+      '<div class="model-id">' + esc(row.id) +
+        (row.aliased ? ' · 对外 id ' + esc((row.client_ids || []).join(', ')) : '') +
+        (row.upstream && row.upstream !== row.id ? ' → ' + esc(row.upstream) : '') +
+      '</div>';
 
     var panel = '';
-    if(editable && isOpen){
+    if(isOpen){
       panel = '<div class="settings-panel">' +
-        '<label class="field"><span>别名（逗号分隔）</span>' +
-          '<input type="text" data-model-alias="' + esc(row.id) + '" value="' + esc(aliasValue) + '" placeholder="例如 gpt6, luna" autocomplete="off">' +
+        '<label class="field"><span>别名（逗号分隔，填写后原名不再对外提供）</span>' +
+          '<input type="text" data-model-alias="' + esc(row.id) + '" value="' + esc(aliasValue) + '" placeholder="例如 DeepSeek-V4.1-Flash" autocomplete="off">' +
         '</label>' +
         '<label class="field"><span>上游协议' + (row.family_source === 'inferred' ? '（推测）' : '') + '</span>' +
           '<select data-model-family="' + esc(row.id) + '">' +
@@ -731,8 +732,6 @@ const pageTemplate = `<!doctype html>
           '<button class="ghost small" type="button" data-model-reset="' + esc(row.id) + '">恢复默认</button>' +
         '</div>' +
       '</div>' + renderProbe(row);
-    } else if(!editable){
-      panel = '<div class="hint" style="margin-top:6px">别名在基础模型行上维护</div>';
     }
 
     return '<div class="model-card' + (current.enabled ? '' : ' off') + '" data-model-card="' + esc(row.id) + '">' +
