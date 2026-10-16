@@ -271,6 +271,30 @@ systemctl restart cliproxyapi
 实测（临时实例）：删除后 `/v1/models` 回到 0 个模型、`/v8/management/plugins` 为空、
 `/v0/resource/plugins/cap-opencode-go/dashboard` 返回 404、`data/` 无残留、auth 目录为空。
 
+### 升级 / 回滚可以不用重启（实测）
+
+CPA 的文件监听器（fsnotify）会在 **config.yaml 内容变化**时重新加载配置并重新扫描插件目录，
+按版本号选中最新 `.so`：路径不变就复用已加载的实例，路径变了就 `dlopen` 新库、退役旧库
+（日志：`plugin hot reloaded … active_version=… retired_version=…`）。因此：
+
+```bash
+# 升级：装新 .so（旧版本文件留着，随时可回滚），再原地改一行 config.yaml 触发重载
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.3.0
+python3 - <<'PY'
+path = "/root/cliproxyapi/config.yaml"
+with open(path) as fh: text = fh.read()
+text = text.replace("# (v1.3.0:", "# (v1.3.0-note:", 1)   # 任何内容变化都行
+with open(path, "r+") as fh: fh.write(text); fh.truncate()
+PY
+
+# 回滚：删掉新版本 .so，再原地改回去 → 热重载回上一版
+rm -f /root/cliproxyapi/plugins/linux/amd64/cap-opencode-go*-v1.3.0.so
+```
+
+**注意**：必须是**原地写入**（保持 inode，例如 `python3` 的 `r+` 或 `>>` 追加）。
+`sed -i` / 编辑器的"临时文件 + rename"会替换 inode，文件监听器跟丢目标，
+之后任何改动都不会触发重载 —— 此时需要重启服务一次，监听器才会重新挂到新 inode 上。
+
 ---
 
 ## 8. 已知取舍与限制
