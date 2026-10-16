@@ -1,11 +1,24 @@
 package plugin
 
-import "github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+import (
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
+	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+)
 
 // configFields describes the plugin configuration for the host management UI.
 // The values live under plugins.configs.<pluginID> and are delivered to the
 // plugin as YAML on every register and reconfigure.
-func configFields() []pluginapi.ConfigField {
+//
+// Only the main build declares them. The three sibling builds read the snapshot
+// the main build publishes (data/cap-opencode-go/shared.json) and their own
+// config block carries nothing but the enable flag, so advertising the fields
+// there would invite the operator to fill in a form that has no effect. The
+// fields stay documented in one place: plugins.configs.cap-opencode-go.
+func configFields(role roles.Role) []pluginapi.ConfigField {
+	if role.Name != roles.Chat {
+		return nil
+	}
 	return []pluginapi.ConfigField{
 		{Name: "base-url", Type: pluginapi.ConfigFieldTypeString, Description: "OpenCode Go 接口基址，默认 https://opencode.ai/inference/go/v1。"},
 		{Name: "keys", Type: pluginapi.ConfigFieldTypeArray, Description: "多账号 Key 列表：[{name, key, weight, enabled}]。"},

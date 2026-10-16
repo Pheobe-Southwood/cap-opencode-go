@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
+	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
 )
@@ -139,6 +140,108 @@ func TestRegistrationDeclaresSingleFormat(t *testing.T) {
 	}
 	if len(decoded.Capabilities.ExecutorInputFormats) != 1 || decoded.Capabilities.ExecutorInputFormats[0] != "openai" {
 		t.Errorf("chat build must declare exactly the openai format: %v", decoded.Capabilities.ExecutorInputFormats)
+	}
+}
+
+// The host lists one row per shared library. All four rows have to advertise
+// the same product identity so they read as four faces of one plugin, and the
+// icon has to be a source the management centre accepts (<img src=…>).
+func TestRegistrationCarriesOneProductBranding(t *testing.T) {
+	type registrationDoc struct {
+		Metadata struct {
+			Name             string `json:"Name"`
+			Version          string `json:"Version"`
+			Author           string `json:"Author"`
+			GitHubRepository string `json:"GitHubRepository"`
+			Logo             string `json:"Logo"`
+			ConfigFields     []struct {
+				Name string `json:"Name"`
+			} `json:"ConfigFields"`
+		} `json:"metadata"`
+	}
+	labels := map[string]bool{}
+	for _, role := range roles.All {
+		runtime := New(role)
+		runtime.SetVersion("9.9.9")
+		var decoded registrationDoc
+		if errUnmarshal := json.Unmarshal(envelopeResult(t, runtime.registrationPayload()), &decoded); errUnmarshal != nil {
+			t.Fatalf("%s: registration payload is invalid: %v", role.Name, errUnmarshal)
+		}
+		if decoded.Metadata.Name != role.Label {
+			t.Errorf("%s: Name = %q, want %q", role.Name, decoded.Metadata.Name, role.Label)
+		}
+		if labels[decoded.Metadata.Name] {
+			t.Errorf("%s: duplicate plugin name %q", role.Name, decoded.Metadata.Name)
+		}
+		labels[decoded.Metadata.Name] = true
+		if decoded.Metadata.Version != "9.9.9" {
+			t.Errorf("%s: Version = %q", role.Name, decoded.Metadata.Version)
+		}
+		if decoded.Metadata.Author != brand.Author || decoded.Metadata.GitHubRepository != brand.Repository {
+			t.Errorf("%s: author/repository = %q/%q", role.Name, decoded.Metadata.Author, decoded.Metadata.GitHubRepository)
+		}
+		if decoded.Metadata.Logo != brand.Logo {
+			t.Errorf("%s: the four faces must show the same icon", role.Name)
+		}
+		if !strings.HasPrefix(decoded.Metadata.Logo, "data:image/svg+xml;base64,") {
+			t.Errorf("%s: Logo = %.60s", role.Name, decoded.Metadata.Logo)
+		}
+		if strings.ContainsAny(decoded.Metadata.Logo, "\n\r\"'") {
+			t.Errorf("%s: Logo must stay a single, unescaped token", role.Name)
+		}
+		// Only the main face carries the configuration: the siblings read the
+		// snapshot it publishes and have nothing of their own to configure.
+		if role.Name == roles.Chat {
+			if len(decoded.Metadata.ConfigFields) != 14 {
+				t.Errorf("main face declares %d config fields, want the documented 14", len(decoded.Metadata.ConfigFields))
+			}
+		} else if len(decoded.Metadata.ConfigFields) != 0 {
+			t.Errorf("%s: sibling faces must not advertise config fields: %v", role.Name, decoded.Metadata.ConfigFields)
+		}
+	}
+}
+
+// The dashboard manages the four protocol faces as one product, so the state
+// payload has to describe every face: what it serves and whether it owns the
+// configuration.
+func TestStatePayloadDescribesEveryProtocolFace(t *testing.T) {
+	runtime := New(rolesChat())
+	runtime.applySettings(config.Default())
+
+	payload := runtime.StatePayload()
+	if len(payload.Siblings) != len(roles.All) {
+		t.Fatalf("state describes %d faces, want %d", len(payload.Siblings), len(roles.All))
+	}
+	byRole := make(map[string]SiblingRow, len(payload.Siblings))
+	for _, face := range payload.Siblings {
+		if face.Label == "" || face.Protocol == "" || face.Endpoint == "" || face.PluginID == "" || face.Provider == "" {
+			t.Errorf("face %s is incomplete: %+v", face.Role, face)
+		}
+		if len(face.Formats) == 0 {
+			t.Errorf("face %s declares no formats", face.Role)
+		}
+		if len(face.Models) > faceModelSample {
+			t.Errorf("face %s samples %d models, want at most %d", face.Role, len(face.Models), faceModelSample)
+		}
+		if face.ModelCount < len(face.Models) {
+			t.Errorf("face %s reports %d models but samples %d", face.Role, face.ModelCount, len(face.Models))
+		}
+		byRole[face.Role] = face
+	}
+	main := byRole["chat"]
+	if !main.Main {
+		t.Error("the chat face owns the page and configuration and must be marked main")
+	}
+	if main.Label != brand.Name {
+		t.Errorf("main face label = %q, want the bare product name", main.Label)
+	}
+	if main.ModelCount == 0 || len(main.Models) == 0 {
+		t.Error("the main face serves the chat models and must list them")
+	}
+	for role, face := range byRole {
+		if role != "chat" && face.Main {
+			t.Errorf("face %s must not claim the configuration", role)
+		}
 	}
 }
 

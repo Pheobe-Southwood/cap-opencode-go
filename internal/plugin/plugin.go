@@ -18,6 +18,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
 	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
+	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/catalog"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/paths"
@@ -25,14 +26,10 @@ import (
 	"github.com/cpa-opencodego/cap-opencode-go/internal/upstream"
 )
 
-// Metadata constants.
-const (
-	pluginName       = "OpenCode Go Provider"
-	pluginAuthor     = "cpa-opencodego"
-	pluginRepository = "https://github.com/cpa-opencodego/cap-opencode-go"
-	// menuLabel is the sidebar entry shown under the 插件 group.
-	menuLabel = "OpenCode Go"
-)
+// menuLabel is the sidebar entry shown under the 插件 group. Only the main
+// build registers a management page, so the product appears once in the
+// sidebar even though four protocol faces are loaded.
+const menuLabel = brand.Name
 
 // Runtime is the process-wide plugin state.
 type Runtime struct {
@@ -235,12 +232,19 @@ func (r *Runtime) handleRegister(method string, request []byte) []byte {
 }
 
 func (r *Runtime) registrationPayload() []byte {
+	// All four faces publish the same name, logo and repository, so the four
+	// rows in the management centre's plugin list read as one product: the main
+	// build carries the product name, the siblings append their protocol face.
+	// Only the main build declares the configuration fields, because the
+	// siblings share the snapshot it publishes and their own config block holds
+	// nothing but the enable flag.
 	metadata := pluginapi.Metadata{
-		Name:             pluginName,
+		Name:             r.role.Label,
 		Version:          r.Version(),
-		Author:           pluginAuthor,
-		GitHubRepository: pluginRepository,
-		ConfigFields:     configFields(),
+		Author:           brand.Author,
+		GitHubRepository: brand.Repository,
+		Logo:             brand.Logo,
+		ConfigFields:     configFields(r.role),
 	}
 	capabilities := registrationCapabilities{
 		ModelProvider:         true,

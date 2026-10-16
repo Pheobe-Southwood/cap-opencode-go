@@ -17,7 +17,7 @@ const pageScript = `
   var FAMILY_LABEL = {chat:'chat/completions', responses:'responses', messages:'messages', gemini:'gemini'};
   var PROXY_MODES = ['inherit','proxy','direct'];
   var TABS = ['accounts','models','status','settings'];
-  var REPO_URL = 'https://github.com/Pheobe-Southwood/cap-opencode-go';
+  var REPO_URL = '__REPO_URL__';           // injected from internal/brand
   var CRED_STORE = 'cli-proxy-auth';        // management centre credential store
   var CRED_LEGACY = 'managementKey';        // older management centre builds
   var CRED_SESSION = 'cap-opencode-go:webui-key'; // typed password, this tab only
@@ -574,6 +574,7 @@ const pageScript = `
       ['Key', enabled + ' 启用 / ' + views.length],
       ['最低剩余', worst ? worst.left.toFixed(0) + '%' : '—', worst ? worst.key + ' · ' + worst.label : '尚无窗口数据'],
       ['冷却中', String(cooling)],
+      ['协议面', (state && state.siblings ? state.siblings.length : 0) + ' 个', '四个协议族共用这份配置'],
       ['余量更新', quota && quota.at ? new Date(quota.at).toLocaleTimeString() : '—']
     ];
     el('accountStats').innerHTML = stats.map(function(stat){
@@ -844,14 +845,38 @@ const pageScript = `
     el('upstreamGrid').innerHTML = upstreamRows.map(function(row){
       return '<div class="kv"><span class="k">' + esc(row[0]) + '</span><span class="v">' + esc(shorten(row[1], 26)) + '</span></div>';
     }).join('');
-    el('siblingGrid').innerHTML = (state.siblings || []).map(function(sibling){
-      return '<div class="sibling">' +
-        '<div class="kv"><span class="k">' + esc(sibling.role) + '</span><span class="v"><code>' + esc(sibling.plugin_id) + '</code></span></div>' +
-        '<div class="hint" style="margin-top:6px">provider: ' + esc(sibling.provider) + '</div>' +
-        '<div class="hint">由 plugins.configs.' + esc(sibling.plugin_id) + '.enabled 控制</div>' +
-      '</div>';
-    }).join('');
+    el('siblingGrid').innerHTML = (state.siblings || []).map(renderFace).join('');
     renderAbout();
+  }
+  // renderFace draws one protocol face. The host lists one plugin row per
+  // shared library; this is where the four rows become one managed product:
+  // what the face speaks, which plugin id carries it, which models depend on
+  // it, and whether it is the face that owns the configuration.
+  function renderFace(face){
+    var formats = (face.formats || []).join(' + ');
+    var models = face.models || [];
+    var count = Number(face.model_count) || 0;
+    var chips = models.map(function(id){ return '<span class="chip">' + esc(id) + '</span>'; }).join('');
+    if(count > models.length){
+      chips += '<span class="chip chip-more">+' + (count - models.length) + '</span>';
+    }
+    return '<div class="face' + (face.main ? ' face-main' : '') + '">' +
+      '<div class="face-head">' +
+        '<span class="face-name">' + esc(face.label || face.role) + '</span>' +
+        '<span class="face-tag">' + (face.main ? '配置入口' : '零配置') + '</span>' +
+      '</div>' +
+      '<div class="hint">' + esc(face.protocol || face.role) + '</div>' +
+      '<div class="kv"><span class="k">协议</span><span class="v"><code>' + esc(formats) + '</code></span></div>' +
+      '<div class="kv"><span class="k">上游端点</span><span class="v"><code>' + esc(face.endpoint || '') + '</code></span></div>' +
+      '<div class="kv"><span class="k">插件 ID</span><span class="v"><code>' + esc(face.plugin_id) + '</code></span></div>' +
+      '<div class="kv"><span class="k">provider</span><span class="v"><code>' + esc(face.provider) + '</code></span></div>' +
+      '<div class="kv"><span class="k">承载模型</span><span class="v">' + count + ' 个</span></div>' +
+      (chips ? '<div class="face-models">' + chips + '</div>' : '') +
+      '<div class="hint face-note">' + (face.main
+        ? '本面承载侧边栏页面与全部配置：Key、模型、设置都在这里改。'
+        : '无需配置：由 <code>cap-opencode-go</code> 统一维护，插件管理里只控制启用。') +
+      '</div>' +
+    '</div>';
   }
   function aboutRow(label, value){
     return '<div class="about-row"><span class="k">' + esc(label) + '</span><span>' + value + '</span></div>';
@@ -860,6 +885,7 @@ const pageScript = `
     var version = state ? state.version : '';
     el('aboutBox').innerHTML = [
       aboutRow('版本', '插件 <code>' + esc(version) + '</code> · 主实例 <code>' + esc(PLUGIN_ID) + '</code>'),
+      aboutRow('协议面', '一个主插件 + 三个协议面插件（responses / messages / gemini），每个 .so 只声明一种上游协议，协议翻译由 CPA 完成。四个 .so 必须同版本安装，只有主插件需要配置，四个面在「状态」里逐面说明。'),
       aboutRow('别名', '在「模型」里为模型填写的别名会替代原名对外提供；清空别名即恢复原名，多个别名等于多个对外 id。'),
       aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。'),
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),

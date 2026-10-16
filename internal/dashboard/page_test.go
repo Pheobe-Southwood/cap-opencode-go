@@ -6,6 +6,8 @@ package dashboard
 import (
 	"strings"
 	"testing"
+
+	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
 )
 
 func page(t *testing.T) string {
@@ -15,14 +17,72 @@ func page(t *testing.T) string {
 
 func TestPageSubstitutesPlaceholders(t *testing.T) {
 	document := page(t)
-	if strings.Contains(document, "__PLUGIN_ID__") || strings.Contains(document, "__ROLE__") {
-		t.Fatal("placeholders were not substituted")
+	for _, placeholder := range []string{"__PLUGIN_ID__", "__ROLE__", "__BRAND_NAME__", "__BRAND_FAVICON__", "__BRAND_MARK__", "__REPO_URL__"} {
+		if strings.Contains(document, placeholder) {
+			t.Errorf("placeholder %s was not substituted", placeholder)
+		}
 	}
 	if !strings.Contains(document, `var PLUGIN_ID = "cap-opencode-go"`) {
 		t.Error("plugin id missing from the document")
 	}
 	if !strings.Contains(document, `var ROLE = "chat"`) {
 		t.Error("role missing from the document")
+	}
+}
+
+// One product, four protocol faces: the four rows the host's plugin list shows
+// for this provider have to look like one thing, so the page and the rows share
+// the same mark, the same product name and the same repository link.
+func TestPageCarriesTheSharedBrand(t *testing.T) {
+	document := page(t)
+	for _, want := range []string{
+		`<title>` + brand.Name + `</title>`,
+		`<link rel="icon" type="image/svg+xml" href="` + brand.Logo + `">`,
+		`<span class="brand-mark" aria-hidden="true">` + brand.Markup + `</span>`,
+		`<h1>` + brand.Name + `</h1>`,
+		`var REPO_URL = '` + brand.Repository + `';`,
+		".brand-mark{",
+	} {
+		if !strings.Contains(document, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	// The mark is a real square icon, not a placeholder glyph.
+	if !strings.Contains(document, `viewBox="0 0 512 512"`) {
+		t.Error("the inlined brand mark lost its viewBox")
+	}
+}
+
+// The plugin list in 插件管理 shows one row per shared library. The status tab
+// is where the operator manages them as one product: every face names its
+// protocol, its plugin id, the models that depend on it and whether it owns the
+// configuration.
+func TestPageManagesFourProtocolFaces(t *testing.T) {
+	document := page(t)
+	for _, want := range []string{
+		`<h2>协议面</h2>`,
+		`id="siblingGrid"`,
+		`id="faceHint"`,
+		"四个 .so 必须同版本安装",
+		"function renderFace(face){",
+		"face.main ? '配置入口' : '零配置'",
+		"'无需配置：由 <code>cap-opencode-go</code> 统一维护，插件管理里只控制启用。'",
+		"'本面承载侧边栏页面与全部配置：Key、模型、设置都在这里改。'",
+		"face.protocol",
+		"face.endpoint",
+		"face.model_count",
+		"face.plugin_id",
+		".face-main{",
+		".face-tag{",
+		"['协议面', (state && state.siblings ? state.siblings.length : 0) + ' 个'",
+	} {
+		if !strings.Contains(document, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	// The old card listed bare instances; the faces replaced it.
+	if strings.Contains(document, `<h2>插件实例</h2>`) {
+		t.Error("the instances card must be replaced by the protocol-face card")
 	}
 }
 

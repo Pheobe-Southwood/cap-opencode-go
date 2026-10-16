@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
 )
 
 // Name identifies a build-time role.
@@ -42,19 +44,27 @@ type Role struct {
 	Endpoint string
 	// GeminiPath selects the generateContent path shape.
 	GeminiPath bool
+	// Label is the name the management centre shows for this build. The main
+	// build carries the product name; the three sibling builds append their
+	// protocol so that the four plugin rows read as one product with four
+	// protocol faces.
+	Label string
+	// Protocol names the wire protocol in user-facing terms, shown by the
+	// dashboard's protocol-face card.
+	Protocol string
 }
 
 // All lists every role in build order.
 var All = []Role{
-	{Name: Chat, Provider: "opencode-go", PluginSuffix: "cap-opencode-go", Formats: []string{"openai"}, Endpoint: "chat/completions"},
+	{Name: Chat, Provider: "opencode-go", PluginSuffix: "cap-opencode-go", Formats: []string{"openai"}, Endpoint: "chat/completions", Label: brand.Name, Protocol: "OpenAI Chat Completions"},
 	// The responses family declares both OpenAI-Responses formats. A client that
 	// already speaks openai-response is served by byte passthrough; any other
 	// client protocol is translated into codex. Declaring only codex is not
 	// viable: the host drops plugin stream frames that the codex->openai-response
 	// translator returns unchanged, so a passthrough plugin would emit nothing.
-	{Name: Responses, Provider: "opencode-go-responses", PluginSuffix: "cap-opencode-go-responses", Formats: []string{"codex", "openai-response"}, Endpoint: "responses"},
-	{Name: Messages, Provider: "opencode-go-messages", PluginSuffix: "cap-opencode-go-messages", Formats: []string{"claude"}, Endpoint: "messages"},
-	{Name: Gemini, Provider: "opencode-go-gemini", PluginSuffix: "cap-opencode-go-gemini", Formats: []string{"gemini"}, Endpoint: "models/{model}:generateContent", GeminiPath: true},
+	{Name: Responses, Provider: "opencode-go-responses", PluginSuffix: "cap-opencode-go-responses", Formats: []string{"codex", "openai-response"}, Endpoint: "responses", Label: brand.Name + " · Responses", Protocol: "OpenAI Responses（Codex）"},
+	{Name: Messages, Provider: "opencode-go-messages", PluginSuffix: "cap-opencode-go-messages", Formats: []string{"claude"}, Endpoint: "messages", Label: brand.Name + " · Messages", Protocol: "Anthropic Messages"},
+	{Name: Gemini, Provider: "opencode-go-gemini", PluginSuffix: "cap-opencode-go-gemini", Formats: []string{"gemini"}, Endpoint: "models/{model}:generateContent", GeminiPath: true, Label: brand.Name + " · Gemini", Protocol: "Google GenAI"},
 }
 
 // ByName resolves a role by its build-time key, defaulting to Chat.

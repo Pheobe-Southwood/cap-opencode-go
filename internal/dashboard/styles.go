@@ -55,6 +55,10 @@ const pageStyles = `
     padding:9px clamp(12px,2.4vw,32px);border-bottom:1px solid var(--border-color);background:var(--bg-secondary)}
   .toolbar-title{display:flex;align-items:center;gap:8px;min-width:0}
   .toolbar h1{font-size:16px;margin:0;font-weight:700;white-space:nowrap}
+  /* The mark the four plugin rows in 插件管理 also show (internal/brand). */
+  .brand-mark{display:inline-flex;flex:0 0 auto;width:26px;height:26px;border-radius:7px;overflow:hidden;
+    box-shadow:0 1px 2px var(--shadow)}
+  .brand-mark svg{display:block;width:100%;height:100%}
   .toolbar-actions{display:flex;gap:8px;align-items:center}
   .save-btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-weight:700;cursor:pointer;
     border-radius:var(--radius-md);border:1px solid var(--border-primary);background:var(--bg-secondary);color:var(--text-secondary);
@@ -214,6 +218,21 @@ const pageStyles = `
   .empty-state{border:1px dashed var(--border-color);border-radius:var(--radius-md);padding:18px;color:var(--text-secondary)}
   .sibling-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
   .sibling{border:1px solid var(--border-color);border-radius:var(--radius-md);padding:10px 12px;background:var(--bg-secondary)}
+  /* ------------------------------------------------------- protocol faces */
+  .face{border:1px solid var(--border-color);border-radius:var(--radius-md);padding:10px 12px;
+    background:var(--bg-secondary);display:flex;flex-direction:column;gap:6px;min-width:0}
+  /* The face that owns the page and the configuration. */
+  .face-main{border-color:var(--border-primary);background:var(--bg-tertiary)}
+  .face-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+  .face-name{font-weight:700;font-size:13px}
+  .face-tag{flex:0 0 auto;border:1px solid var(--border-color);border-radius:999px;padding:1px 7px;
+    font-size:10px;letter-spacing:.04em;color:var(--text-tertiary);background:var(--bg-primary)}
+  .face-models{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{display:inline-block;max-width:100%;padding:1px 7px;border-radius:999px;border:1px solid var(--border-color);
+    background:var(--bg-primary);color:var(--text-secondary);font-size:11px;word-break:break-all}
+  .chip-more{color:var(--text-tertiary)}
+  .face-models .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .face-note{margin-top:2px}
 
   /* -------------------------------------------------------- status tab */
   .about{display:grid;gap:10px}

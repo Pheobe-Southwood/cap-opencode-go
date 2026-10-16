@@ -210,13 +210,40 @@ type StatePayload struct {
 	Upstream           *UpstreamSummary  `json:"upstream,omitempty"`
 }
 
-// SiblingRow reports the enable state of the other provider builds, which the
-// dashboard can toggle through the host configuration API.
+// SiblingRow describes one protocol face of the provider.
+//
+// The provider ships as four shared libraries, one per upstream protocol
+// family, because the host translates client protocols into the formats a
+// library declares. The host's plugin list therefore has four rows for one
+// product; the dashboard renders this list as the four faces of that product,
+// names what each face serves and states what stops working when it is missing.
 type SiblingRow struct {
 	PluginID string `json:"plugin_id"`
 	Role     string `json:"role"`
 	Provider string `json:"provider"`
+	// Label is the name the management centre shows for this face: the product
+	// name on the main face, the product name plus the protocol on siblings.
+	Label string `json:"label"`
+	// Protocol names the wire protocol in user-facing terms.
+	Protocol string `json:"protocol"`
+	// Formats lists the CLIProxyAPI wire formats this face declares. The host
+	// passes these through and translates every other client protocol into one
+	// of them.
+	Formats []string `json:"formats"`
+	// Endpoint is the upstream endpoint family this face talks to.
+	Endpoint string `json:"endpoint"`
+	// Main reports whether this face carries the sidebar page and the plugin
+	// configuration. Exactly one face does.
+	Main bool `json:"main"`
+	// ModelCount is how many enabled model ids this face serves.
+	ModelCount int `json:"model_count"`
+	// Models samples those ids, so the dashboard can say which models a missing
+	// or disabled face would take away.
+	Models []string `json:"models,omitempty"`
 }
+
+// faceModelSample caps how many model ids are listed per face.
+const faceModelSample = 5
 
 // StatePayload builds the dashboard read model without contacting the upstream.
 func (r *Runtime) StatePayload() StatePayload {
@@ -225,12 +252,30 @@ func (r *Runtime) StatePayload() StatePayload {
 
 func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) StatePayload {
 	settings := r.Settings()
+	resolver := r.Resolver()
 	siblings := make([]SiblingRow, 0, len(roles.All))
 	for _, role := range roles.All {
+		served := resolver.EntriesForFamily(role.Name)
+		sample := make([]string, 0, faceModelSample)
+		for _, entry := range served {
+			if len(sample) == faceModelSample {
+				break
+			}
+			sample = append(sample, entry.ID)
+		}
 		siblings = append(siblings, SiblingRow{
 			PluginID: role.PluginSuffix,
 			Role:     string(role.Name),
 			Provider: role.Provider,
+			Label:    role.Label,
+			Protocol: role.Protocol,
+			Formats:  append([]string(nil), role.Formats...),
+			Endpoint: role.Endpoint,
+			// The main face is the one that registers the management API, which
+			// is the chat build; it owns the page and the configuration.
+			Main:       role.Name == roles.Chat,
+			ModelCount: len(served),
+			Models:     sample,
 		})
 	}
 	_ = upstream

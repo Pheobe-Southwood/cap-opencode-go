@@ -167,6 +167,64 @@ for plugin in payload.get("plugins", []):
     printf '  FAIL  %-46s menu not found\n' "sidebar menu entry"
     FAIL=$((FAIL + 1))
   fi
+
+  # The provider loads as four shared libraries, so the plugin list has four
+  # rows. They have to read as one product: same icon, one name per face, and
+  # the configuration advertised only where it is actually read (the main face).
+  brand="$(timeout 60 curl -s -H "Authorization: Bearer ${MGMT_KEY}" \
+    "${BASE}/v8/management/plugins" 2>/dev/null |
+    python3 -c '
+import sys, json
+FACES = {
+    "cap-opencode-go": "OpenCode Go",
+    "cap-opencode-go-responses": "OpenCode Go · Responses",
+    "cap-opencode-go-messages": "OpenCode Go · Messages",
+    "cap-opencode-go-gemini": "OpenCode Go · Gemini",
+}
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    payload = None
+if payload is None:
+    for label in ("faces", "icon", "names", "config"):
+        print(label + "\t" + "fail" + "\t" + "management API did not return JSON")
+    raise SystemExit
+entries = dict((p.get("id"), p) for p in payload.get("plugins", []))
+missing = sorted(pid for pid in FACES if pid not in entries)
+if missing:
+    for label in ("faces", "icon", "names", "config"):
+        print(label + "\t" + "fail" + "\t" + "missing rows: " + ", ".join(missing))
+    raise SystemExit
+print("faces\tok\t" + ", ".join(sorted(FACES)))
+bad_icon = sorted(pid for pid in FACES if not str(entries[pid].get("logo") or "").startswith("data:image/svg+xml;base64,"))
+if bad_icon:
+    print("icon\tfail\tno OpenCode icon on: " + ", ".join(bad_icon))
+else:
+    print("icon\tok\tsame data:icon on all four rows")
+bad_name = sorted(pid for pid in FACES if str(entries[pid].get("metadata", {}).get("name") or "") != FACES[pid])
+if bad_name:
+    print("names\tfail\t" + ", ".join(pid + "=" + str(entries[pid].get("metadata", {}).get("name")) for pid in bad_name))
+else:
+    print("names\tok\t" + " / ".join(FACES[pid] for pid in sorted(FACES)))
+main_fields = len(entries["cap-opencode-go"].get("config_fields") or [])
+sibling_fields = sum(len(entries[pid].get("config_fields") or []) for pid in FACES if pid != "cap-opencode-go")
+if main_fields and not sibling_fields:
+    print("config\tok\tmain %d fields, siblings 0" % main_fields)
+else:
+    print("config\tfail\tmain %d fields, siblings %d fields" % (main_fields, sibling_fields))
+' 2>/dev/null || true)"
+  while IFS=$'\t' read -r aspect verdict detail; do
+    if [ -z "${aspect}" ]; then
+      continue
+    fi
+    if [ "${verdict}" = "ok" ]; then
+      printf '  PASS  %-46s %s\n' "plugin ${aspect}" "${detail}"
+      PASS=$((PASS + 1))
+    else
+      printf '  FAIL  %-46s %s\n' "plugin ${aspect}" "${detail}"
+      FAIL=$((FAIL + 1))
+    fi
+  done <<< "${brand}"
 fi
 
 state="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/state" 2>/dev/null || true)"

@@ -3,6 +3,8 @@ package roles
 import (
 	"strings"
 	"testing"
+
+	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
 )
 
 func TestBuildPath(t *testing.T) {
@@ -67,6 +69,34 @@ func TestRoleProvidersAreDistinct(t *testing.T) {
 	}
 	if len(All) != 4 {
 		t.Fatalf("expected four protocol families, got %d", len(All))
+	}
+}
+
+// The four builds appear as four rows in the management centre's plugin list:
+// they have to read as one product with four protocol faces, and only the main
+// build may carry the bare product name.
+func TestRoleLabelsReadAsOneProduct(t *testing.T) {
+	seen := map[string]bool{}
+	for _, role := range All {
+		if strings.TrimSpace(role.Label) == "" {
+			t.Fatalf("role %s has no label", role.Name)
+		}
+		if seen[role.Label] {
+			t.Fatalf("duplicate label %q", role.Label)
+		}
+		seen[role.Label] = true
+		if !strings.HasPrefix(role.Label, brand.Name) {
+			t.Fatalf("role %s label %q does not start with the product name %q", role.Name, role.Label, brand.Name)
+		}
+		if strings.TrimSpace(role.Protocol) == "" {
+			t.Fatalf("role %s has no protocol description", role.Name)
+		}
+		if role.Name != Chat && role.Label == brand.Name {
+			t.Fatalf("sibling %s must not claim the bare product name", role.Name)
+		}
+	}
+	if main := ByName("chat"); main.Label != brand.Name {
+		t.Fatalf("main label = %q, want %q", main.Label, brand.Name)
 	}
 }
 

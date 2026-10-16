@@ -8,7 +8,8 @@ const pageHead = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>OpenCode Go</title>
+<link rel="icon" type="image/svg+xml" href="__BRAND_FAVICON__">
+<title>__BRAND_NAME__</title>
 <style id="initial-theme">
   html{background:#faf9f5;color-scheme:light}
   html[data-theme='dark']{background:#151412;color-scheme:dark}
@@ -34,7 +35,8 @@ const pageMarkup = `
 <div class="app">
   <header class="toolbar">
     <div class="toolbar-title">
-      <h1>OpenCode Go</h1>
+      <span class="brand-mark" aria-hidden="true">__BRAND_MARK__</span>
+      <h1>__BRAND_NAME__</h1>
       <span class="pill" id="saveState">加载中…</span>
     </div>
     <div class="toolbar-actions">
@@ -157,9 +159,14 @@ const pageMarkup = `
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>插件实例</h2></div>
+        <div class="card-head">
+          <h2>协议面</h2>
+          <div class="toolbar-group"><span class="hint">四个面 · 一套配置</span></div>
+        </div>
         <div class="sibling-grid" id="siblingGrid"></div>
-        <div class="hint" style="margin-top:8px">四个协议族各由一个独立插件实例承载；只有主实例（cap-opencode-go）有侧边栏页面与配置块。别名与协议归属只在主实例配置里维护，开关在「插件管理」里。</div>
+        <div class="hint" style="margin-top:8px" id="faceHint">
+          OpenCode Go 由一个主插件加三个协议面插件组成：每个 .so 只声明一种上游协议，CLIProxyAPI 才能把任意客户端协议翻译成它 —— 所以「插件管理」里会出现四行，其中只有 <code>cap-opencode-go</code> 需要配置。四个 .so 必须同版本安装；禁用或缺失任一面，该协议族的模型就无法路由。
+        </div>
       </div>
 
       <div class="card">
