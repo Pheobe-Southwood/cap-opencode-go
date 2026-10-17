@@ -478,13 +478,10 @@ func (r *Runtime) handleModelRoute(request []byte) []byte {
 		}
 		return raw
 	}
-	upstreamModel := r.Resolver().Upstream(requested)
 	raw, errMarshal := abi.OK(modelRouteResponse{
-		Handled:     true,
-		TargetKind:  "provider",
-		Target:      r.role.Provider,
-		TargetModel: upstreamModel,
-		Reason:      "opencode-go/" + string(r.role.Name),
+		Handled:    true,
+		TargetKind: "self",
+		Reason:     "opencode-go/" + string(r.role.Name),
 	})
 	if errMarshal != nil {
 		return abi.Fail("marshal_error", errMarshal.Error(), http.StatusInternalServerError)
