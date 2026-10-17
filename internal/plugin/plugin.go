@@ -22,6 +22,7 @@ import (
 	"github.com/cpa-opencodego/cap-opencode-go/internal/catalog"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/paths"
+	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/upstream"
@@ -57,6 +58,12 @@ type Runtime struct {
 	// finish their first stream.
 	statsMu sync.Mutex
 	stats   *stats.Store
+
+	// modelList is the diff from the latest successful /models fetch against
+	// the embedded snapshot. /api/models refreshes it; /api/stats only reads
+	// it, so /api/stats never makes an upstream call of its own.
+	modelListMu sync.Mutex
+	modelList   pricing.ModelListCheck
 }
 
 // New builds the runtime for one role.

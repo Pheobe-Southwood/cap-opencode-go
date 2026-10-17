@@ -75,6 +75,108 @@ func SnapshotFreshness(now time.Time) Freshness {
 	}
 }
 
+// snapshotModelIDs is the upstream model list observed when the price table was
+// last checked. It is deliberately separate from the built-in catalogue: the
+// catalogue is what this build knows how to serve, while this list is what
+// OpenCode Go actually advertised at the review date. A new or retired upstream
+// id means the price book and catalogue both deserve another look, even when no
+// token rate changed.
+var snapshotModelIDs = []string{
+	"beam-free",
+	"claude-haiku-5-5",
+	"deepseek-v4-pro",
+	"deepseek-v4.1-flash",
+	"gemini-4-argon-contributor",
+	"glm-5.1",
+	"glm-5.2",
+	"glm-5.3",
+	"glm-5.3-flash",
+	"gpt-5.6-luna",
+	"gpt-6-luna",
+	"grok-4.6",
+	"grok-4.7",
+	"hy3",
+	"hy4-preview",
+	"kimi-k2.6",
+	"kimi-k2.7-code",
+	"kimi-k3",
+	"longcat-2.0",
+	"longcat-2.5-preview-free",
+	"mimo-v2.5",
+	"mimo-v2.5-pro",
+	"mimo-v2.6-flash",
+	"mimo-v2.6-pro",
+	"minimax-m2.5",
+	"minimax-m2.7",
+	"minimax-m3",
+	"muse-spark-1.2-contributor",
+	"muse-spark-1.3-contributor",
+	"omen-alpha",
+	"qwen3.6-plus",
+	"qwen3.7-max",
+	"qwen3.7-plus",
+	"qwen3.8-flash",
+	"qwen3.8-max",
+	"space-bunny",
+	"step-5-preview",
+}
+
+// SnapshotModelIDs returns a copy of the upstream ids observed at the last
+// price/catalogue review.
+func SnapshotModelIDs() []string {
+	return append([]string(nil), snapshotModelIDs...)
+}
+
+// ModelListCheck compares one upstream /models response with the embedded
+// snapshot. An empty current list is not treated as "everything was removed":
+// it usually means the fetch failed, so the zero value means "not checked".
+type ModelListCheck struct {
+	CheckedAt time.Time
+	Added     []string
+	Removed   []string
+}
+
+// Changed reports whether the upstream list differs from the snapshot.
+func (c ModelListCheck) Changed() bool {
+	return len(c.Added) > 0 || len(c.Removed) > 0
+}
+
+// CompareModelList diffs current upstream ids against the embedded snapshot.
+// Duplicates and blank ids are ignored, and the result is sorted.
+func CompareModelList(ids []string, checkedAt time.Time) ModelListCheck {
+	current := modelIDSet(ids)
+	if len(current) == 0 {
+		return ModelListCheck{}
+	}
+	baseline := modelIDSet(snapshotModelIDs)
+	added := make([]string, 0)
+	removed := make([]string, 0)
+	for id := range current {
+		if _, exists := baseline[id]; !exists {
+			added = append(added, id)
+		}
+	}
+	for id := range baseline {
+		if _, exists := current[id]; !exists {
+			removed = append(removed, id)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return ModelListCheck{CheckedAt: checkedAt, Added: added, Removed: removed}
+}
+
+func modelIDSet(ids []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	return out
+}
+
 // Plan is an OpenCode Go subscription tier. Go Plus has higher monthly limits
 // for the same per-token prices.
 type Plan string

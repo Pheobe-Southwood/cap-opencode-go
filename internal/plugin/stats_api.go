@@ -93,6 +93,10 @@ type StatsPayload struct {
 	PriceBookRefreshAfterDays int               `json:"price_book_refresh_after_days"`
 	PriceBookUpdateDue        bool              `json:"price_book_update_due"`
 	PriceBookDueAt            string            `json:"price_book_due_at"`
+	ModelListCheckedAt        string            `json:"model_list_checked_at"`
+	ModelListChanged          bool              `json:"model_list_changed"`
+	ModelListAdded            []string          `json:"model_list_added,omitempty"`
+	ModelListRemoved          []string          `json:"model_list_removed,omitempty"`
 	UsageRecords              StatsUsageRecords `json:"usage_records"`
 	Models                    []StatsModel      `json:"models"`
 	Totals                    StatsTotals       `json:"totals"`
@@ -104,6 +108,11 @@ type StatsPayload struct {
 func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 	now := time.Now().UTC()
 	freshness := pricing.SnapshotFreshness(now)
+	modelList := r.modelListStatus()
+	modelListCheckedAt := ""
+	if !modelList.CheckedAt.IsZero() {
+		modelListCheckedAt = modelList.CheckedAt.UTC().Format(time.RFC3339Nano)
+	}
 	kind, since, source, clamped := resolveStatsRange(query, now)
 	store := r.statsStore()
 	snapshot := store.Snapshot(since)
@@ -259,6 +268,10 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 		PriceBookRefreshAfterDays: pricing.RefreshAfterDays,
 		PriceBookUpdateDue:        freshness.UpdateDue,
 		PriceBookDueAt:            freshness.DueAt.Format("2006-01-02"),
+		ModelListCheckedAt:        modelListCheckedAt,
+		ModelListChanged:          modelList.Changed(),
+		ModelListAdded:            modelList.Added,
+		ModelListRemoved:          modelList.Removed,
 		UsageRecords: StatsUsageRecords{
 			Received: snapshot.Received,
 			Matched:  snapshot.Matched,
@@ -267,6 +280,29 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 		Totals:   StatsTotals{ModelsUsed: int64(len(rows)), StatsCounts: totals},
 		Warnings: warnings,
 	}
+}
+
+// recordModelListCheck stores the latest upstream /models diff. Only a
+// non-empty, successfully fetched list is recorded: an error or empty response
+// must not look like every model was retired.
+func (r *Runtime) recordModelListCheck(ids []string, checkedAt time.Time) {
+	check := pricing.CompareModelList(ids, checkedAt)
+	if check.CheckedAt.IsZero() {
+		return
+	}
+	r.modelListMu.Lock()
+	r.modelList = check
+	r.modelListMu.Unlock()
+}
+
+// modelListStatus returns a copy so the payload cannot race with a refresh.
+func (r *Runtime) modelListStatus() pricing.ModelListCheck {
+	r.modelListMu.Lock()
+	defer r.modelListMu.Unlock()
+	check := r.modelList
+	check.Added = append([]string(nil), check.Added...)
+	check.Removed = append([]string(nil), check.Removed...)
+	return check
 }
 
 // resolveStatsRange turns the query into the window. The page computes the

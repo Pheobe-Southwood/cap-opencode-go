@@ -1,6 +1,7 @@
 package pricing
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -190,6 +191,55 @@ func TestSnapshotFreshnessUsesCalendarDays(t *testing.T) {
 		if got.DueAt.Format("2006-01-02") != "2026-11-16" {
 			t.Errorf("due date = %s, want 2026-11-16", got.DueAt.Format("2006-01-02"))
 		}
+	}
+}
+
+func TestSnapshotModelIDsSortedAndUnique(t *testing.T) {
+	ids := SnapshotModelIDs()
+	if len(ids) != 37 {
+		t.Fatalf("snapshot model count = %d, want 37", len(ids))
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for index, id := range ids {
+		if id == "" || id != strings.TrimSpace(id) {
+			t.Errorf("snapshot id %q is not clean", id)
+		}
+		if index > 0 && ids[index-1] >= id {
+			t.Errorf("snapshot ids are not sorted/unique at %q then %q", ids[index-1], id)
+		}
+		if _, exists := seen[id]; exists {
+			t.Errorf("duplicate snapshot id %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	ids[0] = "mutated"
+	if SnapshotModelIDs()[0] == "mutated" {
+		t.Error("SnapshotModelIDs must return a copy")
+	}
+}
+
+func TestCompareModelList(t *testing.T) {
+	at := time.Date(2026, 10, 17, 3, 0, 0, 0, time.UTC)
+	same := append(SnapshotModelIDs(), SnapshotModelIDs()[0], "  ")
+	if got := CompareModelList(same, at); got.Changed() || !got.CheckedAt.Equal(at) {
+		t.Errorf("unchanged list = %+v", got)
+	}
+	if got := CompareModelList(nil, at); got.Changed() || !got.CheckedAt.IsZero() {
+		t.Errorf("empty list must not look like every model was removed: %+v", got)
+	}
+
+	current := SnapshotModelIDs()
+	removed := current[0]
+	current = append(current[1:], "future-model", "future-model", " ")
+	got := CompareModelList(current, at)
+	if !got.CheckedAt.Equal(at) || !got.Changed() {
+		t.Fatalf("changed list = %+v", got)
+	}
+	if want := []string{"future-model"}; len(got.Added) != 1 || got.Added[0] != want[0] {
+		t.Errorf("added = %v, want %v", got.Added, want)
+	}
+	if want := []string{removed}; len(got.Removed) != 1 || got.Removed[0] != want[0] {
+		t.Errorf("removed = %v, want %v", got.Removed, want)
 	}
 }
 

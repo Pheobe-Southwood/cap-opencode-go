@@ -353,24 +353,28 @@ except Exception as error:
     print("unreadable: " + str(error))
     raise SystemExit
 keys = ("price_book_checked_at", "price_book_age_days", "price_book_refresh_after_days",
-        "price_book_update_due", "price_book_due_at")
+        "price_book_update_due", "price_book_due_at", "model_list_checked_at",
+        "model_list_changed")
 missing = [key for key in keys if key not in payload]
 ok = (not missing and payload.get("price_book_checked_at")
       and payload.get("price_book_due_at")
       and payload.get("price_book_refresh_after_days") == 30
       and str(payload.get("price_book_url", "")).startswith("https://")
       and isinstance(payload.get("price_book_age_days"), int)
-      and isinstance(payload.get("price_book_update_due"), bool))
-print(("ok" if ok else "invalid") + " checked=%s age=%s refresh=%s due=%s at=%s" % (
+      and isinstance(payload.get("price_book_update_due"), bool)
+      and payload.get("model_list_checked_at")
+      and isinstance(payload.get("model_list_changed"), bool))
+print(("ok" if ok else "invalid") + " checked=%s age=%s refresh=%s due=%s at=%s models=%s changed=%s" % (
     payload.get("price_book_checked_at"), payload.get("price_book_age_days"),
     payload.get("price_book_refresh_after_days"), payload.get("price_book_update_due"),
-    payload.get("price_book_due_at")))
+    payload.get("price_book_due_at"), payload.get("model_list_checked_at"),
+    payload.get("model_list_changed")))
 ' 2>/dev/null || true)"
 if [[ "${price_check}" == ok* ]]; then
-  printf '  PASS  %-46s %s\n' "statistics price book reminder" "${price_check#ok }"
+  printf '  PASS  %-46s %s\n' "statistics data-update reminder" "${price_check#ok }"
   PASS=$((PASS + 1))
 else
-  printf '  FAIL  %-46s %s\n' "statistics price book reminder" "${price_check:-invalid response}"
+  printf '  FAIL  %-46s %s\n' "statistics data-update reminder" "${price_check:-invalid response}"
   FAIL=$((FAIL + 1))
 fi
 rm -f "${STATS_FILE}"

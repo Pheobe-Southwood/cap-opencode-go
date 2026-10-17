@@ -112,6 +112,9 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 		r.refreshShared()
 		force := strings.Contains(managementRequest.Query.Get("refresh"), "1")
 		ids, fetchedAt, upstreamErr := r.client.ListModels(context.Background(), force)
+		if upstreamErr == "" {
+			r.recordModelListCheck(ids, fetchedAt)
+		}
 		summary := UpstreamSummary{Count: len(ids), FetchedAt: fetchedAt, Error: upstreamErr}
 		payload := r.stateWithRows(r.modelRows(ids), &summary)
 		payload.Upstream = &summary

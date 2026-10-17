@@ -458,6 +458,10 @@ const pageScript = `
       initStatsFold();
       if(!stats && !statsBusy) loadUsageStats();
       else renderUsageStats();
+      // Opening the tab is also a model-list check; the upstream cache keeps
+      // this to one request per five minutes. loadModels refreshes the stats
+      // read model when its model-list check is older than the fetch.
+      loadModels(false);
     }
     if(!keepScroll) el('panes').scrollTop = 0;
   }
@@ -1063,6 +1067,13 @@ const pageScript = `
       state = payload;
       upstream = payload.upstream || null;
       renderAll();
+      // /api/models records the model-list diff used by the price reminder.
+      // Refresh the stats read model when its check is older than this fetch,
+      // so a new/removed model can trigger the banner immediately.
+      if(tab === 'stats' && upstream && upstream.fetched_at &&
+         (!stats || stats.model_list_checked_at !== upstream.fetched_at)){
+        loadUsageStats(true);
+      }
     }).catch(function(error){
       notify('读取运行状态失败：' + error.message, 'error');
     });
@@ -1205,6 +1216,12 @@ const pageScript = `
     if(days === 1) return '昨天';
     return days + ' 天前';
   }
+  function formatModelIDs(ids){
+    ids = (ids || []).filter(function(id){ return !!id; });
+    if(!ids.length) return '';
+    var head = ids.slice(0, 4).join('、');
+    return ids.length > 4 ? head + ' 等 ' + ids.length + ' 个' : head;
+  }
   function renderPriceFreshness(){
     var badge = el('statsPriceBadge');
     var hint = el('statsPriceFreshness');
@@ -1212,7 +1229,7 @@ const pageScript = `
     var notice = el('statsPriceNotice');
     if(!stats){
       if(badge){ badge.className = 'pill'; text(badge, '价目表 —'); }
-      text(hint, statsBusy ? '正在读取…' : '统计读取后才能判断价目表是否到期');
+      text(hint, statsBusy ? '正在读取…' : '统计读取后才能判断价目表是否需要更新');
       if(notice) notice.hidden = true;
       if(line) line.hidden = false;
       return;
@@ -1225,22 +1242,46 @@ const pageScript = `
     var age = Number(stats.price_book_age_days);
     if(!isFinite(age) || age < 0) age = 0;
     var due = !!stats.price_book_update_due;
-    if(badge){ badge.className = 'pill' + (due ? ' warn' : ' ok'); text(badge, '价目表 ' + revision); }
+    var modelChecked = !!stats.model_list_checked_at;
+    var modelChanged = !!stats.model_list_changed;
+    var needsUpdate = due || modelChanged;
+    if(badge){ badge.className = 'pill' + (needsUpdate ? ' warn' : ' ok'); text(badge, '价目表 ' + revision); }
     var checkedText = checked ? ('核对于 ' + checked + '（' + priceAgeText(age) + '）') : '核对日期未知';
     var dueText = dueAt ? (due ? ' · 提醒日期 ' + dueAt + '（已到期）' : ' · 下次提醒 ' + dueAt) : '';
-    text(hint, checkedText + dueText + ' · ' + refresh + ' 天周期');
+    var modelText = modelChecked ? (modelChanged ? ' · 模型列表有变更' : ' · 模型列表无变化') : '';
+    text(hint, checkedText + dueText + modelText + ' · ' + refresh + ' 天周期');
     [el('statsPriceLink'), el('statsPriceNoticeLink')].forEach(function(link){ if(link) link.href = url; });
-    if(!due){
+    if(!needsUpdate){
       if(notice) notice.hidden = true;
       if(line) line.hidden = false;
       return;
     }
-    // The due banner already carries the checked date and the official link.
-    // Hide the one-line status so a phone does not show the same reminder twice.
+    // The banner already carries the checked date and the official link. Hide
+    // the one-line status so a phone does not show the same reminder twice.
     if(line) line.hidden = true;
-    text(el('statsPriceNoticeBadge'), age + ' 天未核对');
-    var noticeChecked = checked ? ('内嵌价目表（' + revision + '）核对于 ' + checked + '，') : ('内嵌价目表（' + revision + '）');
-    text(el('statsPriceNoticeText'), noticeChecked + '已到 ' + refresh + ' 天核对周期。OpenCode Go 可能已经调整价格、月额度或模型列表；当前统计仍按旧表折算。');
+    var parts = [];
+    if(due){
+      var duePrefix = checked ? ('内嵌价目表（' + revision + '）核对于 ' + checked + '，') : ('内嵌价目表（' + revision + '）');
+      parts.push(duePrefix + '已到 ' + refresh + ' 天核对周期。');
+    }
+    if(modelChanged){
+      var changes = [];
+      if((stats.model_list_added || []).length) changes.push('新增 ' + formatModelIDs(stats.model_list_added));
+      if((stats.model_list_removed || []).length) changes.push('移除 ' + formatModelIDs(stats.model_list_removed));
+      if(changes.length){
+        var snapshotLabel = checked ? (' ' + checked + ' 快照') : '内嵌快照';
+        parts.push('上游模型列表与' + snapshotLabel + '不一致：' + changes.join('；') + '。');
+      } else {
+        parts.push('上游模型列表与内嵌快照不一致。');
+      }
+    }
+    parts.push('OpenCode Go 可能已经调整价格、月额度或模型列表；当前统计仍按旧表折算。');
+    var badgeText;
+    if(due && modelChanged) badgeText = '价目到期 · 模型变更';
+    else if(due) badgeText = age + ' 天未核对';
+    else badgeText = '模型列表有变更';
+    text(el('statsPriceNoticeBadge'), badgeText);
+    text(el('statsPriceNoticeText'), parts.join(''));
     if(notice) notice.hidden = false;
   }
   function renderUsageSummary(){

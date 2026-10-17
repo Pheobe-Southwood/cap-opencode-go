@@ -1,4 +1,4 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1，v1.7.2–v1.7.6 热重载补充）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1，v1.7.2–v1.7.8 热重载补充）
 
 > v1.7.1（含 1.7.0 的统计口径修正与历史回放；1.7.1 只修两处页脚注/空状态文案）
 > 在生产实例 127.0.0.1:8317 重启到 1.7.1：四个面均加载 `-v1.7.1.so`，`plan=go`，PID `3651300`；
@@ -14,7 +14,72 @@
 > 2026-10-17 03:34 UTC 再热重载到 1.7.6，**PID `3651300` 仍不变、没有重启**；1.7.6 在统计页新增
 > 价目核对日期与「数据该更新了」周期提醒，四个面均映射到 `-v1.7.6.so`。API、页面常驻状态和
 > 到期横幅（Chromium 拦截 `/api/stats` 模拟第 30 天）已验证；统计文件 schema 没有变化。
-> 下面是 v1.7.1 记录，其后是历史记录（v1.6 统计面板、v1.5.0 品牌整合、v1.4.1 仪表盘改造等）。
+> 2026-10-17 03:46 UTC 再热重载到 1.7.8，**PID `3651300` 仍不变、没有重启**；1.7.8 在同一个提醒里
+> 加入上游模型列表变更：四个面均映射到 `-v1.7.8.so`，API 返回 `model_list_*`，模型列表新增/移除
+> 由 Chromium 拦截模拟验证。完整公开验收仍以 1.7.1 的 32 项为准。
+> 下面是 v1.7.8 / v1.7.6 的热重载记录，之后是 v1.7.1 记录与更早历史（v1.6 统计面板、v1.5.0 品牌整合、v1.4.1 仪表盘改造等）。
+
+---
+
+## v1.7.8 模型列表变更提醒（热重载 + API / 页面 / 桌面与手机）
+
+### 1. 部署
+
+- 03:46 UTC 热重载到 **1.7.8**；1.7.7 是加入模型变更提醒的中间版本，1.7.8 修正了横幅里
+  「与 2026-10-17 快照 不一致」多出的空格。最终四个面均在 `/proc/3651300/maps` 中：
+  `cap-opencode-go{,-responses,-messages,-gemini}-v1.7.8.so`，主面 `/api/state` 返回 `version=1.7.8`。
+- `config.yaml` 继续用**原地追加注释**触发 fsnotify：inode `10653636` 前后不变，没有重启 CPA；
+  PID `3651300`、服务启动时间 `03:07:04 UTC` 均未变。
+- 部署前备份了 1.7.7 四个 `.so` 与 config 到
+  `/root/cliproxyapi/backup-1.7.8-pre-20261017T034651Z`。
+
+### 2. 模型快照与 API
+
+- `pricing.SnapshotModelIDs` 保存核对日（2026-10-17）实际从 `/models` 观察到的 37 个 id。
+  它**不复用价格表的 37 个条目**：价格表含 `cat-jam-free` 而不含 `omen-alpha`，直接对比会误报；
+  模型快照与 catalogue 也分开——catalogue 表示“这个构建会服务的模型”，快照表示“核对时上游
+  实际发布了哪些模型”。
+- 每次 `/api/models` 成功拉取后，主面用 `CompareModelList` 做集合 diff，结果保存在 Runtime；
+  空列表或拉取失败不会覆盖上一次成功检查，避免把一次网络失败误报成“全部模型下线”。
+- `/api/stats` 新增 additive 字段：`model_list_checked_at`、`model_list_changed`、
+  `model_list_added`、`model_list_removed`。生产实测（03:46 UTC，`/api/models` 之后）：
+
+```
+model_list_checked_at: 2026-10-17T03:46:57.131945511Z
+model_list_changed:    false
+model_list_added:      (absent)
+model_list_removed:    (absent)
+```
+
+同一时刻价格字段仍为 `checked_at=2026-10-17 / age=0 / update_due=false / due_at=2026-11-16`，
+totals 为 6,220 请求、12 个模型；没有新增 stats 文件字段或状态文件。
+
+### 3. 页面验证
+
+- 非提醒态（真实当前数据）：统计页一行显示
+  「核对于 2026-10-17（今天）· 下次提醒 2026-11-16 · 模型列表无变化 · 30 天周期」；
+  到期/模型变更横幅隐藏。
+- 模型变更态：用 Chromium CDP 拦截 `/api/stats`，在真实响应上设置
+  `model_list_changed=true`、新增 5 个、移除 2 个；页面显示
+  「数据该更新了」+「模型列表有变更」，正文为
+  「上游模型列表与 2026-10-17 快照不一致：新增 future-a、future-b、future-c、future-d 等 5 个；
+  移除 glm-5.1、grok-4.6。」，并保留官方价目表链接和“当前统计仍按旧表折算”的说明。
+  到期的一行状态同时隐藏。
+- 模型变更与 30 天到期同时成立时，徽标显示「价目到期 · 模型变更」；两种提醒合并成一条横幅，
+  不会出现两条重复提示。
+- 桌面 1440×1100 与手机 390×844 均验证；手机模型明细仍按 ≤640px 折叠。统计 Tab 打开时会调用
+  `/api/models`（上游结果缓存 5 分钟）；若本次 fetched_at 与 stats 中的检查时间不同，会强制重读
+  一次 stats，因此页面首次加载的请求竞态也能收敛。
+
+### 4. 自动化
+
+- `go test ./...`、`go vet ./...`、`go test -race ./internal/...` 通过；JS 通过 `node --check`。
+- 新增 `TestSnapshotModelIDsSortedAndUnique`、`TestCompareModelList`：
+  覆盖 37 个快照 id、副本返回、重复/空白 id、空列表不误报、新增/移除排序。
+- 新增 `TestStatsPayloadExposesModelListChanges`：断言 stats API 的时间戳、变更标记和增删 id，
+  并验证空列表不会覆盖上一次成功检查；页面测试断言 `model_list_*` 与提醒文案。
+- `scripts/acceptance.sh` 的 data-update 检查现在同时要求 `model_list_checked_at` 和
+  `model_list_changed`；本轮没有重跑完整公开验收，仍以 1.7.1 的 **32 passed, 0 failed** 为准。
 
 ---
 

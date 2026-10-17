@@ -326,3 +326,35 @@ func TestManagementStatsRoute(t *testing.T) {
 		t.Errorf("payload = %+v", payload)
 	}
 }
+
+func TestStatsPayloadExposesModelListChanges(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	baseline := pricing.SnapshotModelIDs()
+	current := append([]string(nil), baseline[1:]...)
+	current = append(current, "brand-new-model", "brand-new-model", " ")
+	checkedAt := time.Date(2026, 10, 17, 3, 42, 0, 0, time.UTC)
+	runtime.recordModelListCheck(current, checkedAt)
+
+	payload := runtime.statsPayload(url.Values{"range": {"all"}})
+	if payload.ModelListCheckedAt != checkedAt.Format(time.RFC3339Nano) ||
+		!payload.ModelListChanged ||
+		len(payload.ModelListAdded) != 1 || payload.ModelListAdded[0] != "brand-new-model" ||
+		len(payload.ModelListRemoved) != 1 || payload.ModelListRemoved[0] != baseline[0] {
+		t.Errorf("model list diff = checked %q changed %v added %v removed %v",
+			payload.ModelListCheckedAt, payload.ModelListChanged, payload.ModelListAdded, payload.ModelListRemoved)
+	}
+
+	runtime.recordModelListCheck(pricing.SnapshotModelIDs(), checkedAt.Add(time.Minute))
+	payload = runtime.statsPayload(url.Values{"range": {"all"}})
+	if payload.ModelListChanged || len(payload.ModelListAdded) != 0 || len(payload.ModelListRemoved) != 0 {
+		t.Errorf("unchanged model list = changed %v added %v removed %v",
+			payload.ModelListChanged, payload.ModelListAdded, payload.ModelListRemoved)
+	}
+
+	// A failed/empty fetch must not replace the last good check.
+	runtime.recordModelListCheck(nil, checkedAt.Add(2*time.Minute))
+	payload = runtime.statsPayload(url.Values{"range": {"all"}})
+	if payload.ModelListChanged || payload.ModelListCheckedAt != checkedAt.Add(time.Minute).Format(time.RFC3339Nano) {
+		t.Errorf("empty fetch changed the cached check: %+v", payload)
+	}
+}
