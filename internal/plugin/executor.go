@@ -18,6 +18,7 @@ import (
 	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/upstream"
 )
 
@@ -109,6 +110,7 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 		"stream_id": executeRequest.StreamID, "payload_bytes": len(call.Body), "session": call.Session,
 	})
 
+	started := time.Now()
 	stream, errStream := r.client.Stream(context.Background(), call)
 	if errStream != nil {
 		r.trace("execute_stream upstream error", map[string]any{"model": call.Model, "error": errStream.Error()})
@@ -121,7 +123,7 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 	if streamID != "" {
 		// The host keeps the downstream stream open while we emit asynchronously,
 		// which preserves time to first token instead of buffering every chunk.
-		go r.pumpStream(stream, streamID)
+		go r.pumpStream(stream, streamID, streamTiming{model: statsModelID(r, requested, call.Model), started: started})
 	} else {
 		// Without a stream id there is nowhere to push chunks, so fall back to
 		// reading the upstream response to completion.
@@ -144,20 +146,52 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 	return raw
 }
 
+// streamTiming is the per-request state used to measure TTFT and generation
+// time. The host's usage record for this async stream bridge has no TTFT, so
+// the plugin times the frames it reads itself.
+type streamTiming struct {
+	model   string
+	started time.Time
+}
+
+// statsModelID maps the client-facing model id to the id the usage handler
+// stores. The resolver returns the configured base id for an alias; the
+// upstream id is the fallback for an id the resolver does not know.
+func statsModelID(r *Runtime, requested, upstream string) string {
+	if entry, ok := r.Resolver().Resolve(requested); ok && entry.BaseID != "" {
+		return entry.BaseID
+	}
+	if strings.TrimSpace(upstream) != "" {
+		return strings.TrimSpace(upstream)
+	}
+	return strings.TrimSpace(requested)
+}
+
 // pumpStream forwards upstream SSE frames to the host stream bridge, reshaping
 // them into the chunk convention the target protocol handler expects.
-func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string) {
+func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing streamTiming) {
 	defer func() { _ = stream.Body.Close() }()
 
 	payloadStyle := r.role.SSEStyle() == roles.SSEPayload
 	reader := bufio.NewReaderSize(stream.Body, 64*1024)
 	closeMessage := ""
 	emitted := 0
+	firstFrame := time.Time{}
+	firstContent := time.Time{}
+	lastFrame := time.Time{}
 	for {
 		line, errRead := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			chunk, keep := streamChunk(r.role, line, payloadStyle)
 			if keep {
+				now := time.Now()
+				if firstFrame.IsZero() {
+					firstFrame = now
+				}
+				lastFrame = now
+				if firstContent.IsZero() && stats.IsContent(r.role, chunk) {
+					firstContent = now
+				}
 				if errEmit := emitStreamChunk(streamID, chunk); errEmit != nil {
 					closeMessage = errEmit.Error()
 					break
@@ -172,13 +206,53 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string) {
 			break
 		}
 	}
+	ttft, generation := streamTimingValues(timing.started, firstFrame, firstContent, lastFrame)
 	r.trace("stream finished", map[string]any{
 		"role":       string(r.role.Name),
 		"stream_id":  streamID,
 		"chunks":     emitted,
 		"close_note": closeMessage,
+		"ttft_ms":    float64(ttft.Microseconds()) / 1000,
+		"gen_ms":     float64(generation.Microseconds()) / 1000,
 	})
+	// A failed/partial stream has no meaningful TTFT: the first content may
+	// never have arrived, and its tokens are counted by the host's usage event
+	// (if any) but it must not lower the average.
+	if closeMessage == "" && timing.model != "" {
+		if store := r.statsStore(); store != nil && ttft > 0 {
+			store.ObserveTiming(stats.TimingSample{
+				Model:      timing.model,
+				Family:     string(r.role.Name),
+				At:         timing.started,
+				TTFT:       ttft,
+				Generation: generation,
+			})
+		}
+	}
 	closeStream(streamID, closeMessage)
+}
+
+// streamTimingValues turns the frame timestamps into TTFT and generation time.
+// A stream whose content detector never matches falls back to its first frame,
+// so a protocol quirk still produces a usable TTFT; a single-frame stream has
+// no generation samples.
+func streamTimingValues(started, firstFrame, firstContent, lastFrame time.Time) (time.Duration, time.Duration) {
+	if started.IsZero() || firstFrame.IsZero() {
+		return 0, 0
+	}
+	textStart := firstContent
+	if textStart.IsZero() {
+		textStart = firstFrame
+	}
+	ttft := textStart.Sub(started)
+	if ttft < 0 {
+		ttft = 0
+	}
+	generation := lastFrame.Sub(textStart)
+	if generation < 0 {
+		generation = 0
+	}
+	return ttft, generation
 }
 
 // streamChunk converts one upstream line into the shape the host expects. For

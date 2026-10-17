@@ -166,7 +166,7 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   由宿主校验、持久化并热重载；插件不碰 config.yaml。
 - 插件页**不实现认证、不显示密码框**：写入用的密钥从管理中心自己的
   `localStorage['cli-proxy-auth']`（zustand persist 名 + `enc::v1::` 混淆，material 含 host 与 UA）
-  静默读取；读不到就退化为只读页面并提示去管理中心勾一次「记住密码」。
+  静默读取；读不到就弹一次密码框（可勾「在本标签页内记住」，只写 `sessionStorage`），而不是把页面变成只读。
   密钥只存在于浏览器与那次 fetch 的请求头里，插件进程与磁盘上都不留。
 - 探测路由挂在宿主管理鉴权下（`/v0/management/opencode-go/probe`，声明为没有 `Menu` 的
   `ManagementRoute`，避免被宿主的 legacy menu 逻辑转成资源路由），跨站请求会在管理中间件被 401。
@@ -194,9 +194,9 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
 页面挂在免鉴权的资源路由上（`/v0/resource/plugins/<id>/dashboard`），所以**页面永远不接触密钥**，
 也**不需要预先登录**：
 
-- **读**：`/api/state` + `/api/models` + `/api/quota` 三个插件自有接口就是页面的读模型，
+- **读**：`/api/state` + `/api/models` + `/api/quota` + `/api/stats` 四个插件自有接口就是页面的读模型，
   它们只返回解析后的设置与掩码 Key。状态接口因此必须携带页面可写的**每一个**字段
-  （超时 / 冷却 / 重试 / 状态目录 / debug …），否则「无凭证也能编辑」就不成立；
+  （超时 / 冷却 / 重试 / 状态目录 / 套餐 / debug …），否则「无凭证也能编辑」就不成立；
   这条约束由 `TestStatePayloadExposesEditableSettingsWithoutSecrets` 守住
 - **写**：页面把操作者的改动记成补丁（`edits = {top, models, keys:{add,del,set}}`），
   点保存时才 `GET /v8/management/config/plugins/configs/<id>` 读回宿主当前配置块，
@@ -233,6 +233,45 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   是不是配置入口"，并写明四个 `.so` 必须同版本、停用或缺失某面会让该协议族模型无法路由
 - **从属面版本无法在插件侧读取**（从属面不注册管理路由），所以「同版本」只能作为约定写在
   卡片与 README 里；升级时用 `scripts/install.sh <版本>` 一次装四个
+
+## 7.8 统计面板：宿主记账 + 插件测时（v1.6）
+
+统计要回答「用过的模型花了多少、占月额度多少、快不快」。这需要两类数据，而它们的最佳来源不同：
+
+- **token / 缓存 / 失败 / 流式标记**：宿主的 usage 事件已经按协议解析并归一化
+  （`pluginapi.UsageRecord.Detail`）。插件自己再解析一遍响应既重复又容易和宿主的翻译层漂移。
+  因此**只有主面**声明 `usage_plugin: true`，宿主把四个面执行的请求都投递给它；三个从属面不订阅，
+  否则同一条记录会被四个运行时各记一次。
+- **TTFT 与生成时间**：实测宿主对本插件异步流桥接（`host.stream.emit`）的 usage 记录
+  `ttft_ns` 恒为 0，`latency_ns` 正常。因此四个面在 `pumpStream` 里自己打时间戳：
+  发起上游请求前记 `started`，第一个保留帧到来时记 `firstFrame`，第一个内容帧
+  （chat 的 `delta.content/reasoning_content/tool_calls`、responses 的 `*.delta`、
+  messages 的 `content_block_delta`、gemini 的 `parts[].text/functionCall`）记 `firstContent`，
+  最后一帧记 `lastFrame`。TTFT = `firstContent - started`（找不到内容帧时退化为 `firstFrame`），
+  生成时间 = `lastFrame - firstContent`。只有完整结束的流才写入；失败/中断的流不拉低均值。
+
+四个 `.so` 是四个独立运行时，不能共享内存，于是沿用 `shared.json` 的模式，每个面写
+`<state-dir>/stats-<role>.json`（主面写 chat 文件），主面的 `/api/stats` 读取自己的快照 +
+三个从属面的 timing 文件，按模型合并。主面只从从属文件合并 timing 计数（`Counter.MergeTiming`），
+不合并 token，避免同一条 usage 记录被重复计数。文件是版本化 JSON，临时文件 + rename 原子写，
+0600；每 5 秒 debounce flush，`plugin.shutdown` 时再 flush 一次。
+
+数据口径：
+
+- **价格**：`internal/pricing` 内嵌 2026-10 的 Go 价目表（Go 与 Go Plus 的逐模型月限额、
+  长上下文档位、DeepSeek 工作峰谷价、免费/未定价模型）。chat/responses/gemini 的 input 包含缓存，
+  messages 的 input 不包含；gemini 的 output 费用含 reasoning。按请求开始时间取档位与峰谷，
+  以 nano-USD 整数累计，API 再换算成美元。
+- **月额度**：模型在「本月窗口」内的刊例价 ÷ 当前 `plan` 下该模型的月限额。`/usage` 只返回百分比，
+  无法可靠反推套餐，所以套餐必须配置（默认 `go`）。窗口起点由页面取所有 Key 的 monthly
+  `resets_at` 最晚值往前推一个月；拿不到时服务端回落到 UTC 自然月，并在 `range.since_source` 标记。
+- **保留期**：逐小时桶保留 40 天（覆盖一个月的窗口），全量 totals 永久保留；统计从 v1.6 起开始累计，
+  不读取 token tracker 的 BoltDB，也不回溯历史。
+- **API**：`GET /api/stats?range=month|all[&since=RFC3339]`，返回 `usage_records{received,matched}`
+  便于诊断 provider 标签不匹配；响应只有模型 id、计数、费用与时间戳，不含 Key/提示词/响应。
+- **页面**：概览常驻；模型明细在 ≤640px 默认折叠；统计口径始终折叠。桌面端是表格，手机端
+  用 `table.responsive` 的 `data-label` 变成逐模型卡片。费用、百分比、TPS/TTFT 都在前端格式化，
+  没有新增运行时依赖。
 
 ## 8. 版本兼容
 

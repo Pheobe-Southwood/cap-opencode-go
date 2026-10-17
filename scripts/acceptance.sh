@@ -55,6 +55,21 @@ check() {
 
 echo "== OpenCode Go acceptance @ ${BASE} =="
 
+# Management checks are optional. A supplied key that the host rejects (e.g. a
+# bcrypt secret whose plaintext is not available to this shell, or a temporary
+# IP ban after failed logins) must skip those checks rather than turn the run
+# red: the public dashboard and statistics checks still run.
+if [ -n "${MGMT_KEY}" ]; then
+  mgmt_probe="/tmp/cpa-opencodego-mgmt-probe.$$"
+  mgmt_status="$(timeout 30 curl -s -o "${mgmt_probe}" -w '%{http_code}' \
+    -H "Authorization: Bearer ${MGMT_KEY}" "${BASE}/v8/management/plugins" 2>/dev/null || echo 000)"
+  if [ "${mgmt_status}" != "200" ]; then
+    printf '  SKIP  %-46s management key rejected (HTTP %s)\n' "management API auth" "${mgmt_status}"
+    MGMT_KEY=""
+  fi
+  rm -f "${mgmt_probe}"
+fi
+
 # The plugin only answers for models the operator enabled, so pick one enabled
 # model per protocol family from the live state instead of assuming a fixed set.
 STATE_JSON="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/state" 2>/dev/null || echo '{}')"
@@ -254,6 +269,83 @@ else
   printf '  WARN  %-46s no window data returned\n' "quota resource"
 fi
 
+# Statistics: the main face receives host usage events and the four faces write
+# their own timing file, so wait through one 5s debounce before judging TTFT/TPS.
+STATS_FILE="/tmp/cpa-opencodego-acceptance-stats.$$"
+stats_ready=0
+stats_detail=""
+# Every family that had a streaming check must show at least one TTFT/TPS
+# sample: the main face times chat itself, the siblings write their timing file
+# and may take one 5s debounce longer to appear.
+EXPECTED_FAMILIES=""
+[ -n "${CHAT_MODEL}" ] && EXPECTED_FAMILIES="${EXPECTED_FAMILIES} chat"
+[ -n "${RESP_MODEL}" ] && EXPECTED_FAMILIES="${EXPECTED_FAMILIES} responses"
+[ -n "${GEMINI_MODEL}" ] && EXPECTED_FAMILIES="${EXPECTED_FAMILIES} gemini"
+[ -n "${MSG_MODEL}" ] && EXPECTED_FAMILIES="${EXPECTED_FAMILIES} messages"
+for _ in $(seq 1 25); do
+  timeout 30 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/stats?range=all" > "${STATS_FILE}" 2>/dev/null || true
+  stats_detail="$(EXPECTED_FAMILIES="${EXPECTED_FAMILIES}" python3 - "${STATS_FILE}" <<'STATSPY' 2>/dev/null || true
+import json, os, sys
+try:
+    payload = json.load(open(sys.argv[1]))
+except Exception as error:
+    print("unreadable: " + str(error))
+    raise SystemExit
+usage = payload.get("usage_records") or {}
+totals = payload.get("totals") or {}
+models = payload.get("models") or []
+priced = [m for m in models if m.get("priced") and not m.get("free")]
+expected = set(os.environ.get("EXPECTED_FAMILIES", "").split())
+seen = {m.get("family") for m in models if m.get("tps_samples", 0) > 0}
+missing = sorted(expected - seen)
+ready = (
+    usage.get("matched", 0) > 0
+    and totals.get("requests", 0) > 0
+    and totals.get("total_tokens", 0) > 0
+    and totals.get("ttft_samples", 0) > 0
+    and totals.get("tps_samples", 0) > 0
+    and not missing
+    and (not priced or totals.get("cost_usd", 0) > 0)
+)
+rows = ", ".join("%s(%s) r=%s tok=%s $%.4f ttft=%s tps=%s" % (
+    m.get("id"), m.get("family"), m.get("requests", 0), m.get("total_tokens", 0), m.get("cost_usd", 0),
+    m.get("ttft_samples", 0), m.get("tps_samples", 0)) for m in models[:4])
+print(("ready" if ready else "waiting") + " | matched=%s requests=%s tokens=%s ttft=%s tps=%s missing_families=%s warnings=%s | %s" % (
+    usage.get("matched", 0), totals.get("requests", 0), totals.get("total_tokens", 0),
+    totals.get("ttft_samples", 0), totals.get("tps_samples", 0), ",".join(missing) or "-",
+    "; ".join(payload.get("warnings") or []), rows))
+STATSPY
+)"
+  if [[ "${stats_detail}" == ready* ]]; then
+    stats_ready=1
+    break
+  fi
+  sleep 1
+done
+if [ "${stats_ready}" -eq 1 ]; then
+  printf '  PASS  %-46s %s\n' "statistics resource" "${stats_detail}"
+  PASS=$((PASS + 1))
+else
+  printf '  FAIL  %-46s %s\n' "statistics resource" "${stats_detail:-no response}"
+  FAIL=$((FAIL + 1))
+fi
+if grep -qE 'oc_sk_[A-Za-z0-9]{16,}' "${STATS_FILE}" 2>/dev/null; then
+  printf '  FAIL  %-46s a full key leaked into stats\n' "stats payload hides secrets"
+  FAIL=$((FAIL + 1))
+else
+  printf '  PASS  %-46s\n' "stats payload hides secrets"
+  PASS=$((PASS + 1))
+fi
+monthly="$(timeout 30 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/stats?range=month" 2>/dev/null || true)"
+if printf '%s' "${monthly}" | grep -q '"since_source"'; then
+  printf '  PASS  %-46s\n' "statistics monthly window"
+  PASS=$((PASS + 1))
+else
+  printf '  FAIL  %-46s\n' "statistics monthly window"
+  FAIL=$((FAIL + 1))
+fi
+rm -f "${STATS_FILE}"
+
 # The protocol probe is a management route, so it needs the management key; the
 # plugin itself never sees unauthenticated probe traffic.
 if [ -n "${MGMT_KEY}" ]; then
@@ -285,6 +377,13 @@ fi
 page="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/dashboard" 2>/dev/null || true)"
 page_checks=(
   'data-tab="accounts"|账号管理 tab'
+  'data-tab="stats"|统计 tab'
+  'id="pane-stats"|统计面板'
+  'id="statsSummary"|统计概览'
+  'id="usageStatsTable"|统计表'
+  'id="statsAboutFold"|统计口径折叠'
+  'data-label="平均 TTFT"|TTFT 列'
+  'id="cfgPlan"|套餐设置'
   'id="pane-models"|模型 tab'
   'id="keyList"|Key 余量列表'
   'id="credModal"|保存密码弹窗'
@@ -317,7 +416,7 @@ try:
     payload = json.load(sys.stdin)
 except Exception:
     raise SystemExit
-fields = ["timeout_seconds", "key_cooldown_seconds", "max_retries", "debug"]
+fields = ["timeout_seconds", "key_cooldown_seconds", "max_retries", "plan", "debug"]
 missing = [field for field in fields if field not in payload]
 print("ok" if not missing else "missing:" + ",".join(missing))
 ' 2>/dev/null || echo missing)"

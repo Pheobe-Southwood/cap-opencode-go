@@ -122,6 +122,7 @@ func TestRegistrationDeclaresSingleFormat(t *testing.T) {
 			ModelProvider         bool     `json:"model_provider"`
 			ModelRouter           bool     `json:"model_router"`
 			ManagementAPI         bool     `json:"management_api"`
+			UsagePlugin           bool     `json:"usage_plugin"`
 			ExecutorInputFormats  []string `json:"executor_input_formats"`
 			ExecutorOutputFormats []string `json:"executor_output_formats"`
 		} `json:"capabilities"`
@@ -137,6 +138,9 @@ func TestRegistrationDeclaresSingleFormat(t *testing.T) {
 	}
 	if !decoded.Capabilities.ManagementAPI {
 		t.Error("the chat build owns the dashboard and must declare management_api")
+	}
+	if !decoded.Capabilities.UsagePlugin {
+		t.Error("the main build must receive host usage events for the statistics tab")
 	}
 	if len(decoded.Capabilities.ExecutorInputFormats) != 1 || decoded.Capabilities.ExecutorInputFormats[0] != "openai" {
 		t.Errorf("chat build must declare exactly the openai format: %v", decoded.Capabilities.ExecutorInputFormats)
@@ -192,8 +196,8 @@ func TestRegistrationCarriesOneProductBranding(t *testing.T) {
 		// Only the main face carries the configuration: the siblings read the
 		// snapshot it publishes and have nothing of their own to configure.
 		if role.Name == roles.Chat {
-			if len(decoded.Metadata.ConfigFields) != 14 {
-				t.Errorf("main face declares %d config fields, want the documented 14", len(decoded.Metadata.ConfigFields))
+			if len(decoded.Metadata.ConfigFields) != 15 {
+				t.Errorf("main face declares %d config fields, want the documented 15", len(decoded.Metadata.ConfigFields))
 			}
 		} else if len(decoded.Metadata.ConfigFields) != 0 {
 			t.Errorf("%s: sibling faces must not advertise config fields: %v", role.Name, decoded.Metadata.ConfigFields)
@@ -454,3 +458,33 @@ func TestStatePayloadExposesEditableSettingsWithoutSecrets(t *testing.T) {
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+// Only the main face subscribes to usage events; four subscriptions would
+// multiply-count the same request if the host delivered to each face.
+func TestOnlyMainFaceRegistersUsagePlugin(t *testing.T) {
+	for _, role := range roles.All {
+		runtime := New(role)
+		var decoded struct {
+			Capabilities struct {
+				UsagePlugin bool `json:"usage_plugin"`
+			} `json:"capabilities"`
+		}
+		if errUnmarshal := json.Unmarshal(envelopeResult(t, runtime.registrationPayload()), &decoded); errUnmarshal != nil {
+			t.Fatalf("%s: %v", role.Name, errUnmarshal)
+		}
+		want := role.Name == roles.Chat
+		if decoded.Capabilities.UsagePlugin != want {
+			t.Errorf("%s: usage_plugin = %v, want %v", role.Name, decoded.Capabilities.UsagePlugin, want)
+		}
+	}
+}
+
+func TestStatePayloadCarriesPlan(t *testing.T) {
+	runtime := New(rolesChat())
+	settings := config.Default()
+	settings.Plan = "go-plus"
+	runtime.applySettings(settings)
+	if got := runtime.StatePayload().Plan; got != "go-plus" {
+		t.Errorf("state plan = %q", got)
+	}
+}

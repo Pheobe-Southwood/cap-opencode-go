@@ -234,6 +234,41 @@ const pageStyles = `
   .face-models .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .face-note{margin-top:2px}
 
+  /* --------------------------------------------------------- stats tab */
+  /* The page avoids a wall of numbers on a phone: the summary stays visible,
+     the per-model table is a <details> that starts folded below 640px, and the
+     methodology is always folded. */
+  .stats-plan-line{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 2px}
+  .stats-plan-line .hint{min-width:0}
+  .fold-block{border-top:1px dashed var(--border-color);margin-top:12px;padding-top:10px}
+  .fold-block > summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px;
+    font-weight:700;min-height:32px;flex-wrap:wrap}
+  .fold-block > summary::-webkit-details-marker{display:none}
+  .fold-block > summary::before{content:'▸';color:var(--text-tertiary);font-size:12px;margin-right:2px}
+  .fold-block[open] > summary::before{content:'▾'}
+  .fold-block > summary > span:first-child{margin-right:auto}
+  .fold-card > summary{cursor:pointer;font-weight:700;list-style:none;display:flex;align-items:center;gap:8px;min-height:24px}
+  .fold-card > summary::-webkit-details-marker{display:none}
+  .fold-card > summary::before{content:'▸';color:var(--text-tertiary);font-size:12px}
+  .fold-card[open] > summary::before{content:'▾'}
+  .fold-card[open] > summary{margin-bottom:10px}
+  .stats-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .stats-table td,.stats-table th{vertical-align:top}
+  .stats-table th.num,.stats-table td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .stats-table td.stats-model-cell{min-width:168px}
+  .stats-model-name{font-weight:700;word-break:break-all}
+  .stats-model-id{color:var(--text-tertiary);font-size:12px;word-break:break-all;margin-top:2px}
+  .stats-model-badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+  .stats-cell-main{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .stats-sub{display:block;color:var(--text-tertiary);font-size:11px;white-space:nowrap}
+  .stats-percent{display:flex;flex-direction:column;gap:3px;min-width:106px}
+  .stats-percent .v{font-weight:700;font-variant-numeric:tabular-nums}
+  .stats-percent .bar{height:5px}
+  .stats-footnote{margin-top:10px;line-height:1.65}
+  .stats-notes{margin:8px 0 0;padding-left:18px;display:grid;gap:6px;color:var(--text-secondary);font-size:12px}
+  .stats-notes strong{color:var(--text-primary)}
+  .stats-notes code{font-size:11px}
+
   /* -------------------------------------------------------- status tab */
   .about{display:grid;gap:10px}
   .about-row{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
@@ -295,6 +330,19 @@ const pageStyles = `
     table.responsive td{border:0;padding:3px 0;display:flex;gap:10px;align-items:baseline}
     table.responsive td::before{content:attr(data-label);flex:0 0 74px;color:var(--text-tertiary);
       font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+    /* The stats table becomes one card per model. The model name is the card
+       title, so it loses its label; the remaining fields keep theirs. */
+    .stats-table-wrap{overflow:visible}
+    table.responsive.stats-table td{display:flex;gap:10px;align-items:baseline}
+    table.responsive.stats-table td.num{text-align:left}
+    table.responsive.stats-table td::before{flex:0 0 84px}
+    table.responsive.stats-table td.stats-model-cell{display:block;padding-bottom:6px}
+    table.responsive.stats-table td.stats-model-cell::before{display:none}
+    .stats-table td.stats-model-cell{min-width:0}
+    .stats-percent{min-width:0;width:100%}
+    .stats-sub{white-space:normal}
+    .stats-plan-line{align-items:flex-start}
+    .stats-notes{padding-left:16px}
     /* The credential dialog becomes a bottom sheet on phones. */
     .modal-backdrop{padding:0;align-items:flex-end}
     .modal{max-width:none;border-radius:14px 14px 0 0;border-bottom:0;padding:16px 14px calc(16px + env(safe-area-inset-bottom))}

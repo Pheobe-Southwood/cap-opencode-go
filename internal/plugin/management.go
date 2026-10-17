@@ -24,6 +24,7 @@ const (
 	resourceState     = "/api/state"
 	resourceQuota     = "/api/quota"
 	resourceModels    = "/api/models"
+	resourceStats     = "/api/stats"
 )
 
 type managementRegistrationResponse struct {
@@ -59,6 +60,7 @@ func (r *Runtime) handleManagementRegister(request []byte) []byte {
 			{Path: resourceState, Description: "OpenCode Go 运行状态（掩码后的配置与模型开关）"},
 			{Path: resourceQuota, Description: "OpenCode Go 各 Key 的额度余量"},
 			{Path: resourceModels, Description: "OpenCode Go 上游模型列表与本插件模型配置的合并视图"},
+			{Path: resourceStats, Description: "本插件用过的模型的 token、刊例价、月额度、平均 TPS 与 TTFT"},
 		},
 	}
 	return okJSON(response)
@@ -117,6 +119,13 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 			StatusCode: http.StatusOK,
 			Headers:    jsonHeaders(),
 			Body:       mustJSON(payload),
+		})
+	case strings.HasSuffix(path, resourceStats):
+		r.refreshShared()
+		return okJSON(pluginapi.ManagementResponse{
+			StatusCode: http.StatusOK,
+			Headers:    jsonHeaders(),
+			Body:       mustJSON(r.statsPayload(managementRequest.Query)),
 		})
 	case strings.HasSuffix(path, resourceQuota):
 		r.refreshShared()
@@ -200,6 +209,7 @@ type StatePayload struct {
 	TimeoutSeconds     int               `json:"timeout_seconds"`
 	KeyCooldownSeconds int               `json:"key_cooldown_seconds"`
 	MaxRetries         int               `json:"max_retries"`
+	Plan               string            `json:"plan"`
 	Debug              bool              `json:"debug"`
 	Keys               []keys.State      `json:"keys"`
 	Models             []ModelRow        `json:"models"`
@@ -296,6 +306,7 @@ func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) Stat
 		TimeoutSeconds:     settings.RequestTimeoutSeconds,
 		KeyCooldownSeconds: settings.KeyCooldownSeconds,
 		MaxRetries:         settings.MaxRetries,
+		Plan:               settings.Plan,
 		Debug:              settings.Debug,
 		Keys:               r.client.Pool().Snapshot(),
 		Models:             rows,

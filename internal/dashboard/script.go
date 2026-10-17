@@ -16,7 +16,7 @@ const pageScript = `
   var FAMILIES = ['chat','responses','messages','gemini'];
   var FAMILY_LABEL = {chat:'chat/completions', responses:'responses', messages:'messages', gemini:'gemini'};
   var PROXY_MODES = ['inherit','proxy','direct'];
-  var TABS = ['accounts','models','status','settings'];
+  var TABS = ['accounts','stats','models','status','settings'];
   var REPO_URL = '__REPO_URL__';           // injected from internal/brand
   var CRED_STORE = 'cli-proxy-auth';        // management centre credential store
   var CRED_LEGACY = 'managementKey';        // older management centre builds
@@ -24,7 +24,7 @@ const pageScript = `
   var TOP_LABELS = {
     'base-url':'Base URL', 'session-mode':'Session 模式', 'session':'Session 值', 'proxy-url':'插件代理 URL',
     'default-proxy':'默认代理模式', 'request-timeout-seconds':'请求超时', 'key-cooldown-seconds':'Key 冷却',
-    'max-retries':'失败重试次数', 'state-dir':'状态目录', 'debug':'调试日志'
+    'max-retries':'失败重试次数', 'state-dir':'状态目录', 'debug':'调试日志', 'plan':'套餐'
   };
   var MODEL_LABELS = {enabled:'启用', family:'协议', proxy:'代理', aliases:'别名'};
 
@@ -313,6 +313,11 @@ const pageScript = `
   var state = null;        // read model from /api/models
   var upstream = null;     // upstream summary of the last model list fetch
   var quota = null;        // {keys:[…], at:<ms>} from /api/quota
+  var stats = null;        // /api/stats read model
+  var statsRange = 'month';
+  var statsBusy = false;
+  var statsErrorText = '';
+  var statsCalendarRetry = false;
   var expanded = {};
   var probes = {};
   var tab = 'accounts';
@@ -367,7 +372,10 @@ const pageScript = `
   function pendingLines(){
     var lines = [];
     Object.keys(edits.top).forEach(function(field){
-      lines.push({group:'设置', text:(TOP_LABELS[field] || field) + '：' + show(TOP_LABELS[field] === '调试日志' ? (edits.top[field] ? '开启' : '关闭') : edits.top[field])});
+      var value = edits.top[field];
+      if(field === 'debug') value = value ? '开启' : '关闭';
+      if(field === 'plan') value = value === 'go-plus' ? 'Go Plus' : 'Go';
+      lines.push({group:'设置', text:(TOP_LABELS[field] || field) + '：' + show(value)});
     });
     Object.keys(edits.models).forEach(function(id){
       var edit = edits.models[id];
@@ -446,6 +454,11 @@ const pageScript = `
     if(name === 'status') renderStatus();
     if(name === 'models') renderModels();
     if(name === 'accounts') renderAccounts();
+    if(name === 'stats'){
+      initStatsFold();
+      if(!stats && !statsBusy) loadUsageStats();
+      else renderUsageStats();
+    }
     if(!keepScroll) el('panes').scrollTop = 0;
   }
   function currentTabFromHash(){
@@ -888,9 +901,10 @@ const pageScript = `
       aboutRow('协议面', '一个主插件 + 三个协议面插件（responses / messages / gemini），每个 .so 只声明一种上游协议，协议翻译由 CPA 完成。四个 .so 必须同版本安装，只有主插件需要配置，四个面在「状态」里逐面说明。'),
       aboutRow('别名', '在「模型」里为模型填写的别名会替代原名对外提供；清空别名即恢复原名，多个别名等于多个对外 id。'),
       aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。'),
+      aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、平均 TPS 与 TTFT。token 来自宿主 usage 事件，TTFT/生成时间由插件读流时自测；统计从 v1.6 起开始累计，不回溯历史。'),
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),
       aboutRow('热重载', '替换插件文件同样热生效：把新版本 .so 放进 plugins/linux/amd64 后原地改一次 config.yaml 即可（不要用会替换 inode 的方式写文件）。'),
-      aboutRow('残留', '插件只在 CPA 目录下写 plugins/ 与 data/cap-opencode-go/shared.json；删除插件与配置块后无任何残留。'),
+      aboutRow('残留', '插件只在 CPA 目录下写 plugins/ 与 data/cap-opencode-go/（shared.json、stats-&lt;role&gt;.json，可选 debug.log）；删除插件与配置块后无任何残留。'),
       aboutRow('仓库', '<a href="' + REPO_URL + '" target="_blank" rel="noreferrer noopener">' + esc(REPO_URL.replace('https://', '')) + '</a>')
     ].join('');
   }
@@ -908,6 +922,7 @@ const pageScript = `
       case 'key-cooldown-seconds': return state.key_cooldown_seconds == null ? 60 : state.key_cooldown_seconds;
       case 'max-retries': return state.max_retries == null ? 2 : state.max_retries;
       case 'state-dir': return state.state_dir || '';
+      case 'plan': return state.plan || 'go';
       case 'debug': return !!state.debug;
       default: return undefined;
     }
@@ -928,6 +943,7 @@ const pageScript = `
     el('cfgCooldown').value = value('key-cooldown-seconds');
     el('cfgRetries').value = value('max-retries');
     el('cfgStateDir').value = value('state-dir');
+    el('cfgPlan').value = value('plan');
     el('cfgDebug').checked = !!value('debug');
     text(el('stateDirHint'), '实际状态文件：' + (state.state_path || '(未解析)'));
   }
@@ -1007,7 +1023,7 @@ const pageScript = `
       notify('已保存 ' + saved + ' 项修改，正在重新读取…', 'ok');
       // The host reconfigures the plugin before answering, but its live state is
       // only published once the new configuration is applied, so read again.
-      setTimeout(function(){ loadModels(false); loadQuota(); }, 400);
+      setTimeout(function(){ loadModels(false); loadQuota(); if(stats) loadUsageStats(true); }, 400);
     }).catch(function(error){
       if(error && error.auth){
         // The credential the page used is not accepted: drop what the page
@@ -1056,6 +1072,15 @@ const pageScript = `
     return fetch(BASES.resource + '/api/quota').then(function(response){ return response.json(); }).then(function(payload){
       quota = { keys: payload.keys || [], at: Date.now() };
       renderAccounts();
+      if(tab === 'stats') renderUsageStats();
+      // The first statistics load may have fallen back to the calendar month
+      // because quota had not arrived yet. Once the reset time is known, ask
+      // for the real monthly window once.
+      if(stats && statsRange === 'month' && stats.range && stats.range.since_source === 'calendar' &&
+         !statsCalendarRetry && statsSinceISO()){
+        statsCalendarRetry = true;
+        loadUsageStats(true);
+      }
     }).catch(function(error){
       quota = { keys: [], at: 0, error: error.message };
       renderAccounts();
@@ -1068,6 +1093,7 @@ const pageScript = `
     if(tab === 'models') renderModels();
     if(tab === 'status') renderStatus();
     if(tab === 'settings') renderSettings();
+    if(tab === 'stats') renderUsageStats();
     renderStats();
     renderPending();
   }
@@ -1075,9 +1101,274 @@ const pageScript = `
     renderAccountStats();
     renderModelStats();
   }
+
+  // ------------------------------------------------------------- stats pane
+  // The 统计 tab is deliberately layered for a phone: the summary strip is
+  // always visible, the per-model table lives in a <details> that starts folded
+  // below 640px, and the methodology is always folded. This keeps the first
+  // screenful to a few numbers instead of a wall of token counts.
+  var statsFoldReady = false;
+  var statsRequest = 0;
+  function initStatsFold(){
+    if(statsFoldReady) return;
+    statsFoldReady = true;
+    var fold = el('statsModelsFold');
+    if(fold && window.matchMedia && window.matchMedia('(max-width: 640px)').matches){
+      fold.open = false;
+    }
+  }
+  function statsPlanLabel(){
+    if(stats && stats.plan_label) return stats.plan_label;
+    if(state && state.plan === 'go-plus') return 'Go Plus';
+    return 'Go';
+  }
+  function monthlyQuota(){
+    var best = null;
+    var latestReset = null;
+    var keyName = '';
+    ((quota && quota.keys) || []).forEach(function(entry){
+      (entry.windows || []).forEach(function(window){
+        if(window.key !== 'monthly') return;
+        var percent = Number(window.percent);
+        if(!isFinite(percent)) percent = 0;
+        if(!best || percent > best.percent){ best = {percent:percent}; keyName = entry.key_name || ''; }
+        var reset = window.resets_at ? new Date(window.resets_at) : null;
+        if(reset && !isNaN(reset.getTime()) && (!latestReset || reset > latestReset)) latestReset = reset;
+      });
+    });
+    if(!best) return null;
+    return {percent:best.percent, reset:latestReset, key:keyName};
+  }
+  function monthBefore(date){
+    // Subtracting one month from the 31st with setUTCMonth alone overflows into
+    // the following month (e.g. Mar 31 -> Mar 3); clamp to the target month's
+    // last day instead so the window really starts one month earlier.
+    var result = new Date(date.getTime());
+    var day = result.getUTCDate();
+    result.setUTCDate(1);
+    result.setUTCMonth(result.getUTCMonth() - 1);
+    var lastDay = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
+    result.setUTCDate(Math.min(day, lastDay));
+    return result;
+  }
+  function statsSinceISO(){
+    var info = monthlyQuota();
+    if(!info || !info.reset) return null;
+    return monthBefore(info.reset).toISOString();
+  }
+  function loadUsageStats(force){
+    if(statsBusy && !force) return Promise.resolve();
+    var request = ++statsRequest;
+    statsBusy = true;
+    statsErrorText = '';
+    renderUsageStats();
+    var params = '?range=' + encodeURIComponent(statsRange);
+    var since = statsRange === 'month' ? statsSinceISO() : null;
+    if(since) params += '&since=' + encodeURIComponent(since);
+    return fetch(BASES.resource + '/api/stats' + params)
+      .then(function(response){
+        if(!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function(payload){
+        if(request !== statsRequest) return;
+        stats = payload || null;
+        statsErrorText = '';
+        // If the quota request had not finished when this read started, the
+        // server used the calendar month. One retry with the now-known reset
+        // gives the real monthly window instead of leaving the page stale.
+        if(stats && statsRange === 'month' && stats.range && stats.range.since_source === 'calendar' &&
+           !statsCalendarRetry && statsSinceISO()){
+          statsCalendarRetry = true;
+          loadUsageStats(true);
+        }
+      })
+      .catch(function(error){
+        if(request !== statsRequest) return;
+        statsErrorText = '读取统计失败：' + error.message;
+      })
+      .then(function(){
+        if(request !== statsRequest) return;
+        statsBusy = false;
+        renderUsageStats();
+      });
+  }
+  function renderUsageStats(){
+    if(!el('statsSummary')) return;
+    renderUsageSummary();
+    renderUsageTable();
+    renderUsageMeta();
+  }
+  function renderUsageSummary(){
+    var totals = stats ? stats.totals : null;
+    var info = monthlyQuota();
+    var quotaValue = '—';
+    var quotaHint = '正在读取余量…';
+    if(quota && quota.error){ quotaHint = '余量读取失败'; }
+    else if(quota){
+      if(info){ quotaValue = formatPercent(info.percent); quotaHint = info.reset ? '重置 ' + fmtTime(info.reset) : '上游 /usage'; }
+      else { quotaHint = '上游没有返回月度窗口'; }
+    }
+    var tiles = [
+      ['本月额度', quotaValue, quotaHint],
+      ['刊例价', totals ? formatUSD(totals.cost_usd) : '—', stats ? (stats.range.kind === 'month' ? '本月' : '累计') + ' · 按价目表折算' : '正在读取…'],
+      ['Token', totals ? formatTokens(totals.total_tokens) : '—', totals ? '输入 ' + formatTokens(totals.input_tokens) + ' · 输出 ' + formatTokens(totals.output_tokens) : ''],
+      ['平均 TPS', totals && totals.tps_samples ? formatTPS(totals.avg_tps) : '—', totals && totals.tps_samples ? totals.tps_samples + ' 个流式样本' : '仅成功流式'],
+      ['平均 TTFT', totals && totals.ttft_samples ? formatTTFT(totals.avg_ttft_ms) : '—', totals && totals.ttft_samples ? totals.ttft_samples + ' 个流式样本' : '仅成功流式'],
+      ['有用量模型', totals ? String(totals.models_used) : '—', '套餐 ' + statsPlanLabel()]
+    ];
+    el('statsSummary').innerHTML = tiles.map(function(tile){
+      return '<div class="stat"><span class="k">' + esc(tile[0]) + '</span><span class="v">' + esc(tile[1]) + '</span>' +
+        (tile[2] ? '<span class="hint">' + esc(tile[2]) + '</span>' : '') + '</div>';
+    }).join('');
+  }
+  function formatTokens(value){
+    var number = Number(value) || 0;
+    if(number >= 1e9) return (number / 1e9).toFixed(2).replace('.00', '') + 'B';
+    if(number >= 1e6) return (number / 1e6).toFixed(2).replace('.00', '') + 'M';
+    if(number >= 1e4) return (number / 1e3).toFixed(1).replace('.0', '') + 'K';
+    return number.toLocaleString();
+  }
+  function formatUSD(value){
+    var number = Number(value);
+    if(!isFinite(number)) return '—';
+    if(number === 0) return '$0';
+    if(number < 0.001) return '$' + number.toFixed(5);
+    if(number < 0.01) return '$' + number.toFixed(4);
+    if(number < 1) return '$' + number.toFixed(3);
+    if(number < 100) return '$' + number.toFixed(2);
+    return '$' + Math.round(number).toLocaleString();
+  }
+  function formatPercent(value){
+    if(value == null) return '—';
+    var number = Number(value);
+    if(!isFinite(number)) return '—';
+    if(number >= 100) return number.toFixed(0) + '%';
+    if(number >= 10) return number.toFixed(1) + '%';
+    return number.toFixed(2) + '%';
+  }
+  function formatTPS(value){
+    var number = Number(value);
+    if(!isFinite(number) || number <= 0) return '—';
+    if(number >= 100) return number.toFixed(0) + ' tok/s';
+    if(number >= 10) return number.toFixed(1) + ' tok/s';
+    return number.toFixed(2) + ' tok/s';
+  }
+  function formatTTFT(value){
+    var number = Number(value);
+    if(!isFinite(number) || number <= 0) return '—';
+    if(number < 1000) return Math.round(number) + ' ms';
+    return (number / 1000).toFixed(2) + ' s';
+  }
+  function usageRow(model){
+    var aliases = (model.client_ids || []).filter(function(id){ return id !== model.id; });
+    var badges = '';
+    if(model.free) badges += '<span class="pill ok">免费</span>';
+    else if(!model.priced) badges += '<span class="pill">未定价</span>';
+    if(model.family) badges += '<span class="pill">' + esc(FAMILY_LABEL[model.family] || model.family) + '</span>';
+    if(!model.configured) badges += '<span class="pill warn">已不在配置中</span>';
+    var modelCell = '<div class="stats-model-name">' + esc(model.display_name || model.id) + '</div>' +
+      '<div class="stats-model-id"><code>' + esc(model.id) + '</code>' +
+      (aliases.length ? ' · 对外 ' + esc(aliases.join(', ')) : '') + '</div>' +
+      (badges ? '<div class="stats-model-badges">' + badges + '</div>' : '');
+
+    var requestSub = [];
+    if(model.stream_requests) requestSub.push(model.stream_requests + ' 流式');
+    if(model.failed_requests) requestSub.push(model.failed_requests + ' 失败');
+    if(model.unmetered_requests) requestSub.push(model.unmetered_requests + ' 未上报');
+    var requests = '<span class="stats-cell-main">' + Number(model.requests || 0).toLocaleString() + '</span>' +
+      (requestSub.length ? '<span class="stats-sub">' + esc(requestSub.join(' · ')) + '</span>' : '');
+
+    var input = '<span class="stats-cell-main">' + formatTokens(model.input_tokens) + '</span>' +
+      (model.cached_tokens ? '<span class="stats-sub">缓存 ' + formatTokens(model.cached_tokens) + '</span>' : '');
+    var output = '<span class="stats-cell-main">' + formatTokens(model.output_tokens) + '</span>' +
+      (model.reasoning_tokens ? '<span class="stats-sub">推理 ' + formatTokens(model.reasoning_tokens) + '</span>' : '');
+    var cache = (model.cache_read_tokens || model.cache_creation_tokens)
+      ? '<span class="stats-cell-main">' + formatTokens(model.cache_read_tokens) + ' / ' + formatTokens(model.cache_creation_tokens) + '</span><span class="stats-sub">读 / 写</span>'
+      : '<span class="hint">—</span>';
+
+    var cost = model.free ? '<span class="pill ok">免费</span>'
+      : (!model.priced ? '<span class="pill">未定价</span>' : '<span class="stats-cell-main">' + formatUSD(model.cost_usd) + '</span>');
+    if(model.priced && model.unpriced_requests) cost += '<span class="stats-sub">' + model.unpriced_requests + ' 次未计价</span>';
+
+    var monthly = '<span class="hint">—</span>';
+    if(stats.range && stats.range.kind !== 'month') monthly = '<span class="hint">仅本月</span>';
+    else if(model.free) monthly = '<span class="pill ok">不限</span>';
+    else if(model.monthly_percent != null && model.monthly_limit_usd > 0){
+      var used = Math.max(0, Number(model.monthly_percent) || 0);
+      var width = Math.min(100, used);
+      var level = used >= 100 ? 'err' : (used >= 80 ? 'warn' : '');
+      monthly = '<div class="stats-percent"><span class="v ' + (level === 'err' ? 'err-text' : level === 'warn' ? 'warn-text' : '') + '">' +
+        formatPercent(used) + '</span><div class="bar ' + level + '"><span style="width:' + width + '%"></span></div>' +
+        '<span class="stats-sub">' + formatUSD(model.cost_usd) + ' / ' + formatUSD(model.monthly_limit_usd) + '</span></div>';
+    } else if(model.priced) monthly = '<span class="hint">限额未知</span>';
+
+    var tps = model.tps_samples
+      ? '<span class="stats-cell-main">' + formatTPS(model.avg_tps) + '</span><span class="stats-sub">' + model.tps_samples + ' 样本</span>'
+      : '<span class="hint">—</span>';
+    var ttft = model.ttft_samples
+      ? '<span class="stats-cell-main">' + formatTTFT(model.avg_ttft_ms) + '</span><span class="stats-sub">' + model.ttft_samples + ' 样本</span>'
+      : '<span class="hint">—</span>';
+    var last = model.last_used ? esc(relPast(model.last_used)) : '<span class="hint">—</span>';
+
+    return '<tr>' +
+      '<td class="stats-model-cell" data-label="模型">' + modelCell + '</td>' +
+      '<td class="num" data-label="请求">' + requests + '</td>' +
+      '<td class="num" data-label="输入">' + input + '</td>' +
+      '<td class="num" data-label="输出">' + output + '</td>' +
+      '<td class="num" data-label="缓存读/写">' + cache + '</td>' +
+      '<td class="num" data-label="刊例价">' + cost + '</td>' +
+      '<td data-label="本月额度">' + monthly + '</td>' +
+      '<td class="num" data-label="平均 TPS">' + tps + '</td>' +
+      '<td class="num" data-label="平均 TTFT">' + ttft + '</td>' +
+      '<td data-label="最近使用">' + last + '</td>' +
+    '</tr>';
+  }
+  function renderUsageTable(){
+    var box = el('usageStatsTable');
+    if(!stats){
+      box.innerHTML = '<div class="hint">' + (statsBusy ? '正在读取统计…' : (statsErrorText ? esc(statsErrorText) : '还没有统计数据。')) + '</div>';
+      return;
+    }
+    if(!stats.models || !stats.models.length){
+      box.innerHTML = '<div class="empty-state">还没有用量数据。发一次请求后点「刷新」；统计从 v1.6 起开始累计，不回溯历史。若已有请求但这里仍为空，留意上方的诊断提示。</div>';
+      return;
+    }
+    var headers = ['模型','请求','输入','输出','缓存读/写','刊例价','本月额度','平均 TPS','平均 TTFT','最近使用'];
+    var head = headers.map(function(label, index){
+      var numeric = index >= 1 && index <= 5 || index === 7 || index === 8;
+      return '<th' + (numeric ? ' class="num"' : '') + '>' + esc(label) + '</th>';
+    }).join('');
+    box.innerHTML = '<table class="responsive stats-table"><thead><tr>' + head + '</tr></thead><tbody>' +
+      stats.models.map(usageRow).join('') + '</tbody></table>';
+  }
+  function renderUsageMeta(){
+    var errorBox = el('statsError');
+    if(statsErrorText){ text(errorBox, statsErrorText); errorBox.hidden = false; }
+    else { errorBox.hidden = true; }
+    var warnBox = el('statsWarnings');
+    var warnings = (stats && stats.warnings) || [];
+    if(warnings.length){
+      warnBox.innerHTML = warnings.map(function(message){ return esc(message); }).join('<br>');
+      warnBox.hidden = false;
+    } else { warnBox.hidden = true; }
+    text(el('statsPlanHint'), '当前套餐：' + statsPlanLabel() + ' · 逐模型月额度为按刊例价折算的估算');
+    text(el('statsRangeHint'), statsBusy ? '读取中…' : '每 5 秒落盘');
+    var count = stats && stats.models ? stats.models.length : 0;
+    text(el('statsModelsHint'), stats ? (count + ' 个模型 · ' + (stats.range.kind === 'month' ? '本月' : '累计') + ' ' + formatUSD(stats.totals.cost_usd)) : '正在读取…');
+    if(stats && stats.price_book_revision) text(el('statsPriceRevision'), '价目表 ' + stats.price_book_revision);
+    var notes = [];
+    if(stats && stats.range){
+      if(stats.range.since_source === 'calendar') notes.push('未取得额度重置时间，按 UTC 自然月统计。');
+      if(stats.range.clamped) notes.push('起点超出 40 天保留期，已截断。');
+    }
+    notes.push('统计从 v1.6 起开始累计，不回溯历史；请求后最多 5 秒可见。金额为刊例价估算，不是 OpenCode 账单。');
+    text(el('statsFootnote'), notes.join(' '));
+  }
   function load(){
     loadModels(false);
     loadQuota();
+    if(tab === 'stats') loadUsageStats();
   }
 
   // ------------------------------------------------------------ key edits
@@ -1161,6 +1452,17 @@ const pageScript = `
   el('toast').addEventListener('click', function(){ el('toast').hidden = true; });
 
   el('refreshQuota').addEventListener('click', loadQuota);
+  el('refreshStats').addEventListener('click', function(){ loadUsageStats(true); });
+  el('statsRange').addEventListener('change', function(){
+    statsRange = el('statsRange').value === 'all' ? 'all' : 'month';
+    stats = null;
+    loadUsageStats(true);
+  });
+  el('statsPlanBtn').addEventListener('click', function(){
+    showTab('settings');
+    var plan = el('cfgPlan');
+    if(plan) plan.focus();
+  });
   el('refreshUpstream').addEventListener('click', function(){ loadModels(true); });
   el('refreshModels').addEventListener('click', function(){ loadModels(true); });
   el('collapseModels').addEventListener('click', function(){ expanded = {}; renderModels(); });
@@ -1267,11 +1569,11 @@ const pageScript = `
       })
       .then(function(){ renderModels(); });
   }
-  ['cfgBaseURL','cfgSession','cfgProxyURL','cfgStateDir','cfgSessionMode','cfgDefaultProxy','cfgTimeout','cfgCooldown','cfgRetries','cfgDebug'].forEach(function(id){
+  ['cfgBaseURL','cfgSession','cfgProxyURL','cfgStateDir','cfgSessionMode','cfgDefaultProxy','cfgTimeout','cfgCooldown','cfgRetries','cfgPlan','cfgDebug'].forEach(function(id){
     var field = {
       cfgBaseURL:'base-url', cfgSession:'session', cfgProxyURL:'proxy-url', cfgStateDir:'state-dir',
       cfgSessionMode:'session-mode', cfgDefaultProxy:'default-proxy', cfgTimeout:'request-timeout-seconds',
-      cfgCooldown:'key-cooldown-seconds', cfgRetries:'max-retries', cfgDebug:'debug'
+      cfgCooldown:'key-cooldown-seconds', cfgRetries:'max-retries', cfgPlan:'plan', cfgDebug:'debug'
     }[id];
     var node = el(id);
     function record(){

@@ -1,10 +1,142 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.5.0）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.6.1）
 
-> v1.5.0（四个协议面的品牌整合：统一 OpenCode 图标、角色化命名、从属面零配置、仪表盘「协议面」卡片）
-> 在生产实例 127.0.0.1:8317 热重载实测：**22 passed, 0 failed**（未提供管理密钥，故 4 项品牌检查跳过）；
-> 隔离实例 **30 passed, 0 failed**；无头浏览器验证了「插件管理」四行的图标与命名、侧边栏入口图标、
-> 仪表盘品牌与协议面卡片（桌面 + 手机）。
-> 下面是本轮的完整记录，其后是历史记录（v1.4.1 仪表盘改造、v1.3.0 别名重命名、v1.2.0、v1.1.1）。
+> v1.6.1（「统计」Tab：宿主 usage 记账 + 插件自测 TTFT/TPS + 价目表/套餐月额度；
+> 1.6.1 修正首屏月窗口竞态、月末倒推与保存后刷新）
+> 在生产实例 127.0.0.1:8317 热重载实测：PID 不变、版本 1.6.1、`plan=go`；
+> 公开验收 **32 passed, 0 failed**（管理密钥是 bcrypt 哈希，环境里没有明文，故 6 项管理检查跳过）；
+> 隔离实例 127.0.0.1:8399 跑完整套 **40 passed, 0 failed**（含 messages 族、四个协议面、管理探测）。
+> 无头浏览器验证生产统计页桌面 + 手机（390px）无 JS 异常、无横向溢出、手机默认折叠模型明细。
+> 下面是本轮记录，其后是历史记录（v1.5.0 协议面品牌整合、v1.4.1 仪表盘改造、v1.3.0 别名重命名、v1.2.0、v1.1.1）。
+
+---
+
+## v1.6.0 / 1.6.1 统计面板（生产热重载 + 隔离实例 40 项 + 桌面/手机浏览器）
+
+本轮新增只读观测面，不改变任何协议转换、模型路由、别名或 Key 池行为。设计见
+[design.md](design.md) §7.8；数据来源与口径在页面「统计口径与价目说明」里也有一份。
+
+### 1. 生产实例：热重载到 1.6.1
+
+```
+$ CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.6.1
+installed …/cap-opencode-go-v1.6.1.so
+installed …/cap-opencode-go-responses-v1.6.1.so
+installed …/cap-opencode-go-messages-v1.6.1.so
+installed …/cap-opencode-go-gemini-v1.6.1.so
+
+$ # 原地追加一行注释触发 fsnotify（保持 inode 10653636）
+$ # 新增文件而不是覆盖已 dlopen 的 1.5.0
+```
+
+| 断言 | 结果 | 证据 |
+|---|---|---|
+| 热重载到 1.6.1 | ✅ | `/api/state` → `version=1.6.1`、`role=chat`、`plan=go`、`config_error` 为空 |
+| 进程未重启 | ✅ | PID `3194299` 全程不变，ELAPSED 从 20:59:10 继续增长 |
+| 四个面同版本 | ✅ | 插件目录同时存在四个 `-v1.6.1.so`；热重载日志按版本选中 |
+| 生产页面 = 仓库源码 | ✅ | 生产 `GET /dashboard` 与 `go test` 生成的 `dashboard.Page()` 字节一致（各 120 194 bytes，`cmp` 退出 0） |
+| 配置只多注释 | ✅ | `config.yaml` inode 10653636 不变；只追加 `# (v1.6.0 …)` / `# (v1.6.1 …)` 注释 |
+| 统计落盘 | ✅ | `data/cap-opencode-go/` 新增 `stats-chat.json`、`stats-gemini.json`、`stats-responses.json`（0600）；`shared.json` 仍在 |
+| 统计文件无 Key | ✅ | `grep -l oc_sk_ stats-*.json` 无输出 |
+| 公开验收 | ✅ | **32 passed, 0 failed** |
+
+生产环境没有管理密钥明文：`management.secret-key` 是 60 字符 bcrypt 哈希（`$2a$…`），
+所以侧边栏、四行品牌、管理探测这 6 项按脚本的 preflight 规则跳过；它们由隔离实例覆盖。
+
+### 2. 生产统计结果（真实上游请求）
+
+用客户端 `DeepSeek-V4.1-Flash` 发一次 `stream=true` 的 `max_tokens=8` 请求，等待一个 5 秒
+落盘周期后：
+
+```
+$ curl -s http://127.0.0.1:8317/v0/resource/plugins/cap-opencode-go/api/stats?range=all
+usage_records  = {"received": 5, "matched": 5}
+totals         = requests=5 tokens=827110 cost_usd=0.003360414
+                 ttft_samples=4 tps_samples=4 avg_tps=389.87 avg_ttft_ms=3088.3
+deepseek-v4.1-flash  requests=5  input=825817 output=1293 cached=825088
+                     cost_usd=0.003360414  avg_tps=389.87 avg_ttft_ms=3088.3
+```
+
+随后完整公开验收生成了更多请求（chat / responses / gemini 的流式与非流式）：
+
+```
+statistics resource  ready | matched=136 requests=136 tokens=13518739 ttft=102 tps=102 missing_families=-
+  deepseek-v4.1-flash(chat)       r=92 tok=13516614 $0.1542 ttft=90 tps=90
+  gemini-4-argon-contributor(gemini) r=12 tok=542  $0.0047 ttft=4  tps=4
+  gpt-6-luna(responses)            r=16 tok=530     $0.0002 ttft=4  tps=4
+  beam-free(chat)                  r=16 tok=1053    $0.0000 ttft=4  tps=4
+```
+
+- 主面聚合了 chat 的 token 与三个从属面的 timing：`stats-responses.json` /
+  `stats-gemini.json` 各自出现后，`gpt-6-luna` 与 `gemini-4-argon-contributor` 才有
+  TTFT/TPS 样本，说明跨 `.so` 合并生效。
+- 月额度：生产页面从 `/api/quota` 的 monthly `resets_at`（2026-11-04）往前推一个月到
+  2026-10-04，账户本月 **44%**；最终验收请求跑完后该模型约 **0.19%**
+  （$0.1542 / $80.00 Go 限额；截图拍摄于较早一次运行，数值随请求增长）。
+- `usage_records.matched=136` 等于 `received`，provider 过滤没有漏记录；若为 0，页面会显示诊断提示。
+- 验收脚本的统计轮询现在要求**每个跑过流式检查的协议族**都出现 TTFT/TPS 样本
+  （本次 chat/responses/gemini 均为 `missing_families=-`），避免只等到主面 chat timing 就提前通过。
+
+### 3. 隔离实例：完整 40 项
+
+`/tmp/cpa-161-test`：v8.0.27 + 四个 1.6.1 `.so`，独立客户端 key 与明文管理密钥，
+chat（Beam）/ responses（gpt-6-luna）/ gemini（gemini-4-argon）/ messages（claude-haiku-5-5）
+全部打开，`requests.proxy-url=http://127.0.0.1:7890`（与生产一致）：
+
+```
+== 40 passed, 0 failed ==
+  PASS  chat/completions non-stream / stream
+  PASS  responses non-stream / stream
+  PASS  gemini generateContent / streamGenerateContent
+  PASS  messages non-stream / stream
+  PASS  sidebar menu entry
+  PASS  plugin faces / icon / names / config（main 15 fields, siblings 0）
+  PASS  statistics resource  ready | matched=13 requests=13 tokens=605 ttft=3 tps=3
+  PASS  stats payload hides secrets
+  PASS  statistics monthly window
+  PASS  management protocol probe  best=responses
+  PASS  dashboard page: 统计 tab / 统计面板 / 统计概览 / 统计表 / 统计口径折叠 / TTFT 列 / 套餐设置
+  PASS  state carries the editable settings（含 plan）
+```
+
+### 4. 桌面与手机页面（无头 Chromium）
+
+生产页面 `#stats`，CDP 设置 1280×900 与 390×844：
+
+| 断言 | 结果 |
+|---|---|
+| 页面无未捕获 JS 异常 | ✅（`Runtime.exceptionThrown` 无事件） |
+| 手机无横向溢出 | ✅（`innerWidth=390`、`documentElement.scrollWidth=390`） |
+| 手机默认折叠「模型明细」 | ✅（`#statsModelsFold.open === false`） |
+| 桌面默认展开「模型明细」 | ✅ |
+| 「统计口径与价目说明」始终折叠 | ✅ |
+| 手机展开后表格变卡片 | ✅（`data-label` 生效；截图见 README） |
+
+截图：`docs/screenshots/desktop-stats.png`、`mobile-stats.png`（折叠）、
+`mobile-stats-open.png`（展开明细）。
+
+### 5. 单元/静态检查
+
+```
+$ go test ./... && go vet ./...
+ok   …/internal/pricing
+ok   …/internal/stats
+ok   …/internal/plugin
+ok   …/internal/dashboard
+…
+
+$ go test -race ./...
+ok   … (all packages)
+```
+
+新增覆盖：价目表档位/峰谷/缓存/免费/未定价/Go Plus 限额；小时桶窗口、裁剪、角色不匹配、
+损坏文件恢复、Shutdown、并发；四协议内容帧识别；provider 过滤、别名→base、messages 缓存口径、
+gemini reasoning、流式 timing、`/api/stats` 合并与月百分比、管理路由、页面统计标记。
+
+### 6. 回滚对照
+
+统计只新增 `data/cap-opencode-go/stats-<role>.json`（0600，无 Key）。删除 1.6.1 的四个 `.so`
+并原地改一次 config.yaml 即回退到 1.5.0；1.5.0 不认识 `plan` 字段，也不会读这些文件，
+`scripts/uninstall.sh` 会连同数据目录一起删除。回滚清单详见 [rollback.md](rollback.md)。
 
 ---
 

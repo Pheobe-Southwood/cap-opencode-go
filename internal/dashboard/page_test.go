@@ -91,13 +91,13 @@ func TestPageManagesFourProtocolFaces(t *testing.T) {
 func TestPageTabsStartOnAccounts(t *testing.T) {
 	document := page(t)
 	for _, want := range []string{
-		`data-tab="accounts"`, `data-tab="models"`, `data-tab="status"`, `data-tab="settings"`,
-		`id="pane-accounts"`, `id="pane-models"`, `id="pane-status"`, `id="pane-settings"`,
+		`data-tab="accounts"`, `data-tab="stats"`, `data-tab="models"`, `data-tab="status"`, `data-tab="settings"`,
+		`id="pane-accounts"`, `id="pane-stats"`, `id="pane-models"`, `id="pane-status"`, `id="pane-settings"`,
 		`role="tablist"`, `role="tabpanel"`,
 		// Accounts is the only pane that starts visible.
 		`class="pane active" id="pane-accounts"`,
 		`id="pane-models" role="tabpanel" aria-labelledby="tab-models" hidden`,
-		"var TABS = ['accounts','models','status','settings'];",
+		"var TABS = ['accounts','stats','models','status','settings'];",
 		"var tab = 'accounts';",
 		"return TABS.indexOf(name) >= 0 ? name : 'accounts';",
 	} {
@@ -287,6 +287,43 @@ func TestPageModelControls(t *testing.T) {
 	}
 	if strings.Contains(document, "row.is_alias") || strings.Contains(document, "row.base_id") {
 		t.Error("alias rows no longer exist; the page must not depend on them")
+	}
+}
+
+// The statistics tab answers the operator's question per used model: tokens,
+// list-price spend, share of the monthly allowance, average TPS and TTFT. On a
+// phone the table is folded so the first screen is the summary, not a wall of
+// numbers; the methodology is always folded.
+func TestPageStatsSummarizesUsedModels(t *testing.T) {
+	document := page(t)
+	for _, want := range []string{
+		`id="tab-stats"`, `id="pane-stats"`, `id="statsSummary"`, `id="usageStatsTable"`,
+		`id="statsModelsFold"`, `id="statsAboutFold"`, `id="statsRange"`, `id="refreshStats"`,
+		`id="statsError"`, `id="statsWarnings"`, `id="statsPlanHint"`, `id="statsPlanBtn"`,
+		`id="statsPriceRevision"`, `id="cfgPlan"`,
+		"/api/stats", "function loadUsageStats(force)", "function renderUsageTable()", "function usageRow(model)",
+		"function statsSinceISO()", "function monthBefore(date)", "setUTCMonth(result.getUTCMonth() - 1)",
+		"var statsCalendarRetry = false;", "stats.range.since_source === 'calendar'",
+		`data-label="请求"`, `data-label="输入"`, `data-label="输出"`, `data-label="缓存读/写"`,
+		`data-label="刊例价"`, `data-label="本月额度"`, `data-label="平均 TPS"`, `data-label="平均 TTFT"`,
+		"只统计成功的流式请求", "统计从 v1.6 起开始累计", "金额为刊例价估算，不是 OpenCode 账单",
+		"matchMedia('(max-width: 640px)')", "fold.open = false", ".fold-block{", ".stats-table-wrap{",
+	} {
+		if !strings.Contains(document, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	// The three non-summary blocks are real details elements, not divs that
+	// merely look collapsible.
+	if !strings.Contains(document, `<details class="fold-block" id="statsModelsFold" open>`) {
+		t.Error("the model table must live in a details element")
+	}
+	if !strings.Contains(document, `<details class="card fold-card" id="statsAboutFold">`) {
+		t.Error("the methodology must live in a folded details card")
+	}
+	// Switching the plan from the statistics page jumps to the settings select.
+	if !strings.Contains(document, "showTab('settings');") {
+		t.Error("the plan shortcut must open the settings tab")
 	}
 }
 

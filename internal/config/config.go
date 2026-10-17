@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cpa-opencodego/cap-opencode-go/internal/models"
+	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
 )
 
@@ -62,6 +63,10 @@ const (
 	DefaultKeyWeight       = 1
 	DefaultStateDirName    = "cap-opencode-go"
 	SharedStateFileName    = "shared.json"
+	// DefaultPlan is used by the 统计 tab until the operator picks a plan. The
+	// upstream /usage endpoint reports percentages, not the subscription tier,
+	// so the tier has to be configured rather than guessed.
+	DefaultPlan = string(pricing.PlanGo)
 )
 
 // Key is one upstream credential.
@@ -116,20 +121,23 @@ type ModelSetting struct {
 
 // Settings is the plugin configuration under plugins.configs.<pluginID>.
 type Settings struct {
-	BaseURL               string                  `yaml:"base-url" json:"base-url"`
-	SessionMode           string                  `yaml:"session-mode" json:"session-mode"`
-	Session               string                  `yaml:"session" json:"session"`
-	ProxyURL              string                  `yaml:"proxy-url" json:"proxy-url"`
-	DefaultProxy          string                  `yaml:"default-proxy" json:"default-proxy"`
-	ExtraHeaders          map[string]string       `yaml:"extra-headers" json:"extra-headers,omitempty"`
-	RequestTimeoutSeconds int                     `yaml:"request-timeout-seconds" json:"request-timeout-seconds"`
-	KeyCooldownSeconds    int                     `yaml:"key-cooldown-seconds" json:"key-cooldown-seconds"`
-	MaxRetries            int                     `yaml:"max-retries" json:"max-retries"`
-	StateDir              string                  `yaml:"state-dir" json:"state-dir"`
-	Debug                 bool                    `yaml:"debug" json:"debug"`
-	Keys                  []Key                   `yaml:"keys" json:"keys,omitempty"`
-	Models                map[string]ModelSetting `yaml:"models" json:"models,omitempty"`
-	ModelsDefault         ModelSetting            `yaml:"models-default" json:"models-default"`
+	BaseURL               string            `yaml:"base-url" json:"base-url"`
+	SessionMode           string            `yaml:"session-mode" json:"session-mode"`
+	Session               string            `yaml:"session" json:"session"`
+	ProxyURL              string            `yaml:"proxy-url" json:"proxy-url"`
+	DefaultProxy          string            `yaml:"default-proxy" json:"default-proxy"`
+	ExtraHeaders          map[string]string `yaml:"extra-headers" json:"extra-headers,omitempty"`
+	RequestTimeoutSeconds int               `yaml:"request-timeout-seconds" json:"request-timeout-seconds"`
+	KeyCooldownSeconds    int               `yaml:"key-cooldown-seconds" json:"key-cooldown-seconds"`
+	MaxRetries            int               `yaml:"max-retries" json:"max-retries"`
+	StateDir              string            `yaml:"state-dir" json:"state-dir"`
+	// Plan is the OpenCode Go subscription tier used by the statistics tab to
+	// turn a model's list-price spend into a percentage of its monthly limit.
+	Plan          string                  `yaml:"plan" json:"plan"`
+	Debug         bool                    `yaml:"debug" json:"debug"`
+	Keys          []Key                   `yaml:"keys" json:"keys,omitempty"`
+	Models        map[string]ModelSetting `yaml:"models" json:"models,omitempty"`
+	ModelsDefault ModelSetting            `yaml:"models-default" json:"models-default"`
 	// HostProxyURL is filled from the host config summary and is never read
 	// from YAML.
 	HostProxyURL string `yaml:"-" json:"host-proxy-url,omitempty"`
@@ -145,6 +153,7 @@ func Default() Settings {
 		RequestTimeoutSeconds: DefaultTimeoutSeconds,
 		KeyCooldownSeconds:    DefaultCooldownSeconds,
 		MaxRetries:            DefaultMaxRetries,
+		Plan:                  DefaultPlan,
 	}
 }
 
@@ -208,6 +217,7 @@ func (s *Settings) normalize() {
 	if strings.TrimSpace(s.ModelsDefault.Proxy) != "" {
 		s.ModelsDefault.Proxy = normalizeProxy(s.ModelsDefault.Proxy)
 	}
+	s.Plan = string(pricing.NormalizePlan(s.Plan))
 	s.ProxyURL = strings.TrimSpace(s.ProxyURL)
 	if s.ExtraHeaders == nil {
 		s.ExtraHeaders = map[string]string{}

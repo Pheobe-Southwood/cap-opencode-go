@@ -23,6 +23,31 @@ func TestParseDefaults(t *testing.T) {
 	if settings.ModelConfig("anything").Proxy != ProxyInherit {
 		t.Errorf("an unconfigured model must inherit, got %q", settings.ModelConfig("anything").Proxy)
 	}
+	if settings.Plan != DefaultPlan {
+		t.Errorf("Plan = %q, want default %q", settings.Plan, DefaultPlan)
+	}
+}
+
+func TestPlanNormalization(t *testing.T) {
+	cases := map[string]string{
+		"":          "go",
+		"go":        "go",
+		"GO":        "go",
+		"go-plus":   "go-plus",
+		"go_plus":   "go-plus",
+		"goplus":    "go-plus",
+		"plus":      "go-plus",
+		"something": "go",
+	}
+	for input, want := range cases {
+		settings, errParse := Parse([]byte("plan: \"" + input + "\"\n"))
+		if errParse != nil {
+			t.Fatalf("parse plan %q: %v", input, errParse)
+		}
+		if settings.Plan != want {
+			t.Errorf("plan %q normalized to %q, want %q", input, settings.Plan, want)
+		}
+	}
 }
 
 // models-default must not silently override the instance-wide default-proxy.

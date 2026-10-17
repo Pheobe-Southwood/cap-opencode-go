@@ -52,6 +52,7 @@ plugins:
     cap-opencode-go:
       enabled: true
       priority: 10
+      plan: "go"
       keys:
         - name: "main"
           key: "oc_sk_xxx"

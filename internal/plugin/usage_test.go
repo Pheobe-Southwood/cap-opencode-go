@@ -1,0 +1,216 @@
+package plugin
+
+import (
+	"encoding/json"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
+	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
+	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+)
+
+func newStatsTestRuntime(t *testing.T, role roles.Name) *Runtime {
+	t.Helper()
+	runtime := New(roles.ByName(string(role)))
+	runtime.sharedPath = filepath.Join(t.TempDir(), "shared.json")
+	runtime.applySettings(config.Default())
+	t.Cleanup(runtime.Shutdown)
+	return runtime
+}
+
+func sendUsage(t *testing.T, runtime *Runtime, record pluginapi.UsageRecord) {
+	t.Helper()
+	raw, errMarshal := json.Marshal(record)
+	if errMarshal != nil {
+		t.Fatalf("marshal usage record: %v", errMarshal)
+	}
+	envelopeResult(t, runtime.handleUsage(raw))
+}
+
+func usageAt() time.Time {
+	// Saturday: DeepSeek off-peak, so the expected cost is deterministic.
+	return time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+}
+
+func TestUsageProviderFilter(t *testing.T) {
+	accepted := []pluginapi.UsageRecord{
+		{Provider: "cap-opencode-go", Model: "glm-5.3"},
+		{Provider: "cap-opencode-go-messages", Model: "glm-5.3"},
+		{Provider: "opencode-go-gemini", Model: "glm-5.3"},
+		{Source: "cap-opencode-go-responses", Model: "glm-5.3"},
+		{ExecutorType: "plugin:cap-opencode-go", Model: "glm-5.3"},
+	}
+	for _, record := range accepted {
+		if !ownsUsageRecord(record) {
+			t.Errorf("record %+v must be accepted", record)
+		}
+	}
+	for _, record := range []pluginapi.UsageRecord{
+		{Provider: "openai", Model: "gpt-5"},
+		{Provider: "anthropic", Source: "claude-code", Model: "claude"},
+		{},
+	} {
+		if ownsUsageRecord(record) {
+			t.Errorf("foreign record %+v must be ignored", record)
+		}
+	}
+}
+
+func TestUsageRecordsOnlyOwnProvider(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go",
+		Model:    "glm-5.3",
+		Detail:   pluginapi.UsageDetail{InputTokens: 10, OutputTokens: 2, TotalTokens: 12},
+	})
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "some-other-provider",
+		Model:    "gpt-5",
+		Detail:   pluginapi.UsageDetail{InputTokens: 100, OutputTokens: 100},
+	})
+	snapshot := runtime.statsStore().Snapshot(time.Time{})
+	if snapshot.Received != 2 || snapshot.Matched != 1 {
+		t.Errorf("received/matched = %d/%d, want 2/1", snapshot.Received, snapshot.Matched)
+	}
+	if _, exists := snapshot.Models["gpt-5"]; exists {
+		t.Error("a foreign provider's model must not enter the counters")
+	}
+}
+
+func TestUsageResolvesAliasAndPrices(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	settings := config.Default()
+	settings.Models = map[string]config.ModelSetting{
+		"deepseek-v4.1-flash": {Aliases: []string{"DeepSeek-V4.1-Flash"}},
+	}
+	runtime.applySettings(settings)
+
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider:    "cap-opencode-go",
+		Model:       "DeepSeek-V4.1-Flash",
+		RequestedAt: usageAt(),
+		Stream:      true,
+		Detail: pluginapi.UsageDetail{
+			InputTokens: 1_000_000, OutputTokens: 1_000_000,
+			TotalTokens: 2_000_000,
+		},
+	})
+	snapshot := runtime.statsStore().Snapshot(time.Time{})
+	model, exists := snapshot.Models["deepseek-v4.1-flash"]
+	if !exists {
+		t.Fatalf("alias did not resolve to the base id: %+v", snapshot.Models)
+	}
+	if model.Family != "chat" {
+		t.Errorf("family = %q, want chat", model.Family)
+	}
+	if model.Counter.CostNanoUSD != 750_000_000 {
+		t.Errorf("cost = %d nanoUSD, want 750000000", model.Counter.CostNanoUSD)
+	}
+	if model.Counter.Priced != 1 || model.Counter.Streams != 1 || model.Counter.StreamOutput != 1_000_000 {
+		t.Errorf("counter = %+v", model.Counter)
+	}
+}
+
+func TestUsageMessagesCacheConvention(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider:    "cap-opencode-go-messages",
+		Model:       "claude-haiku-5-5",
+		RequestedAt: usageAt(),
+		Detail: pluginapi.UsageDetail{
+			InputTokens: 1_000, CacheReadTokens: 100_000, CacheCreationTokens: 1_000,
+			OutputTokens: 1_000, TotalTokens: 103_000,
+		},
+	})
+	model := runtime.statsStore().Snapshot(time.Time{}).Models["claude-haiku-5-5"]
+	if model.Family != "messages" {
+		t.Errorf("family = %q, want messages", model.Family)
+	}
+	// Prompt 102K > 100K: 1K input, 100K read, 1K write, 1K output at the
+	// high Anthropic tier.
+	if model.Counter.CostNanoUSD != 8_625_000 {
+		t.Errorf("messages cost = %d nanoUSD, want 8625000", model.Counter.CostNanoUSD)
+	}
+}
+
+func TestUsageGeminiAddsReasoningToOutputCost(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider:    "cap-opencode-go-gemini",
+		Model:       "gemini-4-argon-contributor",
+		RequestedAt: usageAt(),
+		Detail: pluginapi.UsageDetail{
+			OutputTokens: 1_000, ReasoningTokens: 1_000, TotalTokens: 2_000,
+		},
+	})
+	model := runtime.statsStore().Snapshot(time.Time{}).Models["gemini-4-argon-contributor"]
+	if model.Counter.CostNanoUSD != 40_000_000 {
+		t.Errorf("gemini cost = %d nanoUSD, want 40000000", model.Counter.CostNanoUSD)
+	}
+}
+
+func TestUsageFreeAndUnpricedModels(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", Model: "longcat-2.5-preview-free",
+		Detail: pluginapi.UsageDetail{InputTokens: 1_000},
+	})
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", Model: "omen-alpha",
+		Detail: pluginapi.UsageDetail{InputTokens: 1_000},
+	})
+	snapshot := runtime.statsStore().Snapshot(time.Time{})
+	free := snapshot.Models["longcat-2.5-preview-free"]
+	if free.Counter.CostNanoUSD != 0 {
+		t.Errorf("free model cost = %d", free.Counter.CostNanoUSD)
+	}
+	if free.Counter.Priced != 1 {
+		t.Errorf("free model must count as priced: %+v", free.Counter)
+	}
+	unknown := snapshot.Models["omen-alpha"]
+	if unknown.Counter.Unpriced != 1 || unknown.Counter.Priced != 0 {
+		t.Errorf("unpriced counters = %+v", unknown.Counter)
+	}
+}
+
+func TestUsageFallsBackToAliasAndResponseModel(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", Alias: "deepseek-v4.1-flash",
+		Detail: pluginapi.UsageDetail{InputTokens: 10},
+	})
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", ResponseModel: "glm-5.3",
+		Detail: pluginapi.UsageDetail{InputTokens: 10},
+	})
+	snapshot := runtime.statsStore().Snapshot(time.Time{})
+	if _, exists := snapshot.Models["deepseek-v4.1-flash"]; !exists {
+		t.Error("the alias must be used when Model is empty")
+	}
+	if _, exists := snapshot.Models["glm-5.3"]; !exists {
+		t.Error("the response model must be used as a fallback")
+	}
+}
+
+func TestUsageBareModelNameStripsThinkingSuffix(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", Model: "glm-5.3(high)",
+		Detail: pluginapi.UsageDetail{InputTokens: 10},
+	})
+	if _, exists := runtime.statsStore().Snapshot(time.Time{}).Models["glm-5.3"]; !exists {
+		t.Error("the thinking suffix must be stripped for the stats key")
+	}
+}
+
+func TestUsageMalformedRecordDoesNotFail(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	result := runtime.handleUsage([]byte("{"))
+	envelopeResult(t, result)
+	if got := runtime.statsStore().Snapshot(time.Time{}).Received; got != 1 {
+		t.Errorf("received = %d, want 1", got)
+	}
+}

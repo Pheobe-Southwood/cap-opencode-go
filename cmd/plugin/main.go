@@ -134,7 +134,11 @@ func cliproxyPluginFree(ptr unsafe.Pointer, length C.size_t) {
 }
 
 //export cliproxyPluginShutdown
-func cliproxyPluginShutdown() {}
+func cliproxyPluginShutdown() {
+	if runtime != nil {
+		runtime.Shutdown()
+	}
+}
 
 func dispatch(method string, payload []byte) (raw []byte) {
 	defer func() {

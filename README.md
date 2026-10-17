@@ -7,6 +7,8 @@
 - **Gemini 4 Argon Contributor 可用**（CPA 内置 `gemini` provider 组因强制拼接 `/v1beta/` 无法调用它）
 - 客户端任意协议都能调用任意模型，协议转换由 **CPA 自己**完成
 - 侧边栏「插件」组内出现 `OpenCode Go` 入口，与 token 用量插件平级
+- **「统计」Tab**：按用过的模型看 token、刊例价、月额度百分比、平均 TPS / TTFT；
+  手机端概览常驻，模型明细与统计口径默认折叠
 - **界面跟随管理中心的深色/浅色主题**（实时同步），并在手机宽度下自动改为单列卡片布局
 - **插件页不需要密码**：写入凭据直接复用管理中心已经存好的登录态，插件自己不保存任何密码
 - **逐模型别名（重命名语义）**：别名会**替代**原名成为唯一的对外模型 id，模型列表与路由都只认别名，
@@ -69,6 +71,15 @@ OpenCode 图标（`internal/brand` 内嵌的官方 mark，以 data URI 下发，
 
 插件**不改写 JSON 协议体**（唯一例外：把 body 里的 `stream` 字段与传输模式对齐）。
 
+### 统计的数据来自哪
+
+主面（`cap-opencode-go`）额外声明 `usage_plugin`，接收宿主在请求结束后投递的 usage 事件，
+因此 token / 缓存 / 失败 / 流式标记都由宿主统一解析，插件不解析响应来数 token。
+实测宿主对本插件的异步流桥接**不提供 TTFT**（`ttft_ns=0`），所以四个面各自在读取上游 SSE 时
+测量首段内容时间与生成时间，写入 `data/cap-opencode-go/stats-<role>.json`；主面的 `/api/stats`
+把自己的 token 计数与三个从属面的 timing 文件合并。费用按内嵌价目表折算，不是 OpenCode 账单。
+详见 [docs/design.md](docs/design.md) §7.8。
+
 ---
 
 ## 2. 环境要求
@@ -87,7 +98,7 @@ OpenCode 图标（`internal/brand` 内嵌的官方 mark，以 data URI 下发，
 export PATH=/opt/go/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 
-make build VERSION=1.4.1   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.4.1.so
+make build VERSION=1.6.1   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.6.1.so
 make test           # 单元测试
 make vet
 ```
@@ -100,7 +111,7 @@ make vet
 ## 4. 安装
 
 ```bash
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.4.1
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.6.1
 ```
 
 脚本只做两件事：把 4 个 `.so` 复制到 `$CPA_ROOT/plugins/linux/amd64/`，并打印需要粘贴的 YAML。
@@ -120,6 +131,7 @@ plugins:
       session-mode: "auto"
       session: "$CPA-SESSION-ID"
       default-proxy: "proxy"
+      plan: "go"                 # go | go-plus，只影响「统计」的月额度百分比
       keys:
         - name: "main"
           key: "oc_sk_xxx"
@@ -156,6 +168,7 @@ plugins:
 | `max-retries` | int | 2 | 单个请求最多切换 Key 的次数 |
 | `extra-headers` | object | 空 | 追加到上游请求的请求头 |
 | `state-dir` | string | `<root>/data/cap-opencode-go` | 插件自有状态目录 |
+| `plan` | enum | `go` | OpenCode Go 套餐：`go`（$10/月）或 `go-plus`（$40/月）；只影响统计 Tab 的逐模型月额度百分比 |
 | `debug` | bool | false | 写流式诊断到 `<state-dir>/debug.log` |
 
 ### 代理语义
@@ -210,11 +223,12 @@ models:
 
 侧边栏「插件」组 → `OpenCode Go`（iframe，路径 `/v0/resource/plugins/cap-opencode-go/dashboard`）。
 
-页面分 4 个 Tab，**默认打开「账号管理」**——打开页面第一眼就是各 Key 的剩余额度：
+页面分 5 个 Tab，**默认打开「账号管理」**——打开页面第一眼就是各 Key 的剩余额度：
 
 | Tab | 内容 |
 |---|---|
 | **账号管理**（默认） | 汇总条（启用 Key 数 / 最低剩余 / 冷却中 / 余量更新时间）；每个 Key 一张卡片：名称、掩码、健康状态、权重、启用开关、移除，以及 5 小时 / 本周 / 本月三条**剩余**进度条（含重置时间）；折叠的「添加 Key」表单；底部「轮换与故障转移」摘要 |
+| **统计** | 概览（账户本月额度 / 刊例价 / token / 平均 TPS / 平均 TTFT / 有用量模型）；「本月 / 累计」切换；每个用过的模型一行：输入、输出、缓存读/写、刊例价、月额度百分比、平均 TPS、平均 TTFT、最近使用；「统计口径与价目说明」默认折叠 |
 | **模型** | 统计 chip（模型 id / 本实例提供 / 已关闭 / 上游新增 / 已下线 / 已修改，点一下即按它筛选）；搜索 + 协议 + 状态筛选、「启用/停用筛选结果」、「从上游刷新」；每个模型一行，点「设置」展开别名 / 上游协议 / 代理 / 探测协议 / 恢复默认 |
 | **状态** | 运行状态（版本、协议族、Base URL、Session、代理、状态文件、启动时间与运行时长）；上游模型列表（数量、拉取时间、结果）；**协议面**卡片（四个 `.so` 各自的协议、插件 ID、承载模型、配置归属与缺失后果）；「关于与帮助」 |
 | **设置** | Base URL、Session、代理、超时/冷却/重试、状态目录与调试日志；底部「待保存的修改」逐条列出本次改动，可一键放弃 |
@@ -225,6 +239,10 @@ models:
 | 桌面端 · 账号管理（默认 Tab） | 桌面端 · 模型 |
 |---|---|
 | ![账号管理](docs/screenshots/desktop-accounts.png) | ![模型](docs/screenshots/desktop-models.png) |
+
+| 桌面端 · 统计 | 手机端 · 统计（明细折叠） | 手机端 · 统计（展开明细） |
+|---|---|---|
+| ![统计](docs/screenshots/desktop-stats.png) | ![手机统计](docs/screenshots/mobile-stats.png) | ![手机统计展开](docs/screenshots/mobile-stats-open.png) |
 
 | 桌面端 · 状态 | 桌面端 · 设置 | 保存前弹出密码框 |
 |---|---|---|
@@ -290,6 +308,8 @@ CPA 的插件列表是「一个 `.so` 一行」，而本插件按上游协议族
 - 顶部内容按**实测**的管理中心 header 高度（`--host-header`）下移，header 不会压住插件内容
 - Tab 条在窄屏可横向滑动；≤900px 收窄为两列，≤640px 变单列卡片、模型设置面板单列、
   密码框变成贴底 bottom sheet、按钮等宽，可点区域 ≥ 40px 高
+- **统计 Tab 不把内容平铺**：概览常驻；「模型明细」在 ≤640px 默认折叠，点开才展开卡片；
+  「统计口径与价目说明」始终折叠。这样手机首屏是几个关键数字，而不是十几列 token 数
 
 写入后宿主热重载并回调 `plugin.reconfigure`，插件**不直接写 config.yaml**。
 
@@ -298,6 +318,7 @@ CPA 的插件列表是「一个 `.so` 一行」，而本插件按上游协议族
 - `GET /v0/resource/plugins/cap-opencode-go/api/state` — 配置与运行状态（不含上游调用）
 - `GET /v0/resource/plugins/cap-opencode-go/api/models[?refresh=1]` — 上游模型列表与本插件配置的合并视图（上游结果缓存 5 分钟）
 - `GET /v0/resource/plugins/cap-opencode-go/api/quota` — 每个 Key 的 5 小时 / 本周 / 本月用量（含已停用的 Key）
+- `GET /v0/resource/plugins/cap-opencode-go/api/stats?range=month|all[&since=RFC3339]` — 用过的模型的 token、刊例价、月额度百分比、平均 TPS / TTFT（不含任何 Key）
 
 需要鉴权的接口（宿主管理中间件校验，与其它管理 API 同一把密钥）：
 
@@ -316,7 +337,7 @@ systemctl restart cliproxyapi
 ```
 
 插件**不写入** CPA 的任何其它状态：不建 auth 文件、不改 provider 组、不写数据库。
-唯一的落盘物是 `data/cap-opencode-go/`（主插件发布的共享快照 + 可选 debug.log），由脚本删除。
+唯一的落盘物是 `data/cap-opencode-go/`（主插件发布的共享快照、四个面的 `stats-<role>.json`、可选 debug.log），由脚本删除。
 
 实测（临时实例）：删除后 `/v1/models` 回到 0 个模型、`/v8/management/plugins` 为空、
 `/v0/resource/plugins/cap-opencode-go/dashboard` 返回 404、`data/` 无残留、auth 目录为空。
@@ -329,14 +350,14 @@ CPA 的文件监听器（fsnotify）会在 **config.yaml 内容变化**时重新
 
 ```bash
 # 升级：装新 .so（旧版本文件留着，随时可回滚），再原地改一行 config.yaml 触发重载
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.4.1
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.6.1
 
 # 原地改一行注释（保持 inode）即可触发重载：把标记行在「有/无 -note」之间来回切
 python3 - <<'PY'
 path = "/root/cliproxyapi/config.yaml"
 with open(path) as handle:
     text = handle.read()
-marker = "# (v1.4.1"
+marker = "# (v1.6.1"
 tainted = marker + "-note:"
 if tainted in text:
     text = text.replace(tainted, marker + ":", 1)
@@ -355,7 +376,7 @@ PY
    之后任何改动都不会触发重载 —— 此时需要重启服务一次，监听器才会重新挂到新 inode 上。
 2. **绝不要覆盖正在使用的 `.so` 文件**：宿主把它 `dlopen` 进了地址空间，
    原地重写同一个文件会让进程在读到被改写的页时直接段错误（实测：`cp` 覆盖后宿主 SIGSEGV 退出，
-   日志停在崩溃前的最后一条请求）。升级一律**新增一个版本号文件**（`…-v1.4.1.so`），
+   日志停在崩溃前的最后一条请求）。升级一律**新增一个版本号文件**（`…-v1.6.1.so`），
    等热重载退役旧实例后再删旧文件；回滚就是删掉新版本文件再原地改一次 config.yaml。
 
 ---
@@ -364,6 +385,12 @@ PY
 
 - **出站请求日志**：插件用自己的 `http.Client` 才能实现逐模型代理开关，代价是这些出站请求
   不进 CPA 的请求日志。token 用量统计不受影响——宿主仍会解析我们返回的 payload 并投递给用量插件。
+- **统计依赖宿主 usage 事件**：token/费用来自主面订阅的 `usage.handle`，TTFT/生成时间由插件自测。
+  若宿主版本不支持 usage 插件，统计 Tab 会显示「没有匹配」的诊断提示；token 与费用不会退化成自解析。
+- **统计是估算**：刊例价按内嵌的 2026-10 价目表折算，不是 OpenCode 账单；统计从 v1.6 起开始累计，
+  不回溯历史；逐小时桶保留 40 天，累计总量永久保留。月额度百分比需要选对套餐（设置里的 `plan`）。
+- **TTFT/TPS 只算成功的流式请求**：非流式请求只计 token 与费用；上游中断/客户端断开的流不产生
+  TPS/TTFT 样本，但宿主已上报的 token 仍会入账。
 - **不要在分离 goroutine 里调用 `host.log`**：实测会段错误（SIGSEGV）导致宿主进程崩溃。
   本插件的诊断改写到 `<state-dir>/debug.log`（`debug: true` 时）。
 - **responses 家族必须同时声明 `codex` 与 `openai-response`**：只声明 `codex` 时，宿主会发现
@@ -391,10 +418,12 @@ CPA_MGMT_KEY=mgmt-key \
 bash scripts/acceptance.sh
 ```
 
-30 项检查覆盖 4 个协议族的流式/非流式、跨协议调用、模型目录、侧边栏入口、状态与额度接口、
+检查覆盖 4 个协议族的流式/非流式、跨协议调用、模型目录、侧边栏入口、状态/额度/统计接口、
 四个协议面的品牌元数据（同一个图标、四个名称、只有主面带配置字段），以及仪表盘页面本身
-（Tab 骨架、账号管理、密码弹窗、无只读模式）与状态接口是否携带可编辑字段、是否隐藏密钥。
-在 v8.0.27 上的实测结果见 [docs/acceptance.md](docs/acceptance.md)。
+（Tab 骨架、统计页、账号管理、密码弹窗、无只读模式）与状态接口是否携带可编辑字段、是否隐藏密钥。
+统计检查会等待最多 25 秒（从属面每 5 秒落盘），断言 token、费用、TTFT/TPS 样本都非零。
+v1.6.1 在 v8.0.27 隔离实例 **40 项全过**；生产实例公开检查 **32 项全过**（6 项管理检查因
+环境里没有明文管理密钥而跳过）。实测结果见 [docs/acceptance.md](docs/acceptance.md)。
 
 ---
 
@@ -411,6 +440,8 @@ internal/roles/        4 个协议族的路径、格式与展示名
 internal/brand/        OpenCode 图标（内嵌 SVG）与产品名 / 仓库地址（唯一品牌来源）
 internal/models/       模型目录（id → 协议族）
 internal/quota/        /usage 额度读取
+internal/pricing/      OpenCode Go 价目表、Go / Go Plus 月限额与刊例价折算
+internal/stats/        逐面统计文件、小时桶、TTFT/内容帧识别
 internal/dashboard/    内置中文仪表盘（embed 字符串）
 scripts/               install / uninstall / acceptance
 docs/                  design / rollback / acceptance
@@ -419,6 +450,29 @@ docs/                  design / rollback / acceptance
 ---
 
 ## 11. 变更记录
+
+### 1.6.1
+
+- 统计页首次加载的月窗口竞态：如果 `/api/stats` 先于 `/api/quota` 返回、服务端按自然月统计，
+  配额到达后会再用 monthly reset 倒推的窗口重取一次，不再停留在自然月
+- 月窗口倒推遇到 29–31 日时按目标月份的最后一天钳制（`Mar 31 - 1 month` 不再溢出到 `Mar 3`）
+- 保存设置后若统计页已打开，会重新读取统计，套餐切换立即反映到月额度百分比
+- 页面文案改为「统计从 v1.6 起开始累计」，不再写死安装版本
+
+### 1.6.0
+
+- **新增「统计」Tab**：按用过的模型展示输入/输出/缓存 token、按官方价目表折算的刊例价、
+  当前套餐下的月额度百分比、平均 TPS 与平均 TTFT，并支持「本月 / 累计」切换
+- 主面新增 `usage_plugin` 能力，接收宿主 `usage.handle`：token、缓存、失败与流式标记由宿主解析；
+  四个面各自在流式读取时测量 TTFT 与生成时间，写入 `data/cap-opencode-go/stats-<role>.json`，
+  主面的 `/api/stats` 合并四个面
+- 新增配置 `plan`（`go` / `go-plus`，默认 `go`）与设置页套餐选择；逐模型月额度百分比按对应套餐的
+  月限额计算，免费模型显示「不限」，已退出 Go 列表的旧模型显示「限额未知」
+- 内嵌 2026-10 价目表：Go / Go Plus 月限额、长上下文档位、DeepSeek 峰谷价、免费与未定价模型
+- 仪表盘改为 5 个 Tab；统计 Tab 在手机上概览常驻、模型明细默认折叠、统计口径始终折叠；
+  只读接口新增 `/api/stats`
+- 新增 `internal/pricing`、`internal/stats` 及单测；验收脚本新增统计资源、TTFT/TPS 样本、
+  月窗口、密钥不泄露与页面统计标记检查
 
 ### 1.5.0
 

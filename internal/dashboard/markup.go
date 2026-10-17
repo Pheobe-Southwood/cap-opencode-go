@@ -49,6 +49,7 @@ const pageMarkup = `
 
   <nav class="tabs" id="tabBar" role="tablist" aria-label="页面分区">
     <button class="tab" type="button" role="tab" id="tab-accounts" data-tab="accounts" aria-controls="pane-accounts" aria-selected="true">账号管理<span class="dot" hidden></span></button>
+    <button class="tab" type="button" role="tab" id="tab-stats" data-tab="stats" aria-controls="pane-stats" aria-selected="false">统计<span class="dot" hidden></span></button>
     <button class="tab" type="button" role="tab" id="tab-models" data-tab="models" aria-controls="pane-models" aria-selected="false">模型<span class="dot" hidden></span></button>
     <button class="tab" type="button" role="tab" id="tab-status" data-tab="status" aria-controls="pane-status" aria-selected="false">状态<span class="dot" hidden></span></button>
     <button class="tab" type="button" role="tab" id="tab-settings" data-tab="settings" aria-controls="pane-settings" aria-selected="false">设置<span class="dot" hidden></span></button>
@@ -95,6 +96,56 @@ const pageMarkup = `
         <div class="grid" id="rotationGrid"></div>
         <div class="hint" style="margin-top:10px">请求按权重在启用中的 Key 之间轮换；某个 Key 返回 401/429/5xx 时会被冷却，冷却期内其它 Key 接管。关闭的 Key 不参与轮换，也不会上报额度。</div>
       </div>
+    </section>
+
+    <!-- ---------------------------------------------------- 统计 -->
+    <section class="pane" id="pane-stats" role="tabpanel" aria-labelledby="tab-stats" hidden>
+      <div id="statsError" class="notice err" hidden></div>
+      <div id="statsWarnings" class="notice" hidden></div>
+
+      <div class="stat-strip" id="statsSummary"></div>
+
+      <div class="stats-plan-line">
+        <span class="hint" id="statsPlanHint"></span>
+        <button id="statsPlanBtn" class="ghost small" type="button">调整套餐</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>模型用量</h2>
+          <div class="toolbar-group">
+            <span class="hint" id="statsRangeHint"></span>
+            <select id="statsRange" aria-label="统计范围">
+              <option value="month">本月</option>
+              <option value="all">累计</option>
+            </select>
+            <button id="refreshStats" class="small" type="button">刷新</button>
+          </div>
+        </div>
+
+        <!-- The table is folded by default on phones so the quota/费用 summary
+             is the first screenful; on desktop it starts open. -->
+        <details class="fold-block" id="statsModelsFold" open>
+          <summary><span>模型明细</span><span class="hint" id="statsModelsHint">正在读取…</span></summary>
+          <div id="usageStatsTable" class="stats-table-wrap"></div>
+        </details>
+
+        <div class="stats-footnote hint" id="statsFootnote"></div>
+      </div>
+
+      <details class="card fold-card" id="statsAboutFold">
+        <summary>统计口径与价目说明</summary>
+        <ul class="stats-notes">
+          <li><strong>数据来源</strong>：token、失败与流式标记来自宿主的 usage 事件；TTFT 与生成时间由插件读取上游流时自己测量（宿主对本插件的异步流桥接不提供 TTFT）。</li>
+          <li><strong>刊例价</strong>：按官方价目表把 input / output / cache read / cache write 折算成美元。chat、responses、gemini 的 input 含缓存，messages 的 input 不含缓存；gemini 的输出费用含 reasoning。金额是估算，不是 OpenCode 账单。</li>
+          <li><strong>月额度</strong>：模型本月刊例价 ÷ 该模型在当前套餐下的月限额。Go 与 Go Plus 的月限额不同，默认 Go，可在「设置」里切换；免费模型显示「不限」，已退出 Go 列表的旧模型月限额未知。</li>
+          <li><strong>本月窗口</strong>：按上游 <code>/usage</code> 返回的 monthly 重置时间往前推一个月；拿不到重置时间时按 UTC 自然月，并在提示里说明。多 Key 取最晚的重置时间。</li>
+          <li><strong>TPS / TTFT</strong>：只统计成功的流式请求。TTFT 是发起上游请求到第一段文字/思考/工具参数帧的时间；生成时间是第一段内容到最后一帧。非流式请求只计 token 与费用。</li>
+          <li><strong>保留期</strong>：逐小时桶保留 40 天，累计总量永久保留；统计从安装 1.6.0 后开始，不回溯历史，也不读取其它插件的数据库。</li>
+          <li><strong>价目版本</strong>：<span id="statsPriceRevision">—</span>。费用按记录时内嵌的价目表计算；上游调价不会重算历史金额。</li>
+          <li><strong>隐私</strong>：统计文件只有模型 id、计数、费用与时间戳，不包含 Key、提示词或响应内容。</li>
+        </ul>
+      </details>
     </section>
 
     <!-- ---------------------------------------------------- 模型 -->
@@ -225,6 +276,19 @@ const pageMarkup = `
           <label class="switch" style="align-self:end"><input type="checkbox" id="cfgDebug"> <span class="hint">写调试日志</span></label>
         </div>
         <div class="hint" style="margin-top:8px" id="stateDirHint"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>统计口径</h2></div>
+        <div class="grid">
+          <label class="kv"><span class="k">OpenCode Go 套餐</span>
+            <select id="cfgPlan">
+              <option value="go">Go（$10/月）</option>
+              <option value="go-plus">Go Plus（$40/月）</option>
+            </select>
+          </label>
+        </div>
+        <div class="hint" style="margin-top:8px">只影响统计 Tab 的逐模型月额度百分比；不会改变上游计费或额度。</div>
       </div>
 
       <div class="card">

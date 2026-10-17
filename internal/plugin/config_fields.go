@@ -34,5 +34,6 @@ func configFields(role roles.Role) []pluginapi.ConfigField {
 		{Name: "extra-headers", Type: pluginapi.ConfigFieldTypeObject, Description: "附加到上游请求的额外请求头。"},
 		{Name: "debug", Type: pluginapi.ConfigFieldTypeBoolean, Description: "开启后把流式与上游诊断写入 <状态目录>/debug.log。"},
 		{Name: "state-dir", Type: pluginapi.ConfigFieldTypeString, Description: "插件自有状态目录，留空为 <CPA 根>/data/cap-opencode-go。"},
+		{Name: "plan", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"go", "go-plus"}, Description: "OpenCode Go 套餐：go（$10/月）或 go-plus（$40/月），用于统计 Tab 的逐模型月额度百分比。"},
 	}
 }

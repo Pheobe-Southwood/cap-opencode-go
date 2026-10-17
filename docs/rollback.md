@@ -10,7 +10,7 @@ provider 组（`openai-compatibility` / `gemini` / `codex` …），也不写 CP
 |---|---|---|
 | 插件库 | `<root>/plugins/<goos>/<goarch>/cap-opencode-go*-v<ver>.so` | `scripts/uninstall.sh` |
 | 配置块 | `config.yaml` 的 `plugins.configs.cap-opencode-go*` | 操作者手动删除（脚本会打印清单） |
-| 数据目录 | `<root>/data/cap-opencode-go/`（`shared.json`、可选 `debug.log`） | `scripts/uninstall.sh` |
+| 数据目录 | `<root>/data/cap-opencode-go/`（`shared.json`、`stats-<role>.json`、可选 `debug.log`） | `scripts/uninstall.sh` |
 
 `<root>` 默认 `/root/cliproxyapi`，可用 `CPA_ROOT` 覆盖。
 
@@ -114,7 +114,25 @@ v1.5.0 只改了注册元数据（名称、图标、配置字段声明）与页�
 删掉它们就等于卸载对应协议族（该族模型随即不可路由）。回滚清单仍与 v1.1.1 一致：
 4 个 `.so` + 4 个 `plugins.configs.*` 块 + `data/cap-opencode-go/`。
 
-## 9. 常见疑问
+## 9. v1.6（1.6.0 / 1.6.1）之后仍然零残留
+
+v1.6.0 新增了统计面板，它会写自己的计数器文件；这仍然全部落在上面那个数据目录里：
+
+| 位置 | v1.6.0 之后 |
+|---|---|
+| `plugins/linux/amd64/*.so` | 只有插件库（v1.6.1 与保留的旧版本） |
+| `data/cap-opencode-go/` | `shared.json` + `stats-chat.json` / `stats-responses.json` / `stats-messages.json` / `stats-gemini.json`（有请求后才出现）+ 可选 `debug.log` |
+| `config.yaml` | 可能多一行 `plan: "go"`；旧版本把它当未知字段忽略，不会破坏配置 |
+| 浏览器 | 与 v1.4 相同：默认不存任何东西，`sessionStorage` 只在操作者主动勾选时使用 |
+
+统计文件只有模型 id、计数、费用与时间戳，不含 Key、提示词或响应内容。回滚到 1.5.0 时旧版本
+不会读取这些文件，它们只是被忽略；`scripts/uninstall.sh` 会连同整个数据目录一起删除。
+回滚清单仍与 v1.1.1 一致：4 个 `.so` + 4 个 `plugins.configs.*` 块 + `data/cap-opencode-go/`。
+
+**注意**：v1.6 的 `usage_plugin` 能力声明只存在于主面（1.6.1 只修页面逻辑）。如果只升级主面、不升级三个从属面，
+统计仍能拿到 token，但从属面的 TTFT/TPS 不会出现；四个 `.so` 必须同版本安装。
+
+## 10. 常见疑问
 
 **会不会影响我原有的 `openai-compatibility` / `gemini` 组？**
 不会。插件只通过 `model_router` 在运行期认领模型 ID，不读写这些配置块。

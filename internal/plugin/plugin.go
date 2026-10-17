@@ -23,6 +23,7 @@ import (
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/paths"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/upstream"
 )
 
@@ -51,6 +52,11 @@ type Runtime struct {
 	sharedStamp time.Time
 	lastError   string
 	startedAt   time.Time
+
+	// stats is lazily opened because sibling faces only need it when they
+	// finish their first stream.
+	statsMu sync.Mutex
+	stats   *stats.Store
 }
 
 // New builds the runtime for one role.
@@ -134,6 +140,8 @@ func (r *Runtime) Dispatch(method string, request []byte) []byte {
 		return r.handleManagementRegister(request)
 	case pluginabi.MethodManagementHandle:
 		return r.handleManagementHandle(request)
+	case pluginabi.MethodUsageHandle:
+		return r.handleUsage(request)
 	default:
 		return abi.Fail("unknown_method", "unknown method: "+method, http.StatusNotFound)
 	}
@@ -152,6 +160,7 @@ type registrationCapabilities struct {
 	ExecutorInputFormats  []string `json:"executor_input_formats,omitempty"`
 	ExecutorOutputFormats []string `json:"executor_output_formats,omitempty"`
 	ManagementAPI         bool     `json:"management_api"`
+	UsagePlugin           bool     `json:"usage_plugin,omitempty"`
 }
 
 type registration struct {
@@ -256,6 +265,11 @@ func (r *Runtime) registrationPayload() []byte {
 	}
 	if r.role.Name == roles.Chat {
 		capabilities.ManagementAPI = true
+		// The main face receives the host's usage events for every request the
+		// four faces execute. The siblings only measure their own stream
+		// timing; registering usage on all four would count one record four
+		// times if the host ever broadcast it.
+		capabilities.UsagePlugin = true
 	}
 	raw, errMarshal := abi.OK(registration{
 		SchemaVersion: pluginabi.SchemaVersion,
@@ -269,7 +283,20 @@ func (r *Runtime) registrationPayload() []byte {
 }
 
 func (r *Runtime) handleShutdown() []byte {
+	r.Shutdown()
 	return okEmpty()
+}
+
+// Shutdown flushes the statistics store and stops its writer. The host calls
+// plugin.shutdown before unloading a library, so this is the last chance to
+// persist up to one debounce interval of counters.
+func (r *Runtime) Shutdown() {
+	r.statsMu.Lock()
+	store := r.stats
+	r.statsMu.Unlock()
+	if store != nil {
+		store.Shutdown()
+	}
 }
 
 func (r *Runtime) applySettings(settings config.Settings) {
