@@ -279,11 +279,20 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 		if selectedKey != "" {
 			ks, ok := entry.Keys[selectedKey]
 			if !ok || ks.Counter.Empty() {
-				continue
+				// Fallback for legacy historical stats records recorded before per-key attribution:
+				// if entry has no keys recorded at all and there is only 1 configured key which matches selectedKey.
+				if len(entry.Keys) == 0 && len(settings.Keys) == 1 && settings.Keys[0].Name == selectedKey {
+					effectiveCounter = entry.Counter
+					firstUsed = entry.FirstUsed
+					lastUsed = entry.LastUsed
+				} else {
+					continue
+				}
+			} else {
+				effectiveCounter = ks.Counter
+				firstUsed = ks.FirstUsed
+				lastUsed = ks.LastUsed
 			}
-			effectiveCounter = ks.Counter
-			firstUsed = ks.FirstUsed
-			lastUsed = ks.LastUsed
 		} else {
 			effectiveCounter = entry.Counter
 			firstUsed = entry.FirstUsed
@@ -318,6 +327,8 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 				var kCostNano int64
 				if ks, ok := entry.Keys[kName]; ok {
 					kCostNano = ks.Counter.CostNanoUSD
+				} else if len(entry.Keys) == 0 && len(settings.Keys) == 1 && settings.Keys[0].Name == kName {
+					kCostNano = entry.Counter.CostNanoUSD
 				}
 				kCostUSD := roundFloat(float64(kCostNano)/1e9, 4)
 				var kRemUSD float64
