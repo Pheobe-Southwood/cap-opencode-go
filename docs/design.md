@@ -147,13 +147,16 @@ if typeStr != "response.completed" && typeStr != "response.incomplete" { return 
   真实模型 id 永远优先于别名：冲突的别名被拒绝并记录在 `Resolver.Shadowed()`（值为声明它的模型 id），
   某个模型的别名若全部被拒绝，它保留自己的原名继续提供。仪表盘按 `BaseID` 归组，一个真实模型一行
 
-## 6. 模型认领（model_router）
+## 6. 模型认领（model_router）与宿主路由
 
 `RegisterExecutors` 会跳过"已被原生 provider 服务的模型 ID"，因此当用户的 CPA 已经通过
 codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是同时声明 `model_router`：
 
-- 只在模型属于本协议族**且**配置为启用时返回 `{Handled: true, TargetKind: "self"}`
-- 宿主在 provider 解析之前询问所有 router，因此插件可以稳定压过内置通道
+- 只在模型属于本协议族**且**配置为启用时返回 `{Handled: true, TargetKind: "provider", Target: r.role.Provider, TargetModel: upstreamModel}`
+- 宿主在 provider 解析之前询问所有 router，因此插件可以稳定认领模型。
+- 通过返回 `TargetKind: "provider"`，插件将认证选择、多 Key 轮询与故障转移完全委托给 CPA 宿主的 `AuthManager`（遵循 CPA 宿主「网络配置」的路由策略，如轮询、填满优先等）。
+- 插件仅设置 Key 的 `priority` 优先级，相同优先级由宿主调度。
+- 网络代理（`proxy-url`、`default-proxy`、模型 `proxy`）依然由插件自行持有 transport 并在出站请求中应用。
 - 逐模型的 `enabled` 开关同时也是"把这个模型让回内置通道"的开关
 
 ## 7. 安全边界
@@ -196,7 +199,7 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
 
 - **读**：`/api/state` + `/api/models` + `/api/quota` + `/api/stats` 四个插件自有接口就是页面的读模型，
   它们只返回解析后的设置与掩码 Key。状态接口因此必须携带页面可写的**每一个**字段
-  （超时 / 冷却 / 重试 / 状态目录 / 套餐 / debug …），否则「无凭证也能编辑」就不成立；
+  （超时 / 状态目录 / 套餐 / debug …），否则「无凭证也能编辑」就不成立；
   这条约束由 `TestStatePayloadExposesEditableSettingsWithoutSecrets` 守住
 - **写**：页面把操作者的改动记成补丁（`edits = {top, models, keys:{add,del,set}}`），
   点保存时才 `GET /v8/management/config/plugins/configs/<id>` 读回宿主当前配置块，
@@ -293,12 +296,99 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   现有 stats 最早记录之前的部分，导入前备份、导入后写 marker，拒绝重复导入。
 - **历史回放**：只复制逐请求 token、费用、总延迟和可用的 TTFT；旧记录的 `ttft_ns=0` 时不伪造
   TTFT，只回放 token/费用/总延迟。模型别名按 `shared.json` 映射，费用按当前价目表重算。
-- **API**：`GET /api/stats?range=month|all[&since=RFC3339]`，返回 `usage_records{received,matched}`
-  便于诊断 provider 标签不匹配；响应只有模型 id、计数、费用与时间戳，不含 Key/提示词/响应。
-- **页面**：概览常驻；模型明细在 ≤640px 默认折叠；统计口径始终折叠。桌面端是表格，手机端
-  用 `table.responsive` 的 `data-label` 变成逐模型卡片。费用、百分比、TPS/TTFT 都在前端格式化，
+- **API**：`GET /api/stats?range=month|all[&since=RFC3339][&key=<keyName>]`，返回 `usage_records{received,matched}`
+  便于诊断 provider 标签不匹配；响应包含模型 id、计数、费用、时间戳以及 `by_key` 逐 Key 额度与剩余，支持按 Key 筛选全部模型或特定 Key。
+- **页面**：概览常驻；工具栏支持按 Key 筛选；模型明细在 ≤640px 默认折叠；统计口径始终折叠。桌面端是表格，手机端
+  用 `table.responsive` 的 `data-label` 变成逐模型卡片。各模型在「本月额度」列展示各 Key 的剩余额度及百分比。费用、百分比、TPS/TTFT 都在前端格式化，
   没有新增运行时依赖。价目/模型核对状态只占一行，任何提醒横幅都在概览上方，不改变模型明细的
   折叠行为。
+
+## 7.9 「配额管理 → Plugin」：配额 Provider + 账号投影（v1.8）
+
+CPA 的配额页不是按插件渲染的，而是按**认证文件（auth）**列条目：`GET /v8/management/auth-files`
+返回的每一项里，只有 `supports_quota: true` 的条目才会出现在 **配额管理 → Plugin** 分页，页面
+再用 `auth_index` 回调 `POST /v8/management/plugins/<quota_plugin_id>/quota` 拿额度。所以要让
+OpenCode Go 的 Key "像 Antigravity 账号一样"被管理，必须同时满足两件事：
+
+1. **存在一条 auth 记录**，且 provider 能命中某个 `QuotaProvider` 的标识符；
+2. **该 provider 能在宿主侧注册成能力**（`quota_provider: true`）。
+
+### 7.9.1 为什么必须写认证文件
+
+宿主的 auth 只有四条来源：认证文件、`config.yaml` 的内置 provider 段、插件 OAuth 登录、以及
+`/v1/ws` 网关产生的 runtime-only auth（`attributes.runtime_only=true`）。前两条要求 `type`/provider
+必须是宿主已知的 provider，第三条也走 `saveTokenRecord` 落盘。插件可用的 host 回调只有
+`host.auth.save`（同样写文件），没有"只放内存"的注册接口。因此**把 Key 写成认证文件是唯一通道**。
+
+### 7.9.2 配额映射（宿主契约）
+
+`quota.fetch` 的请求带 `auth_index` / `auth_id` / `storage_json`（宿主读回的认证文件原文）/
+`metadata` / `attributes` / `host`（含 `auth_dir`），响应是归一化的
+`QuotaFetchResponse`。宿主只保留 Go 结构体里有的字段，因此映射受这些字段约束：
+
+| 上游 `/usage` | 宿主 `QuotaBucket` | 说明 |
+|---|---|---|
+| `rolling` | `window="five_hour"` | 页面按 `window` 命中本地化标题「5 小时限额」并排在第一 |
+| `weekly` | `window="weekly"` | 「周限额」 |
+| `monthly` | `window="monthly"` | 「月限额」 |
+| `percent` | `remainingFraction = 1 - percent/100` | 必填字段，页面据此画进度条 |
+| `resetsAt` | `resetTime`（RFC3339） | 页面换算成「x 小时 y 分后刷新」 |
+| — | `description` | 明细行（页面在 `window` 命中时用本地化标题，`description` 作为副标题） |
+
+`QuotaBucket` 没有 `id`/`displayName` 字段，`QuotaGroup` 也没有 `description`：账号名因此放在
+group 的 `displayName`（`OpenCode Go · <key 名>`），套餐放 `subscription.plan`
+（`plan` 的 `go`/`go-plus` 映射成 `Go`/`Go Plus`）。`QuotaProvider.Identifier()` 必须是
+provider key `opencode-go`，否则 `QuotaProviderPluginIDs()` 不会给这些 auth 标 `supports_quota`。
+
+配额卡片的图标由管理面板自己的 `AUTH_FILE_ICONS` 表按 `quota_provider` 选择，未命中时显示首字母，
+与本插件的 `metadata.logo` 无关；后者只用于插件管理列表、侧边栏入口和插件页。宿主 v8.0.27 没有
+把插件 Logo 传进配额页的通道，因此本插件侧不处理该图标，限制见 README §8。
+
+### 7.9.3 投影：单向派生为 4 个协议面认证文件
+
+`internal/accounts` 把 `keys` 派生为认证文件。为了支持 CPA 宿主对 4 个协议面（chat、responses、messages、gemini）的
+原生路由与调度，每个 Key 会派生 4 个认证文件：
+- chat: `opencode-go-<slug>.json`（`type: "opencode-go"`，兼容 CPA 配额 Tab）
+- responses: `opencode-go-<slug>--responses.json`（`type: "opencode-go-responses"`）
+- messages: `opencode-go-<slug>--messages.json`（`type: "opencode-go-messages"`）
+- gemini: `opencode-go-<slug>--gemini.json`（`type: "opencode-go-gemini"`）
+
+文件权限 0600，临时文件 + rename 原子写（宿主 fsnotify 只认 `*.json`，`.json.tmp` 不会被误读），
+内容固定字段序以便"内容不变就不重写"（否则每次配置变更都会让宿主重载账号）。认证文件根层写入 `priority int`，
+使得 CPA 宿主加载时通过 `ApplyAuthPriorityMetadata` 提取 `priority` 优先级元数据。
+slug 只保留 `[a-z0-9._-]`，同 base 冲突时先按名字排序取一个规范名，其余追加 key 名的 sha256 前 6 位——
+因此**顺序无关**，改配置顺序不会重命名账号。
+
+仪表盘改名等价于修改 `keys[].name`：下一次同步按新名字重算 slug，旧文件不再在 desired 集合里，
+被当作陈旧投影删除，新文件用临时文件 + rename 原子写入；配额页通过 auth 文件回调，
+所以账号名随之变化。路由完全交由 CPA 宿主根据 `priority` 调度。删除与创建之间有一个极小的窗口，下一次 `register`/`/api/state` 会自愈。
+
+安全边界：只有「文件名前缀 `opencode-go-` **且** JSON 里 `managed_by: cap-opencode-go`」的文件才会
+被覆盖或删除；操作者的同名文件与其它 provider 的文件只计入 `skipped`。
+
+同步是后台单飞（`syncing`/`dirty`），触发点有三个：`plugin.register`/`reconfigure`（配置变更）、
+`model.static`（宿主在这里下发 `host.auth_dir`，也是首次能开始投影的时机）、以及
+`/api/state`（操作者打开仪表盘时自愈）。它**不调用任何 host 回调**——在 goroutine 里调
+`host.log` 会 SIGSEGV（v1.1 已踩过），所以诊断只写 `debug.log`。
+
+### 7.9.4 卸载自清：quiesce 与 shutdown 的分工
+
+宿主的生命周期在两个场景下不一样，这个差异正好是"零残留"的判据：
+
+- **热替换**（同 ID 换了 `.so` 路径，即升级）：宿主先发 `plugin.quiesce` 给旧实例，再加载新实例。
+  旧实例据此判定"有后继接管"——停止写、并且**不删**文件，账号在升级期间不会消失。
+- **卸载**（删配置块 / `enabled: false` / `detachUnselectedPlugins` / 停服）：宿主直接
+  `detachPlugin` → 等待在途调用 → 调用库的 shutdown 导出（`cliproxyPluginShutdown`），
+  **不发 quiesce**。插件据此删除全部 `opencode-go-*.json`。
+
+宿主在调用 shutdown 之前已经关闭了 host 回调实例，所以 `Shutdown()` 只做本地工作：先置
+`closed`、等正在跑的同步结束（上限 2 秒）、再 `accounts.Purge`，最后 flush 统计。
+`register`/`reconfigure` 会清掉 `superseded`：宿主在新实例加载失败时会 `rollbackReplacement`
+并**重新 register** 旧实例，此时旧实例必须恢复投影。
+
+插件保证不了的三种残留（由 `scripts/uninstall.sh` 兜底，`docs/rollback.md` §10 有矩阵）：
+`kill -9`/崩溃（没有 shutdown 调用）、只删 `.so` 后重启（宿主从未加载 → 没有实例能清理）、
+热回滚到 1.7.x（属热替换，按 quiesce 语义保留文件）。
 
 ## 8. 版本兼容
 

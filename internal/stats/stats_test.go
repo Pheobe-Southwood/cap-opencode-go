@@ -27,6 +27,7 @@ func TestStoreObservesUsageAndTiming(t *testing.T) {
 	store.ObserveUsage(UsageSample{
 		Model:         "glm-5.3",
 		Family:        "chat",
+		Key:           "main-key",
 		At:            at,
 		Input:         1_000,
 		Output:        200,
@@ -43,6 +44,7 @@ func TestStoreObservesUsageAndTiming(t *testing.T) {
 	store.ObserveTiming(TimingSample{
 		Model:      "glm-5.3",
 		Family:     "chat",
+		Key:        "main-key",
 		At:         at,
 		TTFT:       800 * time.Millisecond,
 		Generation: 2 * time.Second,
@@ -52,6 +54,16 @@ func TestStoreObservesUsageAndTiming(t *testing.T) {
 	model, ok := snapshot.Models["glm-5.3"]
 	if !ok {
 		t.Fatal("model missing from snapshot")
+	}
+	if len(model.Keys) != 1 {
+		t.Fatalf("expected 1 key in snapshot, got %d", len(model.Keys))
+	}
+	keySnap, okKey := model.Keys["main-key"]
+	if !okKey {
+		t.Fatal("main-key missing from model snapshot keys")
+	}
+	if keySnap.Counter.Requests != 1 || keySnap.Counter.Input != 1000 || keySnap.Counter.TTFTNano == 0 {
+		t.Errorf("keySnap counters = %+v", keySnap.Counter)
 	}
 	if snapshot.Received != 2 || snapshot.Matched != 1 {
 		t.Errorf("received/matched = %d/%d, want 2/1", snapshot.Received, snapshot.Matched)

@@ -59,7 +59,6 @@ func TestProbeRouteDispatch(t *testing.T) {
 	settings := config.Default()
 	settings.BaseURL = server.URL
 	settings.Keys = []config.Key{{Name: "k1", Key: "secret"}}
-	settings.MaxRetries = 0
 	runtime.applySettings(settings)
 
 	request, _ := json.Marshal(map[string]any{

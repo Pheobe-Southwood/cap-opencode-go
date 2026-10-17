@@ -40,19 +40,36 @@ type StatsCounts struct {
 	AvgTTFTMS         float64 `json:"avg_ttft_ms"`
 }
 
+// StatsKeyModelQuota is one key's usage and remaining quota on one model.
+type StatsKeyModelQuota struct {
+	KeyName          string   `json:"key_name"`
+	CostUSD          float64  `json:"cost_usd"`
+	RemainingUSD     float64  `json:"remaining_usd"`
+	UsedPercent      *float64 `json:"used_percent,omitempty"`
+	RemainingPercent *float64 `json:"remaining_percent,omitempty"`
+}
+
+// StatsKeySummary describes one credential available for stats filtering.
+type StatsKeySummary struct {
+	Name     string `json:"name"`
+	Enabled  bool   `json:"enabled"`
+	Priority int    `json:"priority"`
+}
+
 // StatsModel is one used model in the 统计 tab.
 type StatsModel struct {
-	ID              string    `json:"id"`
-	DisplayName     string    `json:"display_name"`
-	ClientIDs       []string  `json:"client_ids"`
-	Family          string    `json:"family,omitempty"`
-	Configured      bool      `json:"configured"`
-	Priced          bool      `json:"priced"`
-	Free            bool      `json:"free"`
-	MonthlyLimitUSD float64   `json:"monthly_limit_usd"`
-	MonthlyPercent  *float64  `json:"monthly_percent"`
-	FirstUsed       time.Time `json:"first_used,omitempty"`
-	LastUsed        time.Time `json:"last_used,omitempty"`
+	ID              string               `json:"id"`
+	DisplayName     string               `json:"display_name"`
+	ClientIDs       []string             `json:"client_ids"`
+	Family          string               `json:"family,omitempty"`
+	Configured      bool                 `json:"configured"`
+	Priced          bool                 `json:"priced"`
+	Free            bool                 `json:"free"`
+	MonthlyLimitUSD float64              `json:"monthly_limit_usd"`
+	MonthlyPercent  *float64             `json:"monthly_percent"`
+	FirstUsed       time.Time            `json:"first_used,omitempty"`
+	LastUsed        time.Time            `json:"last_used,omitempty"`
+	ByKey           []StatsKeyModelQuota `json:"by_key,omitempty"`
 	StatsCounts
 }
 
@@ -98,6 +115,8 @@ type StatsPayload struct {
 	ModelListAdded            []string          `json:"model_list_added,omitempty"`
 	ModelListRemoved          []string          `json:"model_list_removed,omitempty"`
 	UsageRecords              StatsUsageRecords `json:"usage_records"`
+	Keys                      []StatsKeySummary `json:"keys"`
+	SelectedKey               string            `json:"selected_key,omitempty"`
 	Models                    []StatsModel      `json:"models"`
 	Totals                    StatsTotals       `json:"totals"`
 	Warnings                  []string          `json:"warnings,omitempty"`
@@ -161,7 +180,11 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 					Family:    persisted.Family,
 					FirstUsed: persisted.FirstUsed,
 					LastUsed:  persisted.LastUsed,
+					Keys:      map[string]stats.KeySnapshot{},
 				}
+			}
+			if entry.Keys == nil {
+				entry.Keys = map[string]stats.KeySnapshot{}
 			}
 			entry.Counter.MergeTiming(timing)
 			if entry.Family == "" {
@@ -172,6 +195,27 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 			}
 			if !persisted.LastUsed.IsZero() && persisted.LastUsed.After(entry.LastUsed) {
 				entry.LastUsed = persisted.LastUsed
+			}
+			for kid, kpersisted := range persisted.Keys {
+				if kpersisted == nil {
+					continue
+				}
+				ktiming := stats.RangeKeyCounter(kpersisted, since)
+				kentry, kexists := entry.Keys[kid]
+				if !kexists {
+					kentry = stats.KeySnapshot{
+						FirstUsed: kpersisted.FirstUsed,
+						LastUsed:  kpersisted.LastUsed,
+					}
+				}
+				kentry.Counter.MergeTiming(ktiming)
+				if !kpersisted.FirstUsed.IsZero() && (kentry.FirstUsed.IsZero() || kpersisted.FirstUsed.Before(kentry.FirstUsed)) {
+					kentry.FirstUsed = kpersisted.FirstUsed
+				}
+				if !kpersisted.LastUsed.IsZero() && kpersisted.LastUsed.After(kentry.LastUsed) {
+					kentry.LastUsed = kpersisted.LastUsed
+				}
+				entry.Keys[kid] = kentry
 			}
 			models[id] = entry
 		}
@@ -184,6 +228,42 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 	settings := r.Settings()
 	plan := pricing.NormalizePlan(settings.Plan)
 	resolver := r.Resolver()
+
+	selectedKey := strings.TrimSpace(query.Get("key"))
+	allKeysMap := map[string]StatsKeySummary{}
+	for _, k := range settings.Keys {
+		if strings.TrimSpace(k.Name) != "" {
+			allKeysMap[k.Name] = StatsKeySummary{
+				Name:     k.Name,
+				Enabled:  k.EnabledOrDefault(),
+				Priority: k.Priority,
+			}
+		}
+	}
+	for _, m := range models {
+		for kName := range m.Keys {
+			if strings.TrimSpace(kName) != "" {
+				if _, ok := allKeysMap[kName]; !ok {
+					allKeysMap[kName] = StatsKeySummary{
+						Name:     kName,
+						Enabled:  false,
+						Priority: 0,
+					}
+				}
+			}
+		}
+	}
+	keysList := make([]StatsKeySummary, 0, len(allKeysMap))
+	for _, ks := range allKeysMap {
+		keysList = append(keysList, ks)
+	}
+	sort.Slice(keysList, func(i, j int) bool {
+		if keysList[i].Priority != keysList[j].Priority {
+			return keysList[i].Priority > keysList[j].Priority
+		}
+		return keysList[i].Name < keysList[j].Name
+	})
+
 	ids := make([]string, 0, len(models))
 	for id := range models {
 		ids = append(ids, id)
@@ -191,9 +271,25 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 	sort.Strings(ids)
 
 	rows := make([]StatsModel, 0, len(ids))
-	var totals StatsCounts
+	var totalCounter stats.Counter
 	for _, id := range ids {
 		entry := models[id]
+		var effectiveCounter stats.Counter
+		var firstUsed, lastUsed time.Time
+		if selectedKey != "" {
+			ks, ok := entry.Keys[selectedKey]
+			if !ok || ks.Counter.Empty() {
+				continue
+			}
+			effectiveCounter = ks.Counter
+			firstUsed = ks.FirstUsed
+			lastUsed = ks.LastUsed
+		} else {
+			effectiveCounter = entry.Counter
+			firstUsed = entry.FirstUsed
+			lastUsed = entry.LastUsed
+		}
+
 		display, family, clientIDs, configured := statsModelInfo(resolver, id)
 		if family == "" {
 			family = entry.Family
@@ -210,11 +306,42 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 
 		var percent *float64
 		if kind == "month" && priced && !free && limitUSD > 0 {
-			value := (float64(entry.Counter.CostNanoUSD) / 1e9) / limitUSD * 100
+			value := (float64(effectiveCounter.CostNanoUSD) / 1e9) / limitUSD * 100
 			percent = &value
 		}
 
-		counts := statsCountsFrom(entry.Counter)
+		var byKey []StatsKeyModelQuota
+		if len(keysList) > 0 {
+			byKey = make([]StatsKeyModelQuota, 0, len(keysList))
+			for _, k := range keysList {
+				kName := k.Name
+				var kCostNano int64
+				if ks, ok := entry.Keys[kName]; ok {
+					kCostNano = ks.Counter.CostNanoUSD
+				}
+				kCostUSD := roundFloat(float64(kCostNano)/1e9, 4)
+				var kRemUSD float64
+				var kUsedPct *float64
+				var kRemPct *float64
+				if priced && !free && limitUSD > 0 {
+					kRemUSD = roundFloat(math.Max(0, limitUSD-kCostUSD), 4)
+					uVal := roundFloat((kCostUSD/limitUSD)*100, 1)
+					rVal := roundFloat(math.Max(0, 100-uVal), 1)
+					kUsedPct = &uVal
+					kRemPct = &rVal
+				}
+				byKey = append(byKey, StatsKeyModelQuota{
+					KeyName:          kName,
+					CostUSD:          kCostUSD,
+					RemainingUSD:     kRemUSD,
+					UsedPercent:      kUsedPct,
+					RemainingPercent: kRemPct,
+				})
+			}
+		}
+
+		totalCounter.Add(effectiveCounter)
+		counts := statsCountsFrom(effectiveCounter)
 		rows = append(rows, StatsModel{
 			ID:              id,
 			DisplayName:     display,
@@ -225,17 +352,14 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 			Free:            free,
 			MonthlyLimitUSD: limitUSD,
 			MonthlyPercent:  percent,
-			FirstUsed:       entry.FirstUsed,
-			LastUsed:        entry.LastUsed,
+			FirstUsed:       firstUsed,
+			LastUsed:        lastUsed,
+			ByKey:           byKey,
 			StatsCounts:     counts,
 		})
 	}
 
-	var totalCounter stats.Counter
-	for _, id := range ids {
-		totalCounter.Add(models[id].Counter)
-	}
-	totals = statsCountsFrom(totalCounter)
+	totals := statsCountsFrom(totalCounter)
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].CostUSD != rows[j].CostUSD {
 			return rows[i].CostUSD > rows[j].CostUSD
@@ -276,9 +400,11 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 			Received: snapshot.Received,
 			Matched:  snapshot.Matched,
 		},
-		Models:   rows,
-		Totals:   StatsTotals{ModelsUsed: int64(len(rows)), StatsCounts: totals},
-		Warnings: warnings,
+		Keys:        keysList,
+		SelectedKey: selectedKey,
+		Models:      rows,
+		Totals:      StatsTotals{ModelsUsed: int64(len(rows)), StatsCounts: totals},
+		Warnings:    warnings,
 	}
 }
 

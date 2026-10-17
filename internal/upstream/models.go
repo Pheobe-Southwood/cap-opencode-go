@@ -59,11 +59,14 @@ func (c *Client) ListModels(ctx context.Context, force bool) ([]string, time.Tim
 }
 
 func (c *Client) fetchModels(ctx context.Context, settings config.Settings) ([]string, error) {
-	candidates := c.pool.Candidates()
+	candidates := settings.EnabledKeys()
 	if len(candidates) == 0 {
 		return nil, abi.StatusErrorf(http.StatusUnauthorized, "no_api_key",
 			"没有可用的 API Key，无法从上游拉取模型列表")
 	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].Priority > candidates[j].Priority
+	})
 
 	client, errClient := c.httpClient(settings, Call{Model: ""})
 	if errClient != nil {
@@ -85,7 +88,6 @@ func (c *Client) fetchModels(ctx context.Context, settings config.Settings) ([]s
 
 		response, errDo := client.Do(request)
 		if errDo != nil {
-			c.pool.RecordFailure(credential.Key, 0, errDo.Error())
 			lastErr = abi.StatusErrorf(http.StatusBadGateway, "upstream_unreachable",
 				"拉取模型列表失败: %v", errDo)
 			continue
@@ -93,14 +95,12 @@ func (c *Client) fetchModels(ctx context.Context, settings config.Settings) ([]s
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 		_ = response.Body.Close()
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			c.recordFailure(credential, response.StatusCode, string(body))
 			lastErr = upstreamError(response.StatusCode, body, credential.Name)
 			if !retryableStatus(response.StatusCode) {
 				return nil, lastErr
 			}
 			continue
 		}
-		c.pool.RecordSuccess(credential.Key, response.StatusCode)
 
 		var payload struct {
 			Data []struct {

@@ -110,15 +110,21 @@ func (c *Counter) MergeTiming(other Counter) {
 	c.GenSamples += other.GenSamples
 }
 
-func (c Counter) empty() bool {
+// Empty reports whether the counter has recorded any events.
+func (c Counter) Empty() bool {
 	return c.Requests == 0 && c.Total == 0 && c.TTFTSamples == 0 && c.GenSamples == 0 &&
 		c.LatencySamples == 0 && c.StreamOutputSamples == 0 && c.CostNanoUSD == 0
+}
+
+func (c Counter) empty() bool {
+	return c.Empty()
 }
 
 // UsageSample is one host usage record after filtering and model resolution.
 type UsageSample struct {
 	Model         string
 	Family        string
+	Key           string
 	At            time.Time
 	Input         int64
 	Output        int64
@@ -148,9 +154,18 @@ type UsageSample struct {
 type TimingSample struct {
 	Model      string
 	Family     string
+	Key        string
 	At         time.Time
 	TTFT       time.Duration
 	Generation time.Duration
+}
+
+// KeyStats stores counters aggregated for one specific key.
+type KeyStats struct {
+	FirstUsed time.Time `json:"first_used,omitempty"`
+	LastUsed  time.Time `json:"last_used,omitempty"`
+	Counter
+	Hours map[string]Counter `json:"hours,omitempty"`
 }
 
 // ModelStats is the persisted state of one model.
@@ -159,7 +174,23 @@ type ModelStats struct {
 	FirstUsed time.Time `json:"first_used,omitempty"`
 	LastUsed  time.Time `json:"last_used,omitempty"`
 	Counter
-	Hours map[string]Counter `json:"hours,omitempty"`
+	Hours map[string]Counter   `json:"hours,omitempty"`
+	Keys  map[string]*KeyStats `json:"keys,omitempty"`
+}
+
+func (m *ModelStats) ensureKey(key string) *KeyStats {
+	if m.Keys == nil {
+		m.Keys = map[string]*KeyStats{}
+	}
+	ks := m.Keys[key]
+	if ks == nil {
+		ks = &KeyStats{Hours: map[string]Counter{}}
+		m.Keys[key] = ks
+	}
+	if ks.Hours == nil {
+		ks.Hours = map[string]Counter{}
+	}
+	return ks
 }
 
 func (m *ModelStats) addUsage(sample UsageSample, at time.Time) {
@@ -205,6 +236,21 @@ func (m *ModelStats) addUsage(sample UsageSample, at time.Time) {
 	hour := m.Hours[bucket]
 	hour.Add(counter)
 	m.Hours[bucket] = hour
+
+	key := strings.TrimSpace(sample.Key)
+	if key != "" {
+		ks := m.ensureKey(key)
+		if ks.FirstUsed.IsZero() || at.Before(ks.FirstUsed) {
+			ks.FirstUsed = at
+		}
+		if ks.LastUsed.IsZero() || at.After(ks.LastUsed) {
+			ks.LastUsed = at
+		}
+		ks.Counter.Add(counter)
+		kh := ks.Hours[bucket]
+		kh.Add(counter)
+		ks.Hours[bucket] = kh
+	}
 }
 
 func (m *ModelStats) addTiming(sample TimingSample, at time.Time) {
@@ -218,6 +264,21 @@ func (m *ModelStats) addTiming(sample TimingSample, at time.Time) {
 	hour := m.Hours[bucket]
 	hour.Add(counter)
 	m.Hours[bucket] = hour
+
+	key := strings.TrimSpace(sample.Key)
+	if key != "" {
+		ks := m.ensureKey(key)
+		if ks.FirstUsed.IsZero() || at.Before(ks.FirstUsed) {
+			ks.FirstUsed = at
+		}
+		if ks.LastUsed.IsZero() || at.After(ks.LastUsed) {
+			ks.LastUsed = at
+		}
+		ks.Counter.Add(counter)
+		kh := ks.Hours[bucket]
+		kh.Add(counter)
+		ks.Hours[bucket] = kh
+	}
 }
 
 // File is the on-disk shape of one protocol face's counters.
@@ -234,6 +295,14 @@ type File struct {
 type ModelSnapshot struct {
 	Model     string
 	Family    string
+	FirstUsed time.Time
+	LastUsed  time.Time
+	Counter   Counter
+	Keys      map[string]KeySnapshot
+}
+
+// KeySnapshot is one key's counters for a model over the requested range.
+type KeySnapshot struct {
 	FirstUsed time.Time
 	LastUsed  time.Time
 	Counter   Counter
@@ -343,6 +412,18 @@ func normalizeFile(file *File, role string) {
 		}
 		if model.Hours == nil {
 			model.Hours = map[string]Counter{}
+		}
+		if model.Keys == nil {
+			model.Keys = map[string]*KeyStats{}
+		}
+		for kid, ks := range model.Keys {
+			if ks == nil {
+				delete(model.Keys, kid)
+				continue
+			}
+			if ks.Hours == nil {
+				ks.Hours = map[string]Counter{}
+			}
 		}
 	}
 }
@@ -465,6 +546,26 @@ func RangeCounter(model *ModelStats, since time.Time) Counter {
 	return out
 }
 
+// RangeKeyCounter returns one key's counter for a range.
+func RangeKeyCounter(ks *KeyStats, since time.Time) Counter {
+	if ks == nil {
+		return Counter{}
+	}
+	if since.IsZero() {
+		return ks.Counter
+	}
+	cutoff := since.UTC().Truncate(time.Hour)
+	var out Counter
+	for key, bucket := range ks.Hours {
+		at, errParse := time.ParseInLocation(bucketLayout, key, time.UTC)
+		if errParse != nil || at.Before(cutoff) {
+			continue
+		}
+		out.Add(bucket)
+	}
+	return out
+}
+
 // Snapshot sums all-time totals or the hourly buckets at or after since.
 func (s *Store) Snapshot(since time.Time) Snapshot {
 	s.mu.Lock()
@@ -484,12 +585,24 @@ func (s *Store) Snapshot(since time.Time) Snapshot {
 		if counter.empty() {
 			continue
 		}
+		keysMap := make(map[string]KeySnapshot, len(model.Keys))
+		for kName, ks := range model.Keys {
+			kCounter := RangeKeyCounter(ks, cutoff)
+			if !kCounter.empty() {
+				keysMap[kName] = KeySnapshot{
+					FirstUsed: ks.FirstUsed,
+					LastUsed:  ks.LastUsed,
+					Counter:   kCounter,
+				}
+			}
+		}
 		out.Models[id] = ModelSnapshot{
 			Model:     id,
 			Family:    model.Family,
 			FirstUsed: model.FirstUsed,
 			LastUsed:  model.LastUsed,
 			Counter:   counter,
+			Keys:      keysMap,
 		}
 	}
 	return out
@@ -543,6 +656,14 @@ func (s *Store) pruneLocked(now time.Time) {
 			at, errParse := time.ParseInLocation(bucketLayout, key, time.UTC)
 			if errParse != nil || at.Before(cutoff) {
 				delete(model.Hours, key)
+			}
+		}
+		for _, ks := range model.Keys {
+			for key := range ks.Hours {
+				at, errParse := time.ParseInLocation(bucketLayout, key, time.UTC)
+				if errParse != nil || at.Before(cutoff) {
+					delete(ks.Hours, key)
+				}
 			}
 		}
 	}

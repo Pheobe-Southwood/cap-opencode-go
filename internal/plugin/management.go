@@ -12,7 +12,6 @@ import (
 
 	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/dashboard"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/keys"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/quota"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
 )
@@ -103,6 +102,9 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 			Body:       dashboard.Page(r.PluginID(), string(r.role.Name)),
 		})
 	case strings.HasSuffix(path, resourceState):
+		// Opening the dashboard is also the self-healing hook for the account
+		// projection: if a sync failed earlier it is retried here.
+		r.syncAccountsAsync()
 		return okJSON(pluginapi.ManagementResponse{
 			StatusCode: http.StatusOK,
 			Headers:    jsonHeaders(),
@@ -133,11 +135,16 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 	case strings.HasSuffix(path, resourceQuota):
 		r.refreshShared()
 		settings := r.Settings()
-		snapshots := quota.Fetch(context.Background(), settings, r.client.Pool())
+		snapshots := quota.Fetch(context.Background(), settings)
 		return okJSON(pluginapi.ManagementResponse{
 			StatusCode: http.StatusOK,
 			Headers:    jsonHeaders(),
-			Body:       mustJSON(map[string]any{"keys": snapshots}),
+			Body: mustJSON(map[string]any{
+				"keys": snapshots,
+				// The dashboard shows which host auth file represents each key,
+				// which is what the operator sees in CPA's 配额管理 page.
+				"accounts": r.accountsState(),
+			}),
 		})
 	default:
 		return okJSON(pluginapi.ManagementResponse{
@@ -192,35 +199,44 @@ type ModelRow struct {
 	Note            string   `json:"note,omitempty"`
 }
 
+// KeyState describes one configured key for the dashboard.
+type KeyState struct {
+	Name     string `json:"name"`
+	Masked   string `json:"masked"`
+	Priority int    `json:"priority"`
+	Enabled  bool   `json:"enabled"`
+}
+
 // StatePayload is the dashboard's read model. Secrets are never included: the
 // dashboard edits the plugin configuration without ever reading a key back, and
 // a save merges the edits into the host configuration it reads at write time.
 type StatePayload struct {
-	Role               string            `json:"role"`
-	Provider           string            `json:"provider"`
-	Version            string            `json:"version"`
-	PluginID           string            `json:"plugin_id"`
-	BaseURL            string            `json:"base_url"`
-	SessionMode        string            `json:"session_mode"`
-	Session            string            `json:"session"`
-	DefaultProxy       string            `json:"default_proxy"`
-	ProxyURL           string            `json:"proxy_url"`
-	HostProxyURL       string            `json:"host_proxy_url"`
-	StatePath          string            `json:"state_path"`
-	StateDir           string            `json:"state_dir"`
-	ModelsDefault      string            `json:"models_default_proxy"`
-	TimeoutSeconds     int               `json:"timeout_seconds"`
-	KeyCooldownSeconds int               `json:"key_cooldown_seconds"`
-	MaxRetries         int               `json:"max_retries"`
-	Plan               string            `json:"plan"`
-	Debug              bool              `json:"debug"`
-	Keys               []keys.State      `json:"keys"`
-	Models             []ModelRow        `json:"models"`
-	Siblings           []SiblingRow      `json:"siblings"`
-	ConfigError        string            `json:"config_error,omitempty"`
-	StartedAt          time.Time         `json:"started_at"`
-	Extra              map[string]string `json:"extra_headers,omitempty"`
-	Upstream           *UpstreamSummary  `json:"upstream,omitempty"`
+	Role           string            `json:"role"`
+	Provider       string            `json:"provider"`
+	Version        string            `json:"version"`
+	PluginID       string            `json:"plugin_id"`
+	BaseURL        string            `json:"base_url"`
+	SessionMode    string            `json:"session_mode"`
+	Session        string            `json:"session"`
+	DefaultProxy   string            `json:"default_proxy"`
+	ProxyURL       string            `json:"proxy_url"`
+	HostProxyURL   string            `json:"host_proxy_url"`
+	StatePath      string            `json:"state_path"`
+	StateDir       string            `json:"state_dir"`
+	ModelsDefault  string            `json:"models_default_proxy"`
+	TimeoutSeconds int               `json:"timeout_seconds"`
+	Plan           string            `json:"plan"`
+	Debug          bool              `json:"debug"`
+	Keys           []KeyState        `json:"keys"`
+	Models         []ModelRow        `json:"models"`
+	Siblings       []SiblingRow      `json:"siblings"`
+	ConfigError    string            `json:"config_error,omitempty"`
+	StartedAt      time.Time         `json:"started_at"`
+	Extra          map[string]string `json:"extra_headers,omitempty"`
+	Upstream       *UpstreamSummary  `json:"upstream,omitempty"`
+	// Accounts describes the auth files projected into the host auth directory:
+	// one per configured key, so CPA's 配额管理 → Plugin lists them.
+	Accounts AccountsPayload `json:"accounts"`
 }
 
 // SiblingRow describes one protocol face of the provider.
@@ -293,30 +309,40 @@ func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) Stat
 	}
 	_ = upstream
 	return StatePayload{
-		Role:               string(r.role.Name),
-		Provider:           r.role.Provider,
-		Version:            r.Version(),
-		PluginID:           r.PluginID(),
-		BaseURL:            settings.BaseURL,
-		SessionMode:        settings.SessionMode,
-		Session:            settings.Session,
-		DefaultProxy:       settings.DefaultProxy,
-		ProxyURL:           settings.ProxyURL,
-		HostProxyURL:       settings.HostProxyURL,
-		StatePath:          r.sharedPath,
-		StateDir:           settings.StateDir,
-		ModelsDefault:      settings.ModelConfig("__default__").Proxy,
-		TimeoutSeconds:     settings.RequestTimeoutSeconds,
-		KeyCooldownSeconds: settings.KeyCooldownSeconds,
-		MaxRetries:         settings.MaxRetries,
-		Plan:               settings.Plan,
-		Debug:              settings.Debug,
-		Keys:               r.client.Pool().Snapshot(),
-		Models:             rows,
-		Siblings:           siblings,
-		ConfigError:        r.LastError(),
-		StartedAt:          r.startedAt,
-		Extra:              settings.ExtraHeaders,
+		Role:           string(r.role.Name),
+		Provider:       r.role.Provider,
+		Version:        r.Version(),
+		PluginID:       r.PluginID(),
+		BaseURL:        settings.BaseURL,
+		SessionMode:    settings.SessionMode,
+		Session:        settings.Session,
+		DefaultProxy:   settings.DefaultProxy,
+		ProxyURL:       settings.ProxyURL,
+		HostProxyURL:   settings.HostProxyURL,
+		StatePath:      r.sharedPath,
+		StateDir:       settings.StateDir,
+		ModelsDefault:  settings.ModelConfig("__default__").Proxy,
+		TimeoutSeconds: settings.RequestTimeoutSeconds,
+		Plan:           settings.Plan,
+		Debug:          settings.Debug,
+		Keys: func() []KeyState {
+			out := make([]KeyState, len(settings.Keys))
+			for i, k := range settings.Keys {
+				out[i] = KeyState{
+					Name:     k.Name,
+					Masked:   k.Masked(),
+					Priority: k.Priority,
+					Enabled:  k.EnabledOrDefault(),
+				}
+			}
+			return out
+		}(),
+		Models:      rows,
+		Siblings:    siblings,
+		ConfigError: r.LastError(),
+		StartedAt:   r.startedAt,
+		Extra:       settings.ExtraHeaders,
+		Accounts:    r.accountsState(),
 	}
 }
 

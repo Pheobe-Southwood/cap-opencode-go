@@ -240,6 +240,130 @@ else:
       FAIL=$((FAIL + 1))
     fi
   done <<< "${brand}"
+
+  # The main face is the one that answers the host's quota RPC, and the host
+  # only links an account to the quota page when the provider key matches.
+  quota_plugin="$(timeout 60 curl -s -H "Authorization: Bearer ${MGMT_KEY}" \
+    "${BASE}/v8/management/plugins" 2>/dev/null |
+    python3 -c '
+import sys, json
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    print("fail\tmanagement API did not return JSON")
+    raise SystemExit
+entries = dict((p.get("id"), p) for p in payload.get("plugins", []))
+main = entries.get("cap-opencode-go") or {}
+if not main.get("supports_quota"):
+    print("fail\tmain face does not report supports_quota")
+elif str(main.get("quota_provider") or "") != "opencode-go":
+    print("fail\tquota_provider=" + str(main.get("quota_provider")))
+elif any((entries.get(pid) or {}).get("supports_quota") for pid in entries if pid != "cap-opencode-go" and pid.startswith("cap-opencode-go")):
+    print("fail\ta sibling face also declares the quota provider")
+else:
+    print("ok\tsupports_quota, quota_provider=opencode-go, only on the main face")
+' 2>/dev/null || echo "fail\tcould not read the plugin list")"
+  verdict="${quota_plugin%%$'\t'*}"
+  detail="${quota_plugin#*$'\t'}"
+  if [ "${verdict}" = "ok" ]; then
+    printf '  PASS  %-46s %s\n' "plugin quota provider" "${detail}"
+    PASS=$((PASS + 1))
+  else
+    printf '  FAIL  %-46s %s\n' "plugin quota provider" "${detail}"
+    FAIL=$((FAIL + 1))
+  fi
+
+  # The accounts must be listed as quota-capable credentials pointing back at the
+  # plugin, which is what the 配额管理 → Plugin tab filters on.
+  # The v8 panel lists credentials under /v8/management/credentials; the legacy
+  # /v0/management/auth-files route is kept as a fallback for older hosts.
+  auth_files="$(timeout 60 curl -s -H "Authorization: Bearer ${MGMT_KEY}" \
+    "${BASE}/v8/management/credentials" 2>/dev/null || true)"
+  if ! printf '%s' "${auth_files}" | grep -q '"provider"'; then
+    auth_files="$(timeout 60 curl -s -H "Authorization: Bearer ${MGMT_KEY}" \
+      "${BASE}/v0/management/auth-files" 2>/dev/null || true)"
+  fi
+  accounts_check="$(printf '%s' "${auth_files}" | python3 -c '
+import sys, json
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    print("fail\tmanagement API did not return JSON")
+    raise SystemExit
+files = payload.get("files") if isinstance(payload, dict) else payload
+files = files or []
+mine = [f for f in files if str(f.get("provider") or "").lower() == "opencode-go"]
+if not mine:
+    print("fail\tno opencode-go credentials listed")
+    raise SystemExit
+broken = []
+for entry in mine:
+    if not entry.get("supports_quota"):
+        broken.append(str(entry.get("name")) + ":supports_quota")
+    if str(entry.get("quota_provider") or "") != "opencode-go":
+        broken.append(str(entry.get("name")) + ":quota_provider")
+    if str(entry.get("quota_plugin_id") or "") != "cap-opencode-go":
+        broken.append(str(entry.get("name")) + ":quota_plugin_id")
+    if not str(entry.get("auth_index") or ""):
+        broken.append(str(entry.get("name")) + ":auth_index")
+if broken:
+    print("fail\t" + ", ".join(sorted(broken)))
+    raise SystemExit
+first = str(mine[0].get("auth_index") or "")
+print("ok\t%d accounts linked to cap-opencode-go|%s" % (len(mine), first))
+' 2>/dev/null || echo "fail\tcould not read the auth file list")"
+  verdict="${accounts_check%%$'\t'*}"
+  detail="${accounts_check#*$'\t'}"
+  first_index=""
+  if [ "${verdict}" = "ok" ]; then
+    printf '  PASS  %-46s %s\n' "quota accounts listed" "${detail%%|*}"
+    PASS=$((PASS + 1))
+    first_index="${detail##*|}"
+  else
+    printf '  FAIL  %-46s %s\n' "quota accounts listed" "${detail}"
+    FAIL=$((FAIL + 1))
+  fi
+
+  # End-to-end: the host calls the plugin for the account and gets normalized
+  # buckets it can render next to the Antigravity/Codex accounts.
+  if [ -n "${first_index}" ]; then
+    quota_body="/tmp/cpa-opencodego-acceptance-quota.$$"
+    quota_status="$(timeout 120 curl -s -o "${quota_body}" -w '%{http_code}' \
+      -X POST -H "Authorization: Bearer ${MGMT_KEY}" -H 'Content-Type: application/json' \
+      -d "{\"auth_index\":\"${first_index}\"}" \
+      "${BASE}/v8/management/plugins/cap-opencode-go/quota" 2>/dev/null || echo 000)"
+    if [ "${quota_status}" = "200" ] && python3 - "${quota_body}" <<'PLUGINQUOTAPY' 2>/dev/null
+import json, sys
+try:
+    payload = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(1)
+buckets = [b for group in payload.get("groups") or [] for b in group.get("buckets") or []]
+if not payload.get("groups"):
+    raise SystemExit(1)
+if any(not isinstance(b.get("remainingFraction"), (int, float)) for b in buckets):
+    raise SystemExit(1)
+windows = {str(b.get("window") or "") for b in buckets}
+if not windows & {"five_hour", "weekly", "monthly"}:
+    raise SystemExit(1)
+raise SystemExit(0)
+PLUGINQUOTAPY
+    then
+      windows="$(python3 -c '
+import json, sys
+payload = json.load(open(sys.argv[1]))
+print(",".join(sorted({str(b.get("window")) for group in payload.get("groups") or [] for b in group.get("buckets") or []})))
+' "${quota_body}" 2>/dev/null || echo "?")"
+      printf '  PASS  %-46s windows %s\n' "plugin quota fetch" "${windows}"
+      PASS=$((PASS + 1))
+    else
+      printf '  FAIL  %-46s HTTP %s: %s\n' "plugin quota fetch" "${quota_status}" "$(head -c 200 "${quota_body}")"
+      FAIL=$((FAIL + 1))
+    fi
+    rm -f "${quota_body}"
+  else
+    skip "plugin quota fetch" "no auth_index available"
+  fi
 fi
 
 state="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/state" 2>/dev/null || true)"
@@ -267,6 +391,99 @@ if printf '%s' "${quota}" | grep -q '"windows"'; then
   PASS=$((PASS + 1))
 else
   printf '  WARN  %-46s no window data returned\n' "quota resource"
+fi
+
+# --- CPA account projection (配额管理 → Plugin) ------------------------------
+# Every configured key is projected into one host auth file, which is what makes
+# the accounts appear in CPA's own quota page. This check needs no management key:
+# the plugin reports the projection in its public read model.
+account_state="$(printf '%s' "${state:-}" | python3 -c '
+import sys, json
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit
+accounts = payload.get("accounts") or {}
+keys = payload.get("keys") or []
+files = accounts.get("files") or {}
+if not accounts.get("enabled"):
+    print("disabled\taccount projection is switched off (register-accounts)")
+    raise SystemExit
+if accounts.get("error"):
+    print("fail\t" + str(accounts["error"]))
+    raise SystemExit
+if len(files) != len(keys):
+    print("fail\t%d files for %d keys" % (len(files), len(keys)))
+    raise SystemExit
+print("ok\t%d accounts (auth-dir %s)" % (len(files), accounts.get("auth_dir") or "unknown"))
+' 2>/dev/null || echo "fail\tunreadable state payload")"
+verdict="${account_state%%$'\t'*}"
+detail="${account_state#*$'\t'}"
+if [ "${verdict}" = "ok" ]; then
+  printf '  PASS  %-46s %s\n' "account projection" "${detail}"
+  PASS=$((PASS + 1))
+elif [ "${verdict}" = "disabled" ]; then
+  skip "account projection" "${detail}"
+else
+  printf '  FAIL  %-46s %s\n' "account projection" "${detail}"
+  FAIL=$((FAIL + 1))
+fi
+
+# The files themselves, on the machine running this script. They carry the plugin
+# marker and mode 0600 like every other auth file.
+account_dir="$(printf '%s' "${state:-}" | python3 -c '
+import sys, json
+try:
+    print((json.load(sys.stdin).get("accounts") or {}).get("auth_dir") or "")
+except Exception:
+    print("")
+' 2>/dev/null || true)"
+if [ -n "${account_dir}" ] && [ -d "${account_dir}" ]; then
+  files_check="$(python3 - "${account_dir}" <<'ACCOUNTSPY' 2>/dev/null || echo "fail\tcould not inspect the auth dir"
+import json, os, sys
+
+directory = sys.argv[1]
+checked = 0
+problems = []
+for name in sorted(os.listdir(directory)):
+    if not (name.startswith("opencode-go-") and name.lower().endswith(".json")):
+        continue
+    path = os.path.join(directory, name)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as error:
+        problems.append("%s: %s" % (name, error))
+        continue
+    if str(payload.get("managed_by", "")).strip() != "cap-opencode-go":
+        continue
+    if str(payload.get("type", "")).strip() not in ("opencode-go", "opencode-go-responses", "opencode-go-messages", "opencode-go-gemini"):
+        problems.append(name + ": wrong provider type")
+    if not str(payload.get("api_key", "")).strip():
+        problems.append(name + ": no api_key")
+    mode = os.stat(path).st_mode & 0o777
+    if mode != 0o600:
+        problems.append("%s: mode %o" % (name, mode))
+    checked += 1
+if problems:
+    print("fail\t" + "; ".join(problems))
+elif checked == 0:
+    print("fail\tno mirrored account files")
+else:
+    print("ok\t%d files, 0600, managed_by marker" % checked)
+ACCOUNTSPY
+)"
+  verdict="${files_check%%$'\t'*}"
+  detail="${files_check#*$'\t'}"
+  if [ "${verdict}" = "ok" ]; then
+    printf '  PASS  %-46s %s\n' "account files" "${detail}"
+    PASS=$((PASS + 1))
+  else
+    printf '  FAIL  %-46s %s\n' "account files" "${detail}"
+    FAIL=$((FAIL + 1))
+  fi
+else
+  skip "account files" "auth dir not readable from this host"
 fi
 
 # Statistics: the main face receives host usage events (including request latency)
@@ -420,6 +637,8 @@ page_checks=(
   'id="cfgPlan"|套餐设置'
   'id="pane-models"|模型 tab'
   'id="keyList"|Key 余量列表'
+  'id="keyNameHint"|Key 改名提示'
+  'data-key-rename="|Key 改名输入'
   'id="credModal"|保存密码弹窗'
 )
 # Matching happens in the shell: the page is larger than a pipe buffer, so
@@ -444,13 +663,45 @@ else
   PASS=$((PASS + 1))
 fi
 
+# The page is one inline script, so a syntax error renders the document but kills
+# every tab and request (that is what shipped in 1.8.0). Text markers cannot see
+# it; parse the deployed script with node when it is available.
+if command -v node >/dev/null 2>&1; then
+  page_script="/tmp/cpa-opencodego-acceptance-page.$$.js"
+  page_script_state="$(printf '%s' "${page}" | python3 -c '
+import sys
+
+document = sys.stdin.read()
+start = document.find("<script>")
+end = document.find("</script>", start + 1) if start >= 0 else -1
+if start < 0 or end < 0:
+    print("missing")
+else:
+    sys.stdout.write(document[start + len("<script>"):end])
+' > "${page_script}" 2>/dev/null; echo "extracted")"
+  if [ "${page_script_state}" = "extracted" ] && [ -s "${page_script}" ]; then
+    if node --check "${page_script}" >/tmp/cpa-opencodego-acceptance-page.$$.out 2>&1; then
+      printf '  PASS  %-46s %s\n' "dashboard script parses" "node --check passed"
+      PASS=$((PASS + 1))
+    else
+      printf '  FAIL  %-46s node --check failed: %s\n' "dashboard script parses" "$(head -c 200 /tmp/cpa-opencodego-acceptance-page.$$.out | tr '\n' ' ')"
+      FAIL=$((FAIL + 1))
+    fi
+  else
+    skip "dashboard script parses" "could not extract the inline script"
+  fi
+  rm -f "${page_script}" "/tmp/cpa-opencodego-acceptance-page.$$.out"
+else
+  skip "dashboard script parses" "node is not installed"
+fi
+
 editable="$(printf '%s' "${state}" | python3 -c '
 import sys, json
 try:
     payload = json.load(sys.stdin)
 except Exception:
     raise SystemExit
-fields = ["timeout_seconds", "key_cooldown_seconds", "max_retries", "plan", "debug"]
+fields = ["timeout_seconds", "plan", "debug"]
 missing = [field for field in fields if field not in payload]
 print("ok" if not missing else "missing:" + ",".join(missing))
 ' 2>/dev/null || echo missing)"

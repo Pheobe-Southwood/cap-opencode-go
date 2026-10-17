@@ -7,6 +7,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
+	"github.com/cpa-opencodego/cap-opencode-go/internal/accounts"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/models"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
@@ -154,9 +155,12 @@ func (r *Runtime) usageSample(record pluginapi.UsageRecord) (stats.UsageSample, 
 		tpsOutput = 0
 	}
 
+	keyName := r.resolveKeyName(record.AuthID)
+
 	return stats.UsageSample{
 		Model:         model,
 		Family:        string(family),
+		Key:           keyName,
 		At:            at,
 		Input:         tokens.Input,
 		Output:        tokens.Output,
@@ -173,4 +177,22 @@ func (r *Runtime) usageSample(record pluginapi.UsageRecord) (stats.UsageSample, 
 		Latency:       record.Latency,
 		TPSOutput:     tpsOutput,
 	}, true
+}
+
+func (r *Runtime) resolveKeyName(authID string) string {
+	authID = strings.TrimSpace(authID)
+	if authID == "" {
+		return ""
+	}
+	settings := r.Settings()
+	planned := accounts.Plan(settings.Keys)
+	if name, _, ok := accounts.KeyNameFromAuthID(authID, planned); ok {
+		return name
+	}
+	for _, k := range settings.Keys {
+		if k.Name != "" && (authID == k.Name || strings.Contains(authID, k.Name)) {
+			return k.Name
+		}
+	}
+	return ""
 }

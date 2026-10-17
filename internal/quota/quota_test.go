@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/keys"
 )
 
 func boolPointer(value bool) *bool { return &value }
@@ -49,7 +48,7 @@ func TestFetchCoversDisabledKeysAndSkipsEmptySecrets(t *testing.T) {
 		{Name: "empty", Key: ""},
 	}
 
-	snapshots := Fetch(context.Background(), settings, keys.New(settings))
+	snapshots := Fetch(context.Background(), settings)
 	if len(snapshots) != 3 {
 		t.Fatalf("snapshots = %d, want 3", len(snapshots))
 	}

@@ -119,6 +119,54 @@ func TestValidateRejectsBadValues(t *testing.T) {
 	if _, errParse := Parse([]byte("keys:\n  - name: broken\n")); errParse == nil {
 		t.Error("expected an enabled key without a secret to be rejected")
 	}
+	if _, errParse := Parse([]byte("keys:\n  - key: secret\n")); errParse == nil {
+		t.Error("expected an enabled key without a name to be rejected")
+	}
+	if _, errParse := Parse([]byte("keys:\n  - name: dup\n    key: s1\n  - name: dup\n    key: s2\n")); errParse == nil {
+		t.Error("expected duplicate key names to be rejected")
+	}
+}
+
+func TestKeyPriorityParsing(t *testing.T) {
+	settings, errParse := Parse([]byte(`
+keys:
+  - name: high
+    key: oc_sk_high
+    priority: 10
+  - name: normal
+    key: oc_sk_normal
+  - name: low
+    key: oc_sk_low
+    priority: -5
+`))
+	if errParse != nil {
+		t.Fatalf("Parse error: %v", errParse)
+	}
+	if len(settings.Keys) != 3 {
+		t.Fatalf("got %d keys, want 3", len(settings.Keys))
+	}
+	if settings.Keys[0].Priority != 10 {
+		t.Errorf("priority[0] = %d, want 10", settings.Keys[0].Priority)
+	}
+	if settings.Keys[1].Priority != 0 {
+		t.Errorf("priority[1] = %d, want 0", settings.Keys[1].Priority)
+	}
+	if settings.Keys[2].Priority != -5 {
+		t.Errorf("priority[2] = %d, want -5", settings.Keys[2].Priority)
+	}
+
+	legacy, errLegacy := Parse([]byte(`
+keys:
+  - name: legacy-weight
+    key: oc_sk_legacy
+    weight: 3
+`))
+	if errLegacy != nil {
+		t.Fatalf("Parse legacy weight error: %v", errLegacy)
+	}
+	if len(legacy.Keys) != 1 || legacy.Keys[0].Priority != 3 {
+		t.Errorf("legacy weight fallback = %d, want 3", legacy.Keys[0].Priority)
+	}
 }
 
 func TestDisabledKeyNeedsNoSecret(t *testing.T) {
@@ -209,5 +257,31 @@ models:
 	}
 	if _, source := settings.FamilyWithSource("grok-4.7"); source != models.FamilyFromCatalogue {
 		t.Errorf("grok-4.7 source = %q, want catalogue", source)
+	}
+}
+
+func TestRegisterAccountsDefaultsToOn(t *testing.T) {
+	settings, errParse := Parse([]byte("keys:\n  - name: main\n    key: oc_sk_main\n"))
+	if errParse != nil {
+		t.Fatalf("parse: %v", errParse)
+	}
+	if !settings.AccountsEnabled() {
+		t.Fatal("the account projection is on unless it is explicitly disabled")
+	}
+
+	disabled, errParse := Parse([]byte("register-accounts: false\nkeys:\n  - name: main\n    key: oc_sk_main\n"))
+	if errParse != nil {
+		t.Fatalf("parse: %v", errParse)
+	}
+	if disabled.AccountsEnabled() {
+		t.Fatal("register-accounts: false must disable the projection")
+	}
+
+	enabled, errParse := Parse([]byte("register-accounts: true\n"))
+	if errParse != nil {
+		t.Fatalf("parse: %v", errParse)
+	}
+	if !enabled.AccountsEnabled() {
+		t.Fatal("register-accounts: true must enable the projection")
 	}
 }

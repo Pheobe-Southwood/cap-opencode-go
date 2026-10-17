@@ -196,8 +196,8 @@ func TestRegistrationCarriesOneProductBranding(t *testing.T) {
 		// Only the main face carries the configuration: the siblings read the
 		// snapshot it publishes and have nothing of their own to configure.
 		if role.Name == roles.Chat {
-			if len(decoded.Metadata.ConfigFields) != 15 {
-				t.Errorf("main face declares %d config fields, want the documented 15", len(decoded.Metadata.ConfigFields))
+			if len(decoded.Metadata.ConfigFields) != 14 {
+				t.Errorf("main face declares %d config fields, want the documented 14", len(decoded.Metadata.ConfigFields))
 			}
 		} else if len(decoded.Metadata.ConfigFields) != 0 {
 			t.Errorf("%s: sibling faces must not advertise config fields: %v", role.Name, decoded.Metadata.ConfigFields)
@@ -431,16 +431,17 @@ func TestStatePayloadExposesEditableSettingsWithoutSecrets(t *testing.T) {
 	runtime := New(rolesChat())
 	settings := config.Default()
 	settings.RequestTimeoutSeconds = 321
-	settings.KeyCooldownSeconds = 7
-	settings.MaxRetries = 5
 	settings.Debug = true
 	settings.StateDir = "/tmp/opencode-go-state"
-	settings.Keys = []config.Key{{Name: "main", Key: "oc_sk_super_secret_value_1234", Weight: 2, Enabled: boolPointer(true)}}
+	settings.Keys = []config.Key{{Name: "main", Key: "oc_sk_super_secret_value_1234", Priority: 2, Enabled: boolPointer(true)}}
 	runtime.applySettings(settings)
 
 	payload := runtime.StatePayload()
-	if payload.TimeoutSeconds != 321 || payload.KeyCooldownSeconds != 7 || payload.MaxRetries != 5 {
-		t.Errorf("timeout/cooldown/retries = %d/%d/%d", payload.TimeoutSeconds, payload.KeyCooldownSeconds, payload.MaxRetries)
+	if payload.TimeoutSeconds != 321 {
+		t.Errorf("timeout = %d, want 321", payload.TimeoutSeconds)
+	}
+	if len(payload.Keys) != 1 || payload.Keys[0].Priority != 2 {
+		t.Errorf("keys payload = %+v", payload.Keys)
 	}
 	if !payload.Debug || payload.StateDir != "/tmp/opencode-go-state" {
 		t.Errorf("debug/state dir = %v/%q", payload.Debug, payload.StateDir)

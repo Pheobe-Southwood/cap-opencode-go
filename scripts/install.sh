@@ -56,7 +56,7 @@ plugins:
       keys:
         - name: "main"
           key: "oc_sk_xxx"
-          weight: 1
+          priority: 10
           enabled: true
       models:
         "gpt-6-luna":        { enabled: true, proxy: proxy }

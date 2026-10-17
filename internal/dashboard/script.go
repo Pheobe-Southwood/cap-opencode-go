@@ -23,8 +23,8 @@ const pageScript = `
   var CRED_SESSION = 'cap-opencode-go:webui-key'; // typed password, this tab only
   var TOP_LABELS = {
     'base-url':'Base URL', 'session-mode':'Session 模式', 'session':'Session 值', 'proxy-url':'插件代理 URL',
-    'default-proxy':'默认代理模式', 'request-timeout-seconds':'请求超时', 'key-cooldown-seconds':'Key 冷却',
-    'max-retries':'失败重试次数', 'state-dir':'状态目录', 'debug':'调试日志', 'plan':'套餐'
+    'default-proxy':'默认代理模式', 'request-timeout-seconds':'请求超时',
+    'state-dir':'状态目录', 'debug':'调试日志', 'plan':'套餐'
   };
   var MODEL_LABELS = {enabled:'启用', family:'协议', proxy:'代理', aliases:'别名'};
 
@@ -315,6 +315,7 @@ const pageScript = `
   var quota = null;        // {keys:[…], at:<ms>} from /api/quota
   var stats = null;        // /api/stats read model
   var statsRange = 'month';
+  var statsKey = '';
   var statsBusy = false;
   var statsErrorText = '';
   var statsCalendarRetry = false;
@@ -325,7 +326,7 @@ const pageScript = `
   var authAttempts = 0;
   var edits = emptyEdits();
 
-  function emptyEdits(){ return { top:{}, models:{}, keys:{ add:{}, del:{}, set:{} } }; }
+  function emptyEdits(){ return { top:{}, models:{}, keys:{ add:{}, del:{}, set:{}, rename:{} } }; }
   function rows(){ return (state && state.models) || []; }
   function rowByID(id){
     var all = rows();
@@ -343,6 +344,19 @@ const pageScript = `
     for(var i=0;i<all.length;i++){ if(all[i].key_name === name) return all[i]; }
     return null;
   }
+  // accounts is the plugin's projection of the keys onto host auth files: CPA's
+  // 配额管理 → Plugin lists one account per file.
+  function accountsInfo(){ return (state && state.accounts) || null; }
+  function accountFileOf(name){
+    var info = accountsInfo();
+    if(!info || !info.files) return '';
+    return info.files[name] || '';
+  }
+  function accountsView(){
+    var info = accountsInfo();
+    if(!info || !info.files) return [];
+    return Object.keys(info.files).map(function(name){ return info.files[name]; });
+  }
 
   // ------------------------------------------------------- pending changes
   function countEdits(){
@@ -350,14 +364,16 @@ const pageScript = `
     Object.keys(edits.models).forEach(function(id){
       total += edits.models[id] === null ? 1 : Object.keys(edits.models[id]).length;
     });
-    total += Object.keys(edits.keys.add).length + Object.keys(edits.keys.del).length;
-    Object.keys(edits.keys.set).forEach(function(name){ total += Object.keys(edits.keys.set[name]).length; });
+    total += keyEditCount();
     return total;
   }
   function modelEditCount(){ return Object.keys(edits.models).length; }
+  // A rename is one edit too: without it a page whose only pending change is a
+  // new name would keep the save button disabled until something else changes.
   function keyEditCount(){
     var total = Object.keys(edits.keys.add).length + Object.keys(edits.keys.del).length;
     Object.keys(edits.keys.set).forEach(function(name){ total += Object.keys(edits.keys.set[name]).length; });
+    total += Object.keys(edits.keys.rename).length;
     return total;
   }
   function topEditCount(){ return Object.keys(edits.top).length; }
@@ -391,16 +407,20 @@ const pageScript = `
       });
     });
     Object.keys(edits.keys.add).forEach(function(name){
-      lines.push({group:'Key', text:'新增 ' + name + '（权重 ' + edits.keys.add[name].weight + '）'});
+      lines.push({group:'Key', text:'新增 ' + name + '（优先级 ' + edits.keys.add[name].priority + '）'});
     });
     Object.keys(edits.keys.del).forEach(function(name){ lines.push({group:'Key', text:'移除 ' + name}); });
     Object.keys(edits.keys.set).forEach(function(name){
       var set = edits.keys.set[name];
+      var label = edits.keys.rename[name] || name;
       Object.keys(set).forEach(function(field){
         var value = set[field];
         if(field === 'enabled') value = value ? '启用' : '停用';
-        lines.push({group:'Key', text:name + '：' + (field === 'weight' ? '权重' : '状态') + ' → ' + show(value)});
+        lines.push({group:'Key', text:label + '：' + (field === 'priority' ? '优先级' : '状态') + ' → ' + show(value)});
       });
+    });
+    Object.keys(edits.keys.rename).forEach(function(name){
+      lines.push({group:'Key', text:name + ' → ' + edits.keys.rename[name]});
     });
     return lines;
   }
@@ -478,9 +498,10 @@ const pageScript = `
       var set = edits.keys.set[key.name] || {};
       out.push({
         name: key.name,
+        label: edits.keys.rename[key.name] || key.name,
         masked: key.masked,
         state: key,
-        weight: 'weight' in set ? set.weight : key.weight,
+        priority: 'priority' in set ? set.priority : (key.priority != null ? key.priority : 1),
         enabled: 'enabled' in set ? set.enabled : key.enabled,
         isNew: false
       });
@@ -489,9 +510,10 @@ const pageScript = `
       var added = edits.keys.add[name];
       out.push({
         name: name,
+        label: name,
         masked: maskSecret(added.secret),
         state: null,
-        weight: added.weight,
+        priority: added.priority,
         enabled: added.enabled,
         isNew: true
       });
@@ -542,17 +564,27 @@ const pageScript = `
       if(key.last_used) meta.push('<span class="hint">最近使用 ' + esc(relPast(key.last_used)) + '</span>');
       if(key.last_status) meta.push('<span class="hint">最近状态 ' + esc(key.last_status) + '</span>');
     }
+    var account = accountFileOf(view.name);
+    if(account) meta.push('<span class="hint">CPA 账号 ' + esc(account) + (edits.keys.rename[view.name] ? '（保存后改名）' : '') + '</span>');
+    // Only persisted keys are renameable in place. A pending addition is
+    // renamed in the add form, which keeps the add map and the rename map from
+    // ever sharing a key.
+    var nameField = view.isNew
+      ? '<span class="key-name">' + esc(view.label) + '</span>'
+      : '<input class="key-name-input" type="text" data-key-rename="' + esc(view.name) + '" value="' + esc(view.label) + '" ' +
+        'aria-label="Key 名称" title="点击修改名称，回车或失焦生效；保存后同步重命名 CPA 账号文件" ' +
+        'autocomplete="off" spellcheck="false" size="' + Math.max(6, Math.min(32, String(view.label).length + 1)) + '">';
     var error = key && key.last_error ? '<div class="err-text" style="font-size:12px">' + esc(String(key.last_error).slice(0, 160)) + '</div>' : '';
     return '<div class="key-card' + (view.enabled ? '' : ' is-off') + (view.isNew ? ' is-new' : '') + '" data-key-card="' + esc(view.name) + '">' +
       '<div class="key-head">' +
-        '<span class="key-name">' + esc(view.name) + '</span>' +
+        nameField +
         '<code class="key-mask">' + esc(view.masked || '(未配置)') + '</code>' +
         keyHealth(key) +
         (view.isNew ? '<span class="pill accent">待新增</span>' : '') +
         '<span class="spacer"></span>' +
         '<span class="key-actions">' +
-          '<span class="key-weight"><span class="hint">权重</span>' +
-            '<input type="number" min="1" step="1" inputmode="numeric" data-key-weight="' + esc(view.name) + '" value="' + esc(view.weight) + '"></span>' +
+          '<span class="key-priority"><span class="hint">优先级</span>' +
+            '<input type="number" min="0" step="1" inputmode="numeric" data-key-priority="' + esc(view.name) + '" value="' + esc(view.priority) + '"></span>' +
           '<label class="switch"><input type="checkbox" data-key-enabled="' + esc(view.name) + '"' + (view.enabled ? ' checked' : '') + '><span class="hint">' + (view.enabled ? '启用' : '停用') + '</span></label>' +
           '<button class="danger small" type="button" data-key-remove="' + esc(view.name) + '">移除</button>' +
         '</span>' +
@@ -573,11 +605,8 @@ const pageScript = `
   function renderAccountStats(){
     var views = keyViews();
     var enabled = views.filter(function(view){ return view.enabled; }).length;
-    var cooling = 0;
     var worst = null;
     views.forEach(function(view){
-      var key = view.state;
-      if(key && key.cooldown_till && new Date(key.cooldown_till) > new Date()) cooling++;
       var entry = quotaFor(view.name);
       if(!entry || !entry.windows) return;
       entry.windows.forEach(function(window){
@@ -587,27 +616,27 @@ const pageScript = `
         if(!worst || left < worst.left) worst = {left:left, key:view.name, label:window.label || window.key};
       });
     });
+    var accountFiles = accountsView();
     var stats = [
       ['Key', enabled + ' 启用 / ' + views.length],
       ['最低剩余', worst ? worst.left.toFixed(0) + '%' : '—', worst ? worst.key + ' · ' + worst.label : '尚无窗口数据'],
-      ['冷却中', String(cooling)],
+      ['调度方式', '跟随宿主', 'CPA 网络配置管理'],
       ['协议面', (state && state.siblings ? state.siblings.length : 0) + ' 个', '四个协议族共用这份配置'],
+      ['CPA 账号', accountFiles.length + ' 个', accountFiles.length ? '配额管理 → Plugin 里可见' : '未投影到 CPA'],
       ['余量更新', quota && quota.at ? new Date(quota.at).toLocaleTimeString() : '—']
     ];
     el('accountStats').innerHTML = stats.map(function(stat){
       return '<div class="stat"><span class="k">' + esc(stat[0]) + '</span><span class="v">' + esc(stat[1]) + '</span>' +
         (stat[2] ? '<span class="hint">' + esc(stat[2]) + '</span>' : '') + '</div>';
     }).join('');
-    var enabledWeight = views.filter(function(view){ return view.enabled; })
-      .reduce(function(total, view){ return total + (Number(view.weight) || 1); }, 0);
-    text(el('quotaHint'), quota === null ? '正在读取余量…' : ('余量来自上游 /usage 接口 · 启用 Key 权重合计 ' + enabledWeight));
+    text(el('quotaHint'), quota === null ? '正在读取余量…' : '余量来自上游 /usage 接口 · 路由方式完全跟随 CPA 宿主');
   }
   function renderRotationGrid(){
     var settings = [
-      ['Key 冷却', (state && state.key_cooldown_seconds != null ? state.key_cooldown_seconds : 60) + ' 秒', '失败的 Key 在这段时间内不再被选中'],
-      ['失败重试', (state && state.max_retries != null ? state.max_retries : 2) + ' 次', '一次请求最多切换的 Key 数量'],
+      ['路由策略', '跟随宿主网络配置', '完全由 CPA 宿主管理策略与故障转移'],
+      ['Key 调度', '按优先级降序', '数字越大越优先，同优先级由宿主调度'],
       ['请求超时', (state && state.timeout_seconds ? state.timeout_seconds : 900) + ' 秒', '上游单个请求的最长等待时间'],
-      ['代理', state ? (state.proxy_url || (state.host_proxy_url ? '继承 CPA：' + state.host_proxy_url : '未设置')) : '—', '可在「设置」里修改']
+      ['插件代理', state ? (state.proxy_url || (state.host_proxy_url ? '继承 CPA：' + state.host_proxy_url : '未设置')) : '—', '可在「设置」里修改']
     ];
     el('rotationGrid').innerHTML = settings.map(function(item){
       return '<div class="kv"><span class="k">' + esc(item[0]) + '</span><span class="v">' + esc(shorten(item[1], 22)) + '</span><span class="hint">' + esc(item[2]) + '</span></div>';
@@ -908,7 +937,8 @@ const pageScript = `
       aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、整体 TPS、生成 TPS 与 TTFT。token、失败与请求总延迟来自宿主 usage 事件；整体 TPS 含首字，生成 TPS 只算插件测到的首内容到末内容，TTFT 由插件读流自测。v1.7 起可回放旧 Token Usage Tracker 中 opencode-go 的历史。'),
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),
       aboutRow('热重载', '替换插件文件同样热生效：把新版本 .so 放进 plugins/linux/amd64 后原地改一次 config.yaml 即可（不要用会替换 inode 的方式写文件）。'),
-      aboutRow('残留', '插件只在 CPA 目录下写 plugins/ 与 data/cap-opencode-go/（shared.json、stats-&lt;role&gt;.json，可选 debug.log）；删除插件与配置块后无任何残留。'),
+      aboutRow('CPA 账号', '每个 Key 会在 CPA 的 auth 目录里投影成一个认证文件（<code>opencode-go-&lt;key 名&gt;.json</code>，权限 0600，带 <code>managed_by</code> 标记），因此「配额管理 → Plugin」能像 Antigravity / Codex 一样显示 5 小时 / 本周 / 本月余量。投影是单向的：路由仍由这里的 Key 池决定，在 CPA 里启停或删除账号不影响转发，下一次同步会按配置复原。'),
+      aboutRow('残留', '插件只在 CPA 目录下写 plugins/、data/cap-opencode-go/（shared.json、stats-&lt;role&gt;.json，可选 debug.log）和 auth 目录里的 opencode-go-*.json；认证文件在插件被卸载（删配置块 / 禁用 / 停服）时自动删除，热替换升级则交给新实例接管，删除插件与配置块后无任何残留。'),
       aboutRow('仓库', '<a href="' + REPO_URL + '" target="_blank" rel="noreferrer noopener">' + esc(REPO_URL.replace('https://', '')) + '</a>')
     ].join('');
   }
@@ -923,8 +953,6 @@ const pageScript = `
       case 'proxy-url': return state.proxy_url || '';
       case 'default-proxy': return state.default_proxy || 'inherit';
       case 'request-timeout-seconds': return state.timeout_seconds || 900;
-      case 'key-cooldown-seconds': return state.key_cooldown_seconds == null ? 60 : state.key_cooldown_seconds;
-      case 'max-retries': return state.max_retries == null ? 2 : state.max_retries;
       case 'state-dir': return state.state_dir || '';
       case 'plan': return state.plan || 'go';
       case 'debug': return !!state.debug;
@@ -944,8 +972,6 @@ const pageScript = `
     el('cfgProxyURL').value = value('proxy-url');
     el('cfgDefaultProxy').value = value('default-proxy');
     el('cfgTimeout').value = value('request-timeout-seconds');
-    el('cfgCooldown').value = value('key-cooldown-seconds');
-    el('cfgRetries').value = value('max-retries');
     el('cfgStateDir').value = value('state-dir');
     el('cfgPlan').value = value('plan');
     el('cfgDebug').checked = !!value('debug');
@@ -996,18 +1022,27 @@ const pageScript = `
         var set = edits.keys.set[name];
         var target = keys[index[name]];
         if('enabled' in set) target.enabled = set.enabled;
-        if('weight' in set) target.weight = set.weight;
+        if('priority' in set) target.priority = set.priority;
       });
+      // Rename after removals and per-key edits (both are keyed by the name the
+      // page read) and before additions. Rebuilding the index here is what lets
+      // "rename A to B, then add a new A" produce two distinct keys in one save.
+      Object.keys(edits.keys.rename).forEach(function(name){
+        if(!(name in index)) return;
+        keys[index[name]].name = edits.keys.rename[name];
+      });
+      index = {};
+      keys.forEach(function(item, position){ if(item && item.name) index[item.name] = position; });
       Object.keys(edits.keys.add).forEach(function(name){
         var added = edits.keys.add[name];
         if(name in index){
           var existing = keys[index[name]];
           existing.key = added.secret;
-          existing.weight = added.weight;
+          existing.priority = added.priority;
           existing.enabled = added.enabled;
           return;
         }
-        keys.push({ name:name, key:added.secret, weight:added.weight, enabled:added.enabled });
+        keys.push({ name:name, key:added.secret, priority:added.priority, enabled:added.enabled });
       });
       payload.keys = keys;
     }
@@ -1174,6 +1209,7 @@ const pageScript = `
     statsErrorText = '';
     renderUsageStats();
     var params = '?range=' + encodeURIComponent(statsRange);
+    if(statsKey) params += '&key=' + encodeURIComponent(statsKey);
     var since = statsRange === 'month' ? statsSinceISO() : null;
     if(since) params += '&since=' + encodeURIComponent(since);
     return fetch(BASES.resource + '/api/stats' + params)
@@ -1204,8 +1240,22 @@ const pageScript = `
         renderUsageStats();
       });
   }
+  function renderStatsKeyFilter(){
+    var select = el('statsKey');
+    if(!select) return;
+    var current = statsKey;
+    var keys = (stats && stats.keys) || [];
+    var html = '<option value="">全部 Key</option>';
+    keys.forEach(function(k){
+      var label = k.name + ' (优先级 ' + (k.priority || 0) + ')';
+      html += '<option value="' + esc(k.name) + '"' + (k.name === current ? ' selected' : '') + '>' + esc(label) + '</option>';
+    });
+    select.innerHTML = html;
+    select.value = current;
+  }
   function renderUsageStats(){
     if(!el('statsSummary')) return;
+    renderStatsKeyFilter();
     renderPriceFreshness();
     renderUsageSummary();
     renderUsageTable();
@@ -1380,13 +1430,25 @@ const pageScript = `
     var monthly = '<span class="hint">—</span>';
     if(stats.range && stats.range.kind !== 'month') monthly = '<span class="hint">仅本月</span>';
     else if(model.free) monthly = '<span class="pill ok">不限</span>';
-    else if(model.monthly_percent != null && model.monthly_limit_usd > 0){
+    else if(model.monthly_limit_usd > 0){
       var used = Math.max(0, Number(model.monthly_percent) || 0);
       var width = Math.min(100, used);
       var level = used >= 100 ? 'err' : (used >= 80 ? 'warn' : '');
-      monthly = '<div class="stats-percent"><span class="v ' + (level === 'err' ? 'err-text' : level === 'warn' ? 'warn-text' : '') + '">' +
+      var mainBar = '<div class="stats-percent"><span class="v ' + (level === 'err' ? 'err-text' : level === 'warn' ? 'warn-text' : '') + '">' +
         formatPercent(used) + '</span><div class="bar ' + level + '"><span style="width:' + width + '%"></span></div>' +
         '<span class="stats-sub">' + formatUSD(model.cost_usd) + ' / ' + formatUSD(model.monthly_limit_usd) + '</span></div>';
+      var keyPills = '';
+      if(model.by_key && model.by_key.length > 0){
+        keyPills = '<div class="stats-key-remainders">' + model.by_key.map(function(bk){
+          var remUSD = formatUSD(bk.remaining_usd);
+          var remPct = bk.remaining_percent != null ? bk.remaining_percent.toFixed(0) + '%' : '';
+          var bkLevel = bk.remaining_usd <= 0 ? 'err' : (bk.used_percent >= 80 ? 'warn' : '');
+          return '<span class="stats-key-rem-pill ' + bkLevel + '" title="' + esc(bk.key_name) + '：已用 ' + formatUSD(bk.cost_usd) + ' / 限额 ' + formatUSD(model.monthly_limit_usd) + '">' +
+            '<strong>' + esc(bk.key_name) + '</strong> 余 ' + remUSD + (remPct ? ' (' + remPct + ')' : '') +
+            '</span>';
+        }).join('') + '</div>';
+      }
+      monthly = mainBar + keyPills;
     } else if(model.priced) monthly = '<span class="hint">限额未知</span>';
 
     var tps = model.tps_samples
@@ -1465,6 +1527,33 @@ const pageScript = `
   }
 
   // ------------------------------------------------------------ key edits
+  // Key names are the identity of a pool entry, so a rename has to be checked
+  // against the names the configuration will end up with: the rename targets of
+  // the other keys, the entries marked for removal (those names are freed), and
+  // the pending additions. Without the last check "add key X" after "rename X"
+  // would create two entries the host cannot tell apart.
+  function keyNameTaken(name, ignore){
+    var taken = false;
+    poolKeys().forEach(function(key){
+      if(taken || edits.keys.del[key.name] || key.name === ignore) return;
+      if((edits.keys.rename[key.name] || key.name) === name) taken = true;
+    });
+    Object.keys(edits.keys.add).forEach(function(added){
+      if(!taken && added === name) taken = true;
+    });
+    return taken;
+  }
+  // setKeyRename records or drops one pending rename. It returns ok/label so the
+  // caller can keep the input and the pending list in sync even when the name is
+  // rejected; an invalid draft is never written to the save payload.
+  function setKeyRename(original, raw){
+    var target = String(raw == null ? '' : raw).trim();
+    if(!target){ delete edits.keys.rename[original]; return {ok:false, reason:'empty', label:original}; }
+    if(target === original){ delete edits.keys.rename[original]; return {ok:true, label:original}; }
+    if(keyNameTaken(target, original)){ delete edits.keys.rename[original]; return {ok:false, reason:'taken', label:original, target:target}; }
+    edits.keys.rename[original] = target;
+    return {ok:true, label:target};
+  }
   function setKeyEnabled(name, enabled){
     var key = poolKey(name);
     var added = edits.keys.add[name];
@@ -1476,13 +1565,13 @@ const pageScript = `
     }
     markDirty();
   }
-  function setKeyWeight(name, weight){
+  function setKeyPriority(name, priority){
     var key = poolKey(name);
     var added = edits.keys.add[name];
-    if(added){ added.weight = weight; }
+    if(added){ added.priority = priority; }
     else if(key){
       var set = edits.keys.set[name] || {};
-      if(weight === key.weight){ delete set.weight; } else { set.weight = weight; }
+      if(priority === key.priority){ delete set.priority; } else { set.priority = priority; }
       if(Object.keys(set).length){ edits.keys.set[name] = set; } else { delete edits.keys.set[name]; }
     }
     markDirty();
@@ -1491,22 +1580,21 @@ const pageScript = `
     if(edits.keys.add[name]){ delete edits.keys.add[name]; }
     else { edits.keys.del[name] = true; }
     delete edits.keys.set[name];
+    delete edits.keys.rename[name];
     markDirty();
     renderAccounts();
   }
   function addKeyFromForm(){
     var name = (el('keyName').value || '').trim();
     var secret = (el('keySecret').value || '').trim();
-    var weight = parseInt(el('keyWeight').value, 10);
+    var priority = parseInt(el('keyPriority').value, 10);
     if(!name){ keyFormHint('Key 名称不能为空', true); return; }
     if(!secret){ keyFormHint('Key 内容不能为空', true); return; }
-    if(isNaN(weight) || weight < 1) weight = 1;
-    if(poolKey(name) || edits.keys.add[name]){
-      if(!edits.keys.del[name]){ keyFormHint('已存在同名 Key：' + name, true); return; }
-    }
+    if(isNaN(priority) || priority < 0) priority = 1;
+    if(keyNameTaken(name, null)){ keyFormHint('已存在同名 Key：' + name, true); return; }
     delete edits.keys.del[name];
-    edits.keys.add[name] = { secret: secret, weight: weight, enabled: true };
-    el('keyName').value = ''; el('keySecret').value = ''; el('keyWeight').value = '1';
+    edits.keys.add[name] = { secret: secret, priority: priority, enabled: true };
+    el('keyName').value = ''; el('keySecret').value = ''; el('keyPriority').value = '1';
     keyFormHint('已加入待保存列表，点右上角「保存」写入配置。', false);
     el('keyAdder').open = true;
     markDirty();
@@ -1551,6 +1639,11 @@ const pageScript = `
     stats = null;
     loadUsageStats(true);
   });
+  el('statsKey').addEventListener('change', function(){
+    statsKey = el('statsKey').value;
+    stats = null;
+    loadUsageStats(true);
+  });
   el('statsPlanBtn').addEventListener('click', function(){
     showTab('settings');
     var plan = el('cfgPlan');
@@ -1580,24 +1673,60 @@ const pageScript = `
   });
   el('keyList').addEventListener('change', function(event){
     var target = event.target;
+    if(target.hasAttribute('data-key-rename')){
+      var original = target.getAttribute('data-key-rename');
+      var verdict = setKeyRename(original, target.value);
+      if(!verdict.ok){
+        notify(verdict.reason === 'empty' ? 'Key 名称不能为空' : ('已存在同名 Key：' + verdict.target), 'error');
+      }
+      target.value = verdict.label;
+      target.classList.remove('invalid');
+      markDirty();
+      renderAccounts();
+      return;
+    }
     if(target.hasAttribute('data-key-enabled')){
       setKeyEnabled(target.getAttribute('data-key-enabled'), target.checked);
       renderAccounts();
       return;
     }
-    if(target.hasAttribute('data-key-weight')){
-      var weight = parseInt(target.value, 10);
-      if(isNaN(weight) || weight < 1) weight = 1;
-      setKeyWeight(target.getAttribute('data-key-weight'), weight);
-      target.value = weight;
+    if(target.hasAttribute('data-key-priority') || target.hasAttribute('data-key-weight')){
+      var priority = parseInt(target.value, 10);
+      if(isNaN(priority) || priority < 0) priority = 0;
+      var keyName = target.getAttribute('data-key-priority') || target.getAttribute('data-key-weight');
+      setKeyPriority(keyName, priority);
+      target.value = priority;
     }
   });
   el('keyList').addEventListener('input', function(event){
     var target = event.target;
-    if(!target.hasAttribute('data-key-weight')) return;
-    var weight = parseInt(target.value, 10);
-    if(isNaN(weight) || weight < 1) return;
-    setKeyWeight(target.getAttribute('data-key-weight'), weight);
+    if(target.hasAttribute('data-key-rename')){
+      // Record on every keystroke so a page whose only pending change is the
+      // name enables the save button before the click blurs the input.
+      var verdict = setKeyRename(target.getAttribute('data-key-rename'), target.value);
+      target.classList.toggle('invalid', !verdict.ok);
+      target.size = Math.max(6, Math.min(32, String(target.value).length + 1));
+      markDirty();
+      return;
+    }
+    if(!target.hasAttribute('data-key-priority') && !target.hasAttribute('data-key-weight')) return;
+    var priority = parseInt(target.value, 10);
+    if(isNaN(priority) || priority < 0) return;
+    var keyName = target.getAttribute('data-key-priority') || target.getAttribute('data-key-weight');
+    setKeyPriority(keyName, priority);
+  });
+  el('keyList').addEventListener('keydown', function(event){
+    var target = event.target;
+    if(!target.hasAttribute('data-key-rename')) return;
+    if(event.key === 'Enter'){ event.preventDefault(); target.blur(); return; }
+    if(event.key === 'Escape'){
+      event.preventDefault();
+      delete edits.keys.rename[target.getAttribute('data-key-rename')];
+      target.value = target.getAttribute('data-key-rename');
+      target.classList.remove('invalid');
+      markDirty();
+      target.blur();
+    }
   });
   el('keyList').addEventListener('click', function(event){
     var button = event.target.closest ? event.target.closest('button[data-key-remove]') : null;
@@ -1662,11 +1791,11 @@ const pageScript = `
       })
       .then(function(){ renderModels(); });
   }
-  ['cfgBaseURL','cfgSession','cfgProxyURL','cfgStateDir','cfgSessionMode','cfgDefaultProxy','cfgTimeout','cfgCooldown','cfgRetries','cfgPlan','cfgDebug'].forEach(function(id){
+  ['cfgBaseURL','cfgSession','cfgProxyURL','cfgStateDir','cfgSessionMode','cfgDefaultProxy','cfgTimeout','cfgPlan','cfgDebug'].forEach(function(id){
     var field = {
       cfgBaseURL:'base-url', cfgSession:'session', cfgProxyURL:'proxy-url', cfgStateDir:'state-dir',
       cfgSessionMode:'session-mode', cfgDefaultProxy:'default-proxy', cfgTimeout:'request-timeout-seconds',
-      cfgCooldown:'key-cooldown-seconds', cfgRetries:'max-retries', cfgPlan:'plan', cfgDebug:'debug'
+      cfgPlan:'plan', cfgDebug:'debug'
     }[id];
     var node = el(id);
     function record(){

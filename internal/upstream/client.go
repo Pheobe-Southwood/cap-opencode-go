@@ -18,7 +18,6 @@ import (
 
 	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/keys"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
 )
 
@@ -39,6 +38,8 @@ type Call struct {
 	Stream         bool
 	Body           []byte
 	Session        string
+	// Credential is the selected upstream credential chosen by CPA's AuthManager.
+	Credential config.Key
 }
 
 // Result is a completed non-streaming call.
@@ -60,7 +61,6 @@ type Stream struct {
 // Client is the shared upstream client.
 type Client struct {
 	settings atomic.Pointer[config.Settings]
-	pool     *keys.Pool
 
 	mu      sync.Mutex
 	clients map[string]*http.Client
@@ -70,7 +70,7 @@ type Client struct {
 
 // New builds a client for the supplied settings.
 func New(settings config.Settings) *Client {
-	client := &Client{pool: keys.New(settings), clients: map[string]*http.Client{}}
+	client := &Client{clients: map[string]*http.Client{}}
 	client.Update(settings)
 	return client
 }
@@ -79,7 +79,6 @@ func New(settings config.Settings) *Client {
 func (c *Client) Update(settings config.Settings) {
 	copied := settings
 	c.settings.Store(&copied)
-	c.pool.Replace(settings)
 	c.mu.Lock()
 	c.clients = map[string]*http.Client{}
 	c.mu.Unlock()
@@ -93,118 +92,79 @@ func (c *Client) Settings() config.Settings {
 	return config.Default()
 }
 
-// Pool exposes credential health for the dashboard.
-func (c *Client) Pool() *keys.Pool { return c.pool }
-
-// Execute performs a non-streaming upstream call with credential failover.
-func (c *Client) Execute(ctx context.Context, call Call) (Result, error) {
-	settings := c.Settings()
-	candidates := c.pool.Candidates()
-	if len(candidates) == 0 {
-		return Result{}, abi.StatusErrorf(http.StatusUnauthorized, "no_api_key",
+func (c *Client) resolveCredential(call Call, settings config.Settings) (config.Key, error) {
+	if strings.TrimSpace(call.Credential.Key) != "" {
+		return call.Credential, nil
+	}
+	enabled := settings.EnabledKeys()
+	if len(enabled) == 0 {
+		return config.Key{}, abi.StatusErrorf(http.StatusUnauthorized, "no_api_key",
 			"OpenCode Go 没有可用的 API Key，请在插件页面的 Key 池中添加")
 	}
-
-	attempts := 1 + settings.MaxRetries
-	var lastErr error
-	tried := 0
-	for _, credential := range candidates {
-		if tried >= attempts {
-			break
-		}
-		tried++
-		response, errDo := c.do(ctx, call, credential, settings)
-		if errDo != nil {
-			c.pool.RecordFailure(credential.Key, 0, errDo.Error())
-			lastErr = errDo
-			continue
-		}
-		if response.StatusCode >= 200 && response.StatusCode < 300 {
-			body, errRead := io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if errRead != nil {
-				c.pool.RecordFailure(credential.Key, response.StatusCode, errRead.Error())
-				lastErr = abi.StatusErrorf(http.StatusBadGateway, "upstream_read_failed",
-					"读取 OpenCode Go 响应失败: %v", errRead)
-				continue
-			}
-			c.pool.RecordSuccess(credential.Key, response.StatusCode)
-			return Result{
-				StatusCode: response.StatusCode,
-				Headers:    response.Header,
-				Body:       body,
-				KeyName:    credential.Name,
-			}, nil
-		}
-		body, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
-		_ = response.Body.Close()
-		c.recordFailure(credential, response.StatusCode, string(body))
-		lastErr = upstreamError(response.StatusCode, body, credential.Name)
-		if !retryableStatus(response.StatusCode) {
-			return Result{}, lastErr
+	best := enabled[0]
+	for _, k := range enabled[1:] {
+		if k.Priority > best.Priority {
+			best = k
 		}
 	}
-	if lastErr == nil {
-		lastErr = abi.StatusErrorf(http.StatusBadGateway, "upstream_failed", "OpenCode Go 请求失败")
-	}
-	return Result{}, lastErr
+	return best, nil
 }
 
-// Stream performs a streaming upstream call with credential failover. Failover
-// only happens before the first byte reaches the caller.
+// Execute performs a non-streaming upstream call with the selected credential.
+func (c *Client) Execute(ctx context.Context, call Call) (Result, error) {
+	settings := c.Settings()
+	credential, errCred := c.resolveCredential(call, settings)
+	if errCred != nil {
+		return Result{}, errCred
+	}
+
+	response, errDo := c.do(ctx, call, credential, settings)
+	if errDo != nil {
+		return Result{}, errDo
+	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		body, errRead := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if errRead != nil {
+			return Result{}, abi.StatusErrorf(http.StatusBadGateway, "upstream_read_failed",
+				"读取 OpenCode Go 响应失败: %v", errRead)
+		}
+		return Result{
+			StatusCode: response.StatusCode,
+			Headers:    response.Header,
+			Body:       body,
+			KeyName:    credential.Name,
+		}, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
+	_ = response.Body.Close()
+	return Result{}, upstreamError(response.StatusCode, body, credential.Name)
+}
+
+// Stream performs a streaming upstream call with the selected credential.
 func (c *Client) Stream(ctx context.Context, call Call) (*Stream, error) {
 	settings := c.Settings()
 	call.Stream = true
-	candidates := c.pool.Candidates()
-	if len(candidates) == 0 {
-		return nil, abi.StatusErrorf(http.StatusUnauthorized, "no_api_key",
-			"OpenCode Go 没有可用的 API Key，请在插件页面的 Key 池中添加")
+	credential, errCred := c.resolveCredential(call, settings)
+	if errCred != nil {
+		return nil, errCred
 	}
 
-	attempts := 1 + settings.MaxRetries
-	var lastErr error
-	tried := 0
-	for _, credential := range candidates {
-		if tried >= attempts {
-			break
-		}
-		tried++
-		response, errDo := c.do(ctx, call, credential, settings)
-		if errDo != nil {
-			c.pool.RecordFailure(credential.Key, 0, errDo.Error())
-			lastErr = errDo
-			continue
-		}
-		if response.StatusCode >= 200 && response.StatusCode < 300 {
-			c.pool.RecordSuccess(credential.Key, response.StatusCode)
-			return &Stream{
-				StatusCode: response.StatusCode,
-				Headers:    response.Header,
-				Body:       response.Body,
-				KeyName:    credential.Name,
-			}, nil
-		}
-		body, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
-		_ = response.Body.Close()
-		c.recordFailure(credential, response.StatusCode, string(body))
-		lastErr = upstreamError(response.StatusCode, body, credential.Name)
-		if !retryableStatus(response.StatusCode) {
-			return nil, lastErr
-		}
+	response, errDo := c.do(ctx, call, credential, settings)
+	if errDo != nil {
+		return nil, errDo
 	}
-	if lastErr == nil {
-		lastErr = abi.StatusErrorf(http.StatusBadGateway, "upstream_failed", "OpenCode Go 流式请求失败")
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return &Stream{
+			StatusCode: response.StatusCode,
+			Headers:    response.Header,
+			Body:       response.Body,
+			KeyName:    credential.Name,
+		}, nil
 	}
-	return nil, lastErr
-}
-
-func (c *Client) recordFailure(credential config.Key, status int, body string) {
-	// A 400/404 means the request itself is wrong; the credential is fine.
-	if status == http.StatusBadRequest || status == http.StatusNotFound {
-		c.pool.RecordSuccess(credential.Key, status)
-		return
-	}
-	c.pool.RecordFailure(credential.Key, status, strings.TrimSpace(body))
+	body, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
+	_ = response.Body.Close()
+	return nil, upstreamError(response.StatusCode, body, credential.Name)
 }
 
 func (c *Client) do(ctx context.Context, call Call, credential config.Key, settings config.Settings) (*http.Response, error) {

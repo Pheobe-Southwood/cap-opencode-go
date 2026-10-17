@@ -54,15 +54,12 @@ const (
 
 // Defaults for unset settings.
 const (
-	DefaultSessionMode     = "auto"
-	DefaultSession         = "$CPA-SESSION-ID"
-	DefaultProxyMode       = ProxyInherit
-	DefaultTimeoutSeconds  = 900
-	DefaultCooldownSeconds = 60
-	DefaultMaxRetries      = 2
-	DefaultKeyWeight       = 1
-	DefaultStateDirName    = "cap-opencode-go"
-	SharedStateFileName    = "shared.json"
+	DefaultSessionMode    = "auto"
+	DefaultSession        = "$CPA-SESSION-ID"
+	DefaultProxyMode      = ProxyInherit
+	DefaultTimeoutSeconds = 900
+	DefaultStateDirName   = "cap-opencode-go"
+	SharedStateFileName   = "shared.json"
 	// DefaultPlan is used by the 统计 tab until the operator picks a plan. The
 	// upstream /usage endpoint reports percentages, not the subscription tier,
 	// so the tier has to be configured rather than guessed.
@@ -71,10 +68,11 @@ const (
 
 // Key is one upstream credential.
 type Key struct {
-	Name    string `yaml:"name" json:"name"`
-	Key     string `yaml:"key" json:"key"`
-	Weight  int    `yaml:"weight" json:"weight"`
-	Enabled *bool  `yaml:"enabled" json:"enabled,omitempty"`
+	Name     string `yaml:"name" json:"name"`
+	Key      string `yaml:"key" json:"key"`
+	Priority int    `yaml:"priority" json:"priority"`
+	Weight   *int   `yaml:"weight,omitempty" json:"weight,omitempty"`
+	Enabled  *bool  `yaml:"enabled" json:"enabled,omitempty"`
 }
 
 // EnabledOrDefault reports whether the key participates in rotation.
@@ -83,14 +81,6 @@ func (k Key) EnabledOrDefault() bool {
 		return true
 	}
 	return *k.Enabled
-}
-
-// EffectiveWeight never returns a non-positive weight.
-func (k Key) EffectiveWeight() int {
-	if k.Weight <= 0 {
-		return DefaultKeyWeight
-	}
-	return k.Weight
 }
 
 // Masked renders the key for display without exposing the secret.
@@ -128,8 +118,6 @@ type Settings struct {
 	DefaultProxy          string            `yaml:"default-proxy" json:"default-proxy"`
 	ExtraHeaders          map[string]string `yaml:"extra-headers" json:"extra-headers,omitempty"`
 	RequestTimeoutSeconds int               `yaml:"request-timeout-seconds" json:"request-timeout-seconds"`
-	KeyCooldownSeconds    int               `yaml:"key-cooldown-seconds" json:"key-cooldown-seconds"`
-	MaxRetries            int               `yaml:"max-retries" json:"max-retries"`
 	StateDir              string            `yaml:"state-dir" json:"state-dir"`
 	// Plan is the OpenCode Go subscription tier used by the statistics tab to
 	// turn a model's list-price spend into a percentage of its monthly limit.
@@ -138,9 +126,21 @@ type Settings struct {
 	Keys          []Key                   `yaml:"keys" json:"keys,omitempty"`
 	Models        map[string]ModelSetting `yaml:"models" json:"models,omitempty"`
 	ModelsDefault ModelSetting            `yaml:"models-default" json:"models-default"`
+	// RegisterAccounts projects every configured key into a host auth file so
+	// the host management centre lists the keys as accounts and can show their
+	// quota (配额管理 → Plugin). It is on unless explicitly disabled.
+	RegisterAccounts *bool `yaml:"register-accounts" json:"register-accounts,omitempty"`
 	// HostProxyURL is filled from the host config summary and is never read
 	// from YAML.
 	HostProxyURL string `yaml:"-" json:"host-proxy-url,omitempty"`
+}
+
+// AccountsEnabled reports whether the keys are projected onto host auth files.
+func (s Settings) AccountsEnabled() bool {
+	if s.RegisterAccounts == nil {
+		return true
+	}
+	return *s.RegisterAccounts
 }
 
 // Default returns the built-in defaults.
@@ -151,8 +151,6 @@ func Default() Settings {
 		Session:               DefaultSession,
 		DefaultProxy:          DefaultProxyMode,
 		RequestTimeoutSeconds: DefaultTimeoutSeconds,
-		KeyCooldownSeconds:    DefaultCooldownSeconds,
-		MaxRetries:            DefaultMaxRetries,
 		Plan:                  DefaultPlan,
 	}
 }
@@ -191,15 +189,12 @@ func (s *Settings) normalize() {
 	if s.RequestTimeoutSeconds <= 0 {
 		s.RequestTimeoutSeconds = DefaultTimeoutSeconds
 	}
-	if s.KeyCooldownSeconds < 0 {
-		s.KeyCooldownSeconds = DefaultCooldownSeconds
-	}
-	if s.MaxRetries < 0 {
-		s.MaxRetries = DefaultMaxRetries
-	}
 	for i := range s.Keys {
 		s.Keys[i].Name = strings.TrimSpace(s.Keys[i].Name)
 		s.Keys[i].Key = strings.TrimSpace(s.Keys[i].Key)
+		if s.Keys[i].Priority == 0 && s.Keys[i].Weight != nil && *s.Keys[i].Weight > 0 {
+			s.Keys[i].Priority = *s.Keys[i].Weight
+		}
 	}
 	if s.Models == nil {
 		s.Models = map[string]ModelSetting{}
@@ -279,9 +274,21 @@ func (s Settings) Validate() error {
 	if _, errParse := parseProxyURL(s.ProxyURL); errParse != nil {
 		return errParse
 	}
+	seenNames := make(map[string]struct{}, len(s.Keys))
 	for _, key := range s.Keys {
-		if key.EnabledOrDefault() && key.Key == "" {
-			return fmt.Errorf("keys[%q]: key must not be empty", key.Name)
+		if key.EnabledOrDefault() {
+			if strings.TrimSpace(key.Name) == "" {
+				return fmt.Errorf("keys: enabled key must have a name")
+			}
+			if key.Key == "" {
+				return fmt.Errorf("keys[%q]: key must not be empty", key.Name)
+			}
+		}
+		if key.Name != "" {
+			if _, exists := seenNames[key.Name]; exists {
+				return fmt.Errorf("keys: duplicate key name %q", key.Name)
+			}
+			seenNames[key.Name] = struct{}{}
 		}
 	}
 	return nil
@@ -399,11 +406,6 @@ func usableProxy(value string) (string, bool) {
 // Timeout is the upstream request timeout.
 func (s Settings) Timeout() time.Duration {
 	return time.Duration(s.RequestTimeoutSeconds) * time.Second
-}
-
-// KeyCooldown is how long a failing credential stays out of rotation.
-func (s Settings) KeyCooldown() time.Duration {
-	return time.Duration(s.KeyCooldownSeconds) * time.Second
 }
 
 // StatePath resolves the shared state file path.

@@ -180,10 +180,17 @@ const pageStyles = `
   .key-card.is-new{border-style:dashed}
   .key-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .key-name{font-weight:700;word-break:break-all}
+  .key-name-input{font:inherit;font-weight:700;color:var(--text-primary);background:transparent;
+    border:1px solid transparent;border-bottom:1px dashed var(--text-tertiary);border-radius:6px;
+    padding:1px 5px;min-width:0;max-width:100%;word-break:break-all}
+  .key-name-input:hover{border-bottom-color:var(--text-primary)}
+  .key-name-input:focus{outline:none;background:var(--bg-primary);border-color:var(--border-color);border-bottom-style:solid}
+  .key-name-input.invalid{border-color:var(--error-color);border-bottom-style:solid}
+  .key-name-hint{margin:0 0 8px}
   .key-mask{color:var(--text-tertiary)}
   .key-head .spacer{flex:1 1 auto}
-  .key-weight{display:inline-flex;align-items:center;gap:6px}
-  .key-weight input{width:66px;padding:5px 7px}
+  .key-priority,.key-weight{display:inline-flex;align-items:center;gap:6px}
+  .key-priority input,.key-weight input{width:66px;padding:5px 7px}
   .key-quota{display:grid;grid-template-columns:repeat(auto-fit,minmax(198px,1fr));gap:10px}
   .quota-row{display:flex;flex-direction:column;gap:3px;min-width:0}
   .quota-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
@@ -274,6 +281,11 @@ const pageStyles = `
   .stats-percent{display:flex;flex-direction:column;gap:3px;min-width:106px}
   .stats-percent .v{font-weight:700;font-variant-numeric:tabular-nums}
   .stats-percent .bar{height:5px}
+  .stats-key-remainders{margin-top:5px;display:flex;flex-direction:column;gap:3px}
+  .stats-key-rem-pill{font-size:11px;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;background:var(--bg-tertiary);color:var(--text-secondary);white-space:nowrap}
+  .stats-key-rem-pill.warn{background:color-mix(in srgb,var(--amber-color) 15%,transparent);color:var(--amber-color)}
+  .stats-key-rem-pill.err{background:color-mix(in srgb,var(--error-color) 15%,transparent);color:var(--error-color)}
+  .stats-key-rem-pill strong{font-weight:600;color:var(--text-primary)}
   .stats-footnote{margin-top:10px;line-height:1.65}
   .stats-notes{margin:8px 0 0;padding-left:18px;display:grid;gap:6px;color:var(--text-secondary);font-size:12px}
   .stats-notes strong{color:var(--text-primary)}

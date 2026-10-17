@@ -1,8 +1,9 @@
 # 回滚手册
 
-插件的设计前提是**零残留**：它不修改 CPA 源码，不新增 auth 凭据文件，不改动任何内置
-provider 组（`openai-compatibility` / `gemini` / `codex` …），也不写 CPA 自己的数据库。
-它拥有的只有下面三类文件。
+插件的设计前提是**零残留**：它不修改 CPA 源码，不改动任何内置 provider 组
+（`openai-compatibility` / `gemini` / `codex` …），也不写 CPA 自己的数据库。
+v1.8 起它会**投影**认证文件（每个 Key 一个，见 §10），但这些文件在插件被卸载时由插件自己删除，
+所以"删除插件 → 没有任何残留"的结论仍然成立。它拥有的只有下面三类文件。
 
 ## 1. 插件拥有的文件
 
@@ -11,6 +12,7 @@ provider 组（`openai-compatibility` / `gemini` / `codex` …），也不写 CP
 | 插件库 | `<root>/plugins/<goos>/<goarch>/cap-opencode-go*-v<ver>.so` | `scripts/uninstall.sh` |
 | 配置块 | `config.yaml` 的 `plugins.configs.cap-opencode-go*` | 操作者手动删除（脚本会打印清单） |
 | 数据目录 | `<root>/data/cap-opencode-go/`（`shared.json`、`stats-<role>.json`、可选的 `replay-tracker-import.json` / `debug.log`） | `scripts/uninstall.sh` |
+| 投影账号（v1.8） | `<auth-dir>/opencode-go-<key 名>[--<role>].json`（每个 Key 投影 4 个协议面认证文件，带 `managed_by: cap-opencode-go`） | 插件卸载时自动删除；`scripts/uninstall.sh` 兜底 |
 
 `<root>` 默认 `/root/cliproxyapi`，可用 `CPA_ROOT` 覆盖。
 
@@ -54,7 +56,7 @@ ls /root/cliproxyapi/data/cap-opencode-go 2>/dev/null || echo "无残留"
 | `GET /v0/resource/plugins/cap-opencode-go/dashboard` | 404 |
 | `<root>/data/cap-opencode-go/` | 不存在 |
 | `<root>/plugins/linux/amd64/*.so` | 0 个 |
-| `<root>/auth` 目录 | 0 个文件（插件从未写入凭据文件） |
+| `<root>/auth` 目录 | 0 个文件（v1.8 的投影账号文件由插件在卸载时删除，见 §10） |
 
 ## 5. v1.2.0 之后仍然零残留
 
@@ -140,7 +142,45 @@ v1.7 回放工具只在停服时读 `token-usage-tracker.db`，不修改该库�
 1.7.8 的价目/模型核对提醒只新增 `/api/stats` 字段和页面元素，不改 stats 文件、不新增状态文件；
 回滚到 1.7.3 / 1.7.1 时这些字段会被旧页面忽略，提醒消失，统计数字不变。
 
-## 10. 常见疑问
+## 10. v1.8 之后仍然零残留（新增投影账号文件，卸载时自动删除）
+
+v1.8 为了把 Key 显示在 CPA 自带的「配额管理 → Plugin」里，会往宿主的 auth 目录写文件——这是
+唯一通道（宿主没有"只放内存"的 auth 注册接口）。这些文件由插件自己清理：
+
+| 位置 | v1.8.0 之后 |
+|---|---|
+| `plugins/linux/amd64/*.so` | 只有插件库（当前版本；重启会清理旧版本） |
+| `data/cap-opencode-go/` | 与 v1.6 / v1.7 相同 |
+| `<auth-dir>/opencode-go-*.json` | 每个配置的 Key 投影 4 个协议面认证文件；`0600`；带 `managed_by` 标记；**卸载时删除** |
+| `config.yaml` | 可能多一行 `register-accounts: false`（只有操作者主动关闭投影时） |
+| 浏览器 | 与 v1.4 相同，默认不存任何东西 |
+
+v1.9（1.9.0 / 1.9.1）的 Key 改名只是把投影文件名从 `opencode-go-<旧名>.json` 换成
+`opencode-go-<新名>.json`：旧文件按陈旧投影删除，没有新增持久化位置，因此回滚矩阵与 v1.8 相同。
+回滚到 v1.8.x 时旧版本会按当时的 `keys[].name` 重新投影，不会留下 1.9 专属文件。
+
+清理判据来自宿主的生命周期回调（详见 `docs/design.md` §7.9.4）：
+
+| 场景 | 宿主行为 | 插件行为 |
+|---|---|---|
+| 热替换升级（换 `.so` 路径） | 先发 `plugin.quiesce` 再加载新实例 | 旧实例停写、**不删**；新实例接管同一批账号 |
+| 删配置块 / `enabled: false` / 停服 | `detachPlugin` → 调库 shutdown 导出 | **删除**全部 `opencode-go-*.json` |
+| `kill -9` / 崩溃 / 只删 `.so` 后重启 | 没有 shutdown 调用，或宿主从未加载插件 | 无法清理 → **`uninstall.sh` 兜底删除** |
+| 热回滚到 1.7.x | 属热替换（quiesce） | **不删**（旧版本不认识这些文件）→ 按下面手动删一次 |
+
+回滚到 1.7.x 时补一条命令：
+
+```bash
+rm -f "${HOME}/.cli-proxy-api"/opencode-go-*.json   # 或在 CPA 认证文件页逐个删除
+# auth-dir 若在 config.yaml 里改过，用实际路径；CPA 会在下一次 fsnotify 事件里移除对应凭据
+```
+
+只想关闭投影、保留插件：在 `plugins.configs.cap-opencode-go` 里设 `register-accounts: false`，
+然后删一次已生成的文件（插件只在卸载时清理）。`scripts/uninstall.sh` 也会扫描
+`${CPA_AUTH_DIR:-}`、`<root>/auth`、`~/.cli-proxy-api` 并删除带 marker 的文件，其它 provider 的
+认证文件与操作者自己放的同名文件不会被碰。
+
+## 11. 常见疑问
 
 **会不会影响我原有的 `openai-compatibility` / `gemini` 组？**
 不会。插件只通过 `model_router` 在运行期认领模型 ID，不读写这些配置块。

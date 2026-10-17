@@ -45,6 +45,51 @@ var hopByHopHeaders = map[string]struct{}{
 	"set-cookie":          {},
 }
 
+// extractCredential pulls the APIKey and Name from the host-injected auth payload.
+func extractCredential(authID string, storageJSON []byte, authMetadata map[string]any, settings config.Settings) config.Key {
+	var key config.Key
+	if len(storageJSON) > 0 {
+		var acc struct {
+			Name    string `json:"name"`
+			KeyName string `json:"key_name"`
+			APIKey  string `json:"api_key"`
+		}
+		if err := json.Unmarshal(storageJSON, &acc); err == nil {
+			if strings.TrimSpace(acc.APIKey) != "" {
+				name := acc.KeyName
+				if name == "" {
+					name = acc.Name
+				}
+				return config.Key{
+					Name: strings.TrimSpace(name),
+					Key:  strings.TrimSpace(acc.APIKey),
+				}
+			}
+		}
+	}
+	if authMetadata != nil {
+		if apiKey, ok := authMetadata["api_key"].(string); ok && strings.TrimSpace(apiKey) != "" {
+			name, _ := authMetadata["key_name"].(string)
+			if name == "" {
+				name, _ = authMetadata["name"].(string)
+			}
+			return config.Key{
+				Name: strings.TrimSpace(name),
+				Key:  strings.TrimSpace(apiKey),
+			}
+		}
+	}
+	// Fallback to configured keys by matching AuthID if possible
+	if authID != "" {
+		for _, k := range settings.Keys {
+			if strings.Contains(authID, k.Name) {
+				return k
+			}
+		}
+	}
+	return key
+}
+
 func (r *Runtime) handleExecute(request []byte) []byte {
 	r.refreshShared()
 	var executeRequest pluginapi.ExecutorRequest
@@ -56,6 +101,8 @@ func (r *Runtime) handleExecute(request []byte) []byte {
 
 	settings := r.Settings()
 	requested := bareModelName(executeRequest.Model)
+	cred := extractCredential(executeRequest.AuthID, executeRequest.StorageJSON, executeRequest.AuthMetadata, settings)
+
 	call := upstream.Call{
 		Role:           r.role,
 		Model:          r.Resolver().Upstream(requested),
@@ -63,6 +110,7 @@ func (r *Runtime) handleExecute(request []byte) []byte {
 		Stream:         executeRequest.Stream,
 		Body:           executeRequest.Payload,
 		Session:        resolveSession(settings, executeRequest.Metadata),
+		Credential:     cred,
 	}
 
 	result, errExecute := r.client.Execute(context.Background(), call)
@@ -96,6 +144,8 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 
 	settings := r.Settings()
 	requested := bareModelName(executeRequest.Model)
+	cred := extractCredential(executeRequest.AuthID, executeRequest.StorageJSON, executeRequest.AuthMetadata, settings)
+
 	call := upstream.Call{
 		Role:           r.role,
 		Model:          r.Resolver().Upstream(requested),
@@ -103,11 +153,13 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 		Stream:         true,
 		Body:           executeRequest.Payload,
 		Session:        resolveSession(settings, executeRequest.Metadata),
+		Credential:     cred,
 	}
 
 	r.trace("execute_stream start", map[string]any{
 		"role": string(r.role.Name), "requested": requested, "upstream": call.Model,
 		"stream_id": executeRequest.StreamID, "payload_bytes": len(call.Body), "session": call.Session,
+		"key": cred.Name,
 	})
 
 	started := time.Now()
@@ -123,7 +175,11 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 	if streamID != "" {
 		// The host keeps the downstream stream open while we emit asynchronously,
 		// which preserves time to first token instead of buffering every chunk.
-		go r.pumpStream(stream, streamID, streamTiming{model: statsModelID(r, requested, call.Model), started: started})
+		go r.pumpStream(stream, streamID, streamTiming{
+			model:   statsModelID(r, requested, call.Model),
+			key:     cred.Name,
+			started: started,
+		})
 	} else {
 		// Without a stream id there is nowhere to push chunks, so fall back to
 		// reading the upstream response to completion.
@@ -151,6 +207,7 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 // the plugin times the frames it reads itself.
 type streamTiming struct {
 	model   string
+	key     string
 	started time.Time
 }
 
@@ -225,6 +282,7 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 			store.ObserveTiming(stats.TimingSample{
 				Model:      timing.model,
 				Family:     string(r.role.Name),
+				Key:        timing.key,
 				At:         timing.started,
 				TTFT:       ttft,
 				Generation: generation,

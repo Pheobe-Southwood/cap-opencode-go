@@ -358,3 +358,85 @@ func TestStatsPayloadExposesModelListChanges(t *testing.T) {
 		t.Errorf("empty fetch changed the cached check: %+v", payload)
 	}
 }
+
+func TestStatsPayloadKeyFilteringAndPerKeyRemaining(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	settings := config.Default()
+	settings.Plan = "go"
+	settings.Keys = []config.Key{
+		{Name: "primary-key", Key: "oc_sk_primary", Priority: 10},
+		{Name: "secondary-key", Key: "oc_sk_secondary", Priority: 5},
+	}
+	runtime.applySettings(settings)
+
+	at := time.Now().UTC().Add(-time.Minute)
+	// Request from primary-key on glm-5.3
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider:    "cap-opencode-go",
+		Model:       "glm-5.3",
+		AuthID:      "opencode-go-primary-key.json",
+		RequestedAt: at,
+		Stream:      false,
+		Latency:     time.Second,
+		Detail: pluginapi.UsageDetail{
+			InputTokens: 100_000, OutputTokens: 1_000, TotalTokens: 101_000,
+		},
+	})
+	// Request from secondary-key on glm-5.3
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider:    "cap-opencode-go",
+		Model:       "glm-5.3",
+		AuthID:      "opencode-go-secondary-key.json",
+		RequestedAt: at,
+		Stream:      false,
+		Latency:     time.Second,
+		Detail: pluginapi.UsageDetail{
+			InputTokens: 50_000, OutputTokens: 500, TotalTokens: 50_500,
+		},
+	})
+
+	// 1. Unfiltered request
+	allPayload := runtime.statsPayload(url.Values{"range": {"month"}})
+	if len(allPayload.Keys) != 2 {
+		t.Fatalf("expected 2 keys in payload, got %d", len(allPayload.Keys))
+	}
+	if allPayload.Keys[0].Name != "primary-key" || allPayload.Keys[0].Priority != 10 {
+		t.Errorf("first key = %+v, want primary-key with priority 10", allPayload.Keys[0])
+	}
+	if allPayload.Totals.Requests != 2 {
+		t.Errorf("unfiltered total requests = %d, want 2", allPayload.Totals.Requests)
+	}
+	if len(allPayload.Models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(allPayload.Models))
+	}
+	model := allPayload.Models[0]
+	if len(model.ByKey) != 2 {
+		t.Fatalf("expected 2 ByKey items on model, got %d", len(model.ByKey))
+	}
+	// Verify ByKey has remaining quota calculated
+	for _, bk := range model.ByKey {
+		if bk.KeyName == "primary-key" {
+			if bk.CostUSD <= 0 || bk.RemainingUSD <= 0 || bk.UsedPercent == nil || bk.RemainingPercent == nil {
+				t.Errorf("primary-key ByKey = %+v", bk)
+			}
+		}
+	}
+
+	// 2. Filter by primary-key
+	priPayload := runtime.statsPayload(url.Values{"range": {"month"}, "key": {"primary-key"}})
+	if priPayload.SelectedKey != "primary-key" {
+		t.Errorf("selected_key = %q, want primary-key", priPayload.SelectedKey)
+	}
+	if priPayload.Totals.Requests != 1 || priPayload.Totals.InputTokens != 100_000 {
+		t.Errorf("priPayload totals = %+v, want 1 req, 100k input", priPayload.Totals)
+	}
+
+	// 3. Filter by secondary-key
+	secPayload := runtime.statsPayload(url.Values{"range": {"month"}, "key": {"secondary-key"}})
+	if secPayload.SelectedKey != "secondary-key" {
+		t.Errorf("selected_key = %q, want secondary-key", secPayload.SelectedKey)
+	}
+	if secPayload.Totals.Requests != 1 || secPayload.Totals.InputTokens != 50_000 {
+		t.Errorf("secPayload totals = %+v, want 1 req, 50k input", secPayload.Totals)
+	}
+}

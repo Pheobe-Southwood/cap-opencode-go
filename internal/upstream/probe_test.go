@@ -57,8 +57,7 @@ func probeServer(t *testing.T, refuse map[string]int) (*httptest.Server, func() 
 func probeClient(baseURL string) *Client {
 	settings := config.Default()
 	settings.BaseURL = baseURL
-	settings.Keys = []config.Key{{Name: "k1", Key: "test-key", Weight: 1}}
-	settings.MaxRetries = 0
+	settings.Keys = []config.Key{{Name: "k1", Key: "test-key", Priority: 1}}
 	return New(settings)
 }
 

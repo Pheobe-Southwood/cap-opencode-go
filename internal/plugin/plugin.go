@@ -41,6 +41,11 @@ type Runtime struct {
 	settings  atomic.Pointer[config.Settings]
 	resolver  atomic.Pointer[catalog.Resolver]
 	hostProxy atomic.Pointer[string]
+	// hostAuth is the host auth directory. The plugin projects one auth file per
+	// configured key into it so the host lists the keys as accounts.
+	hostAuth atomic.Pointer[string]
+	// accounts is the account projection state machine (main face only).
+	accounts accountSyncState
 
 	buildVersion string
 	debugMode    atomic.Bool
@@ -128,6 +133,7 @@ func (r *Runtime) Dispatch(method string, request []byte) []byte {
 	case pluginabi.MethodPluginShutdown:
 		return r.handleShutdown()
 	case pluginabi.MethodPluginQuiesce:
+		r.markQuiesced()
 		return okEmpty()
 	case pluginabi.MethodExecutorIdentifier:
 		return okJSON(identifierResponse{Identifier: r.role.Provider})
@@ -149,6 +155,14 @@ func (r *Runtime) Dispatch(method string, request []byte) []byte {
 		return r.handleManagementHandle(request)
 	case pluginabi.MethodUsageHandle:
 		return r.handleUsage(request)
+	case pluginabi.MethodQuotaIdentifier:
+		return okJSON(identifierResponse{Identifier: accountProvider()})
+	case pluginabi.MethodQuotaDescribe:
+		return r.handleQuotaDescribe()
+	case pluginabi.MethodQuotaFetch:
+		return r.handleQuotaFetch(request)
+	case pluginabi.MethodQuotaReset:
+		return r.handleQuotaReset(request)
 	default:
 		return abi.Fail("unknown_method", "unknown method: "+method, http.StatusNotFound)
 	}
@@ -168,6 +182,10 @@ type registrationCapabilities struct {
 	ExecutorOutputFormats []string `json:"executor_output_formats,omitempty"`
 	ManagementAPI         bool     `json:"management_api"`
 	UsagePlugin           bool     `json:"usage_plugin,omitempty"`
+	// QuotaProvider publishes the OpenCode Go usage windows to the host's
+	// 配额管理 page. Only the main face declares it: one provider key maps to
+	// one quota plugin, and the main face is the one that owns the configuration.
+	QuotaProvider bool `json:"quota_provider,omitempty"`
 }
 
 type registration struct {
@@ -243,6 +261,13 @@ func (r *Runtime) handleRegister(method string, request []byte) []byte {
 	}
 
 	r.applySettings(settings)
+	if isMain {
+		// A reconfigure can change the key list, so re-project the accounts.
+		// The sync runs in the background: register must not touch the auth
+		// directory while the host is still assembling its runtime state.
+		r.resetAccountSyncState()
+		r.syncAccountsAsync()
+	}
 	_ = method
 	return r.registrationPayload()
 }
@@ -277,6 +302,10 @@ func (r *Runtime) registrationPayload() []byte {
 		// timing; registering usage on all four would count one record four
 		// times if the host ever broadcast it.
 		capabilities.UsagePlugin = true
+		// One provider key maps to one quota plugin, so only the main face
+		// declares the quota provider; declaring it on a sibling would make the
+		// host pick a face at random for the same accounts.
+		capabilities.QuotaProvider = true
 	}
 	raw, errMarshal := abi.OK(registration{
 		SchemaVersion: pluginabi.SchemaVersion,
@@ -294,10 +323,14 @@ func (r *Runtime) handleShutdown() []byte {
 	return okEmpty()
 }
 
-// Shutdown flushes the statistics store and stops its writer. The host calls
-// plugin.shutdown before unloading a library, so this is the last chance to
-// persist up to one debounce interval of counters.
+// Shutdown flushes the statistics store and, on a real unload, removes the auth
+// files the plugin projected into the host auth directory. The host calls the
+// library shutdown export before unloading a plugin, so this is the last chance
+// to persist up to one debounce interval of counters and the only place where the
+// account files can be cleaned up: plugin.quiesce is sent exclusively before a
+// hot replacement, where the successor keeps the same accounts.
 func (r *Runtime) Shutdown() {
+	r.closeAndPurge()
 	r.statsMu.Lock()
 	store := r.stats
 	r.statsMu.Unlock()
@@ -380,12 +413,6 @@ func (r *Runtime) hostProxyURL() string {
 	return ""
 }
 
-func (r *Runtime) rememberHostProxy(summary pluginapi.HostConfigSummary) {
-	value := strings.TrimSpace(summary.ProxyURL)
-	copied := value
-	r.hostProxy.Store(&copied)
-}
-
 func (r *Runtime) models() []pluginapi.ModelInfo {
 	resolver := r.Resolver()
 	entries := resolver.EntriesForFamily(r.role.Name)
@@ -414,13 +441,15 @@ func (r *Runtime) handleStaticModels(request []byte) []byte {
 	if len(request) > 0 {
 		var staticRequest pluginapi.StaticModelRequest
 		if errUnmarshal := json.Unmarshal(request, &staticRequest); errUnmarshal == nil {
-			previous := r.hostProxyURL()
-			r.rememberHostProxy(staticRequest.Host)
-			if r.hostProxyURL() != previous {
+			proxyChanged := r.rememberHostSummary(staticRequest.Host)
+			if proxyChanged {
 				// Push the learned proxy into the upstream client's settings so
 				// inherited proxy models stop going out direct.
 				r.applySettings(r.Settings())
 			}
+			// The host publishes its auth directory in this summary, so this is
+			// where the account projection can start.
+			r.syncAccountsAsync()
 		}
 	}
 	raw, errMarshal := abi.OK(pluginapi.ModelResponse{
@@ -449,10 +478,13 @@ func (r *Runtime) handleModelRoute(request []byte) []byte {
 		}
 		return raw
 	}
+	upstreamModel := r.Resolver().Upstream(requested)
 	raw, errMarshal := abi.OK(modelRouteResponse{
-		Handled:    true,
-		TargetKind: "self",
-		Reason:     "opencode-go/" + string(r.role.Name),
+		Handled:     true,
+		TargetKind:  "provider",
+		Target:      r.role.Provider,
+		TargetModel: upstreamModel,
+		Reason:      "opencode-go/" + string(r.role.Name),
 	})
 	if errMarshal != nil {
 		return abi.Fail("marshal_error", errMarshal.Error(), http.StatusInternalServerError)

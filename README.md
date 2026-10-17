@@ -179,7 +179,7 @@ plugins:
       keys:
         - name: "main"
           key: "oc_sk_xxx"
-          weight: 1
+          priority: 10
           enabled: true
       models:
         "gpt-6-luna":                 { enabled: true, proxy: proxy }
@@ -200,7 +200,7 @@ plugins:
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `base-url` | string | `https://opencode.ai/inference/go/v1` | 接口基址；`https://opencode.ai/zen/go/v1` 亦可 |
-| `keys` | array | 空 | `[{name, key, weight, enabled}]`，多账号 Key 池 |
+| `keys` | array | 空 | `[{name, key, priority, enabled}]`，多账号 Key 列表（路由跟随宿主，插件设优先级） |
 | `models` | object | 空 | `{"<model-id>": {enabled, proxy, family, aliases}}` 逐模型覆盖 |
 | `models-default` | object | 空 | 未单独列出的模型的统一设置 |
 | `default-proxy` | enum | `inherit` | `inherit` / `proxy` / `direct` |
@@ -208,12 +208,11 @@ plugins:
 | `session-mode` | enum | `auto` | `auto` 跟随 CPA 会话 ID，`fixed` 用 `session` 值 |
 | `session` | string | `$CPA-SESSION-ID` | `x-opencode-session` 的固定值 |
 | `request-timeout-seconds` | int | 900 | 上游超时 |
-| `key-cooldown-seconds` | int | 60 | Key 失败后冷却时长 |
-| `max-retries` | int | 2 | 单个请求最多切换 Key 的次数 |
 | `extra-headers` | object | 空 | 追加到上游请求的请求头 |
 | `state-dir` | string | `<root>/data/cap-opencode-go` | 插件自有状态目录 |
 | `plan` | enum | `go` | OpenCode Go 套餐：`go`（$10/月）或 `go-plus`（$40/月）；只影响统计 Tab 的逐模型月额度百分比 |
 | `debug` | bool | false | 写流式诊断到 `<state-dir>/debug.log` |
+| `register-accounts` | bool | true | 把每个 Key 投影成 4 个协议面 CPA 认证文件（`<auth-dir>/opencode-go-<key 名>[--<role>].json`），使「配额管理 → Plugin」把 Key 显示成账号；卸载时自动删除 |
 
 ### 代理语义
 
@@ -256,10 +255,11 @@ models:
 
 > 上游新增的模型（`/api/models` 里标记「上游新增」）默认**不启用**。在仪表盘上给它选一个「上游协议」并打开开关即可使用，无需重新编译插件。
 
-### Key 池
+### Key 管理与宿主路由
 
-加权轮询（`weight`），上游 401/403/408/429/5xx 时自动换下一个 Key 并在冷却期内跳过它；
-400/404 视为请求本身的问题，不换 Key，原样回传上游错误与状态码。
+插件自己不管理路由与轮换策略，完全跟随 CPA 宿主「网络配置」中的路由设置（轮询、填满优先等）。
+插件仅为每个 Key 提供 `priority`（优先级，整数，越大越优先）。相同优先级的 Key 由宿主按选定策略调度与故障转移。
+网络代理配置（`proxy-url`、`default-proxy` 及逐模型 `proxy`）依然由插件自主管理。
 
 ---
 
@@ -271,14 +271,19 @@ models:
 
 | Tab | 内容 |
 |---|---|
-| **账号管理**（默认） | 汇总条（启用 Key 数 / 最低剩余 / 冷却中 / 余量更新时间）；每个 Key 一张卡片：名称、掩码、健康状态、权重、启用开关、移除，以及 5 小时 / 本周 / 本月三条**剩余**进度条（含重置时间）；折叠的「添加 Key」表单；底部「轮换与故障转移」摘要 |
-| **统计** | 概览（账户本月额度 / 刊例价 / token / 平均整体 TPS / 生成 TPS / 首内容 TTFT / 有用量模型）；价目表核对日期、30 天更新提醒与模型列表变更提醒；「本月 / 累计」切换；每个用过的模型一行：输入、输出、缓存读/写、刊例价、月额度百分比、平均整体 TPS、生成 TPS、首内容 TTFT、最近使用；「统计口径与价目说明」默认折叠 |
+| **账号管理**（默认） | 汇总条（启用 Key 数 / 最低剩余 / 调度方式 / 余量更新时间）；每个 Key 一张卡片：名称（**点击即可改名**）、掩码、健康状态、优先级、启用开关、移除，以及 5 小时 / 本周 / 本月三条**剩余**进度条（含重置时间）；折叠的「添加 Key」表单；底部「宿主路由与优先级」摘要 |
+| **统计** | 概览（账户本月额度 / 刊例价 / token / 平均整体 TPS / 生成 TPS / 首内容 TTFT / 有用量模型）；按 Key 筛选下拉框；价目表核对日期、30 天更新提醒与模型列表变更提醒；「本月 / 累计」切换；每个用过的模型一行：输入、输出、缓存读/写、刊例价、**本月额度（展示每个 Key 的剩余量与百分比）**、平均整体 TPS、生成 TPS、首内容 TTFT、最近使用；「统计口径与价目说明」默认折叠 |
 | **模型** | 统计 chip（模型 id / 本实例提供 / 已关闭 / 上游新增 / 已下线 / 已修改，点一下即按它筛选）；搜索 + 协议 + 状态筛选、「启用/停用筛选结果」、「从上游刷新」；每个模型一行，点「设置」展开别名 / 上游协议 / 代理 / 探测协议 / 恢复默认 |
 | **状态** | 运行状态（版本、协议族、Base URL、Session、代理、状态文件、启动时间与运行时长）；上游模型列表（数量、拉取时间、结果）；**协议面**卡片（四个 `.so` 各自的协议、插件 ID、承载模型、配置归属与缺失后果）；「关于与帮助」 |
-| **设置** | Base URL、Session、代理、超时/冷却/重试、状态目录与调试日志；底部「待保存的修改」逐条列出本次改动，可一键放弃 |
+| **设置** | Base URL、Session、代理、超时设置、状态目录与调试日志；底部「待保存的修改」逐条列出本次改动，可一键放弃 |
 
 保存按钮：**没有改动时是灰的；一旦有改动就亮起来**，角标显示改动条数（`保存 3`），
 标题旁的 chip 同步显示「3 项未保存」，对应 Tab 上出现小圆点。
+
+已有 Key 的名称是输入框：点一下即可改名，回车或失焦生效，Esc 放弃。改名也走同一份合并写；
+保存后配置里的 `name` 更新，`internal/accounts` 会把旧投影文件删掉、按新名字重新写一份，
+CPA「配额管理 → Plugin」里的账号名随之变化。空名和重名（包括与待新增 Key 重名）会被拒绝。
+待新增的 Key 在下方「添加 Key」表单里命名。
 
 | 桌面端 · 账号管理（默认 Tab） | 桌面端 · 模型 |
 |---|---|
@@ -337,10 +342,10 @@ CPA 的插件列表是「一个 `.so` 一行」，而本插件按上游协议族
 - 没勾「记住密码」→ 点「保存」时**弹一次密码框**（输入 WebUI 密码 / 管理密钥）。
   输错会在框内提示「连续输错 5 次会临时封禁当前 IP」；勾上「在本标签页内记住」后，
   本次标签页会话里不再重复询问（存 `sessionStorage`，关掉标签页即失效）
-- 保存是**合并写**：页面把改动记成一份补丁（`models.<id>` 的字段、`keys` 的增删改、若干顶层标量），
+- 保存是**合并写**：页面把改动记成一份补丁（`models.<id>` 的字段、`keys` 的增删改名、若干顶层标量），
   保存时先读回宿主当前的配置块，把补丁叠上去再 PUT。因此页面从不需要 Key 明文，
   也不会覆盖它没读到的字段（手改过的配置、`extra-headers`、`models-default` 等原样保留）；
-  Key 的增删只影响卡片上列出的那些名字
+  Key 的增删改名只影响卡片上列出的那些名字
 - 插件自身不在磁盘上保存任何凭据；只有主动勾选「在本标签页内记住」时，
   密码才会写进浏览器 `sessionStorage`
 
@@ -370,6 +375,53 @@ CPA 的插件列表是「一个 `.so` 一行」，而本插件按上游协议族
   （`/v8/management/opencode-go/probe` 亦可，页面优先用 v8 前缀）
 - `GET|PUT /v8/management/config/plugins/configs/cap-opencode-go` — 仅在点「保存」时调用
 
+### CPA「配额管理 → Plugin」（v1.8）
+
+CPAx 自带的管理中心有一个 **配额管理** 页面（Claude / Antigravity / Codex / xAI / Kimi / Devin /
+Muse / Plugin 分页）。v1.8 起插件的每个 Key 都会出现在 **Plugin** 分页里，显示方式与
+Antigravity / Codex 账号一致：一个账号一行、组内三个窗口（5 小时 / 本周 / 本月）、剩余百分比
+进度条与重置倒计时，「刷新额度」按钮按需重新查询上游 `/usage`。
+
+实现分两半，缺一不可：
+
+1. **配额 Provider**：主面在注册能力里声明 `quota_provider`，实现宿主 RPC
+   `quota.identifier` / `quota.describe` / `quota.fetch` / `quota.reset`。标识符是 `opencode-go`
+   （与 provider key 相同），所以宿主能把账号和插件对上。
+2. **账号投影**：宿主只给「认证文件」挂配额，所以主面把每个 Key 投影成
+   `<auth-dir>/opencode-go-<key 名>.json`：
+
+```json
+{
+  "type": "opencode-go",
+  "name": "main",
+  "api_key": "oc_sk_…",
+  "disabled": false,
+  "note": "由 cap-opencode-go 自动同步（对应插件 Key「main」）",
+  "managed_by": "cap-opencode-go"
+}
+```
+
+- 文件权限 `0600`，与 CPA 自己的认证文件一致；把 Key 写进认证文件是这个 Key 能出现在配额页的
+  **唯一通道**（宿主没有任何"只放内存"的 auth 注册接口）
+- 插件只碰「文件名以 `opencode-go-` 开头 **且** 内含 `managed_by: cap-opencode-go`」的文件；
+  操作者自己放的认证文件、其它 provider 的文件一律不动（计入 `skipped`）
+- 文件名是确定的：key 名小写、非 `[a-z0-9._-]` 转 `-`，重名时追加 key 名的哈希；**改 key 名等于换账号名**，
+  旧文件会被删除
+- 投影是**单向**的：路由仍由插件自己的 Key 池决定（`model_router` 认领全部已启用模型，请求不经过宿主选号）。
+  因此在 CPA「认证文件」页里对这些账号的启停、删除只是显示层面的改动，下一次同步（配置变更、打开页面）
+  就会按配置复原；要真正停用一个账号，请在插件仪表盘里停用对应 Key
+- 停用的 Key 也会投影，但文件里 `disabled: true`，CPA 的配额页按惯例**不显示**停用凭据
+  （插件自己的账号 Tab 仍然显示它的余量）
+- 投影结果可以在插件仪表盘「账号管理」Tab 的「CPA 账号」统计项、每张 Key 卡片的「CPA 账号」小字，
+  以及 `/api/state` 的 `accounts` 字段里核对（`files` 是 key 名 → 文件名，`error` 非空表示同步失败）
+
+**卸载零残留**：宿主在**卸载**插件（删配置块 / `enabled: false` / 停服）时会调用插件的 shutdown 导出，
+插件据此删除自己投影的全部认证文件；而**热替换升级**时宿主先发 `plugin.quiesce`，插件据此判定「有后继实例
+接管」，不删文件，账号在升级过程中不会消失。详见 `docs/rollback.md` §10。
+
+想关掉投影：`plugins.configs.cap-opencode-go.register-accounts: false`（此时账号会从配额页消失，
+需要手动删一次已生成的文件——插件只在卸载时清理）。
+
 ---
 
 ## 7. 回滚
@@ -380,11 +432,20 @@ CPA_ROOT=/root/cliproxyapi bash scripts/uninstall.sh
 systemctl restart cliproxyapi
 ```
 
-插件**不写入** CPA 的任何其它状态：不建 auth 文件、不改 provider 组、不写数据库。
-唯一的落盘物是 `data/cap-opencode-go/`（主插件发布的共享快照、四个面的 `stats-<role>.json`、可选 debug.log），由脚本删除。
+插件不修改 CPA 的 provider 组、不写数据库、不写 `config.yaml`。落盘物只有两类：
+
+1. `data/cap-opencode-go/`（主插件发布的共享快照、四个面的 `stats-<role>.json`、可选 debug.log），
+   由 `scripts/uninstall.sh` 删除；
+2. v1.8 起投影到 CPA auth 目录的 `opencode-go-*.json`（每个 Key 一个账号文件）。
+   **插件被卸载时会自己删掉它们**（宿主卸载时调用 shutdown 导出），热替换升级则交给新实例接管；
+   `scripts/uninstall.sh` 也会清理一次，覆盖崩溃 / `kill -9` / 宿主从未加载插件的情况。
 
 实测（临时实例）：删除后 `/v1/models` 回到 0 个模型、`/v8/management/plugins` 为空、
 `/v0/resource/plugins/cap-opencode-go/dashboard` 返回 404、`data/` 无残留、auth 目录为空。
+
+> **回滚到 1.7.x 要手动删一次账号文件**：回滚是「热替换」而不是「卸载」，旧实例会按 quiesce 语义
+> 保留文件（它以为有新实例接管）。执行 `rm -f ~/.cli-proxy-api/opencode-go-*.json`（或用
+> `CPA_AUTH_DIR=… bash scripts/uninstall.sh` 只做清理）即可，CPA 会在下一次 fsnotify 事件里移除这些凭据。
 
 ### 升级 / 回滚可以不用重启（实测）
 
@@ -402,7 +463,7 @@ python3 - <<'PY'
 path = "/root/cliproxyapi/config.yaml"
 with open(path) as handle:
     text = handle.read()
-marker = "# (v1.7.8"
+marker = "# (v1.8.0"
 tainted = marker + "-note:"
 if tainted in text:
     text = text.replace(tainted, marker + ":", 1)
@@ -457,6 +518,22 @@ PY
   其余 → chat），单测保证该规则与内置表对全部 37 个模型一致。UI 对推断结果标注「协议推测」，
   可用「探测协议」实测（会向上游各发一次极小请求）或手选覆盖。**上游新增模型不需要重新编译插件**。
 - **协议探测是唯一会额外消耗配额的功能**，且只在点按钮时发生（每个协议族一次、最多 4 次）。
+- **配额页的账号是投影，不是路由凭据**：v1.8 把每个 Key 写成 CPA 认证文件只为让「配额管理 → Plugin」
+  能列出账号与余量；请求仍然由插件的 Key 池（`model_router`）处理，不经过宿主的选号逻辑。
+  所以在 CPA「认证文件」页里启停/删除这些账号**不影响转发**，下一次同步会按配置复原；
+  真正的账号开关在插件仪表盘的「账号管理」里。在仪表盘里改名会删除旧投影文件、按新名字重建，
+  配额页的账号名随之更新。同一个 auth 目录被多个 CPA 实例共享也不受支持
+  （与 CPA 自身认证文件同一约束）。
+- **「配额管理 → Plugin」的图标不是插件能控制的**：CPA 管理面板把提供商图标写死在内置的
+  `AUTH_FILE_ICONS` 表里；插件配额卡片用 `quota_provider`（本插件是 `opencode-go`）查这张表，
+  查不到就显示首字母，所以 OpenCode Go 账号卡片显示 `O`，固定的「Plugin」分页标签显示 `P`。
+  插件注册的 `metadata.logo` 只用于「插件管理」列表行、侧边栏入口和插件页自身（这些地方都是
+  OpenCode 官方 mark）。宿主 v8.0.27 没有把插件 Logo 传给配额页的通道；要换成品牌图标只能修改
+  宿主的独立管理面板项目，而该面板默认每 3 小时自动更新，本地改动会被覆盖（关闭自动更新又会留下
+  宿主级配置残留）。本仓库坚持“不改宿主、卸载零残留”，因此**不处理这个图标**。
+- **卸载语义依赖宿主的生命周期回调**：`plugin.quiesce`（热替换）与库 shutdown 导出（卸载）是
+  插件区分"换版本"与"真卸载"的唯一依据。若宿主版本缺少这两个回调，账号文件不会自动清理，
+  需要跑 `scripts/uninstall.sh`。
 
 ---
 
@@ -471,14 +548,20 @@ bash scripts/acceptance.sh
 
 检查覆盖 4 个协议族的流式/非流式、跨协议调用、模型目录、侧边栏入口、状态/额度/统计接口、
 四个协议面的品牌元数据（同一个图标、四个名称、只有主面带配置字段），以及仪表盘页面本身
-（Tab 骨架、统计页、账号管理、密码弹窗、无只读模式）与状态接口是否携带可编辑字段、是否隐藏密钥。
+（Tab 骨架、统计页、账号管理、Key 改名输入与提示、密码弹窗、无只读模式）与状态接口是否携带
+可编辑字段、是否隐藏密钥。
 统计检查会等待最多 25 秒（从属面每 5 秒落盘），断言 token、费用、TTFT/TPS 样本都非零。
 v1.7.1 在 v8.0.27 生产实例公开检查 **32 项全过**，0 失败（6 项管理检查因环境里没有
 明文管理密钥而跳过；messages 因子模型未启用跳过 1 项）；v1.7.2 / 1.7.3 通过 config.yaml
 原地注释热重载上线，未重启 CPA，生成 TPS 指标由 API、页面和一次真实 Beam 流式请求验证。
 v1.7.8 的价目/模型核对提醒同样通过热重载上线（PID 不变），API、桌面/手机页面、模拟到期和
-模拟模型列表变更已验证；验收脚本为提醒新增了 2 项检查，但本轮没有重跑完整公开验收。
-完整实测与回放记录见
+模拟模型列表变更已验证。
+v1.8.0 新增 4 项检查（`account projection`、`account files`，以及管理密钥可用时的
+`plugin quota provider` / `quota accounts listed` / `plugin quota fetch`）：生产实例热重载到 1.8.0 后
+公开验收 **36 项全过，0 失败**（管理密钥不可用，管理 API 检查在隔离实例上用同一份二进制全部通过）。
+v1.8.1 增加 `dashboard script parses` 后为 **37 项全过**；v1.9.1 再加入 `Key 改名提示` /
+`Key 改名输入` 两项页面标记，生产热重载后 **39 项全过，0 失败**（messages 仍跳过 1 项）。
+完整实测、隔离实例的零残留流程与回滚记录见
 [docs/acceptance.md](docs/acceptance.md)。
 
 ---
@@ -506,6 +589,78 @@ docs/                  design / rollback / acceptance
 ---
 
 ## 11. 变更记录
+
+### 1.9.1
+
+- **修复热重载后 Key 池仍显示旧名称**：`keys.Pool.Replace` 在 secret 不变时保留健康状态，
+  但把旧的 `state.Name` 一起留下了。宿主的 `plugin.reconfigure` 走的就是这条路径，于是改名后
+  配置、配额和账号投影都是新名字，`/api/models`（仪表盘卡片）却还是旧名字。
+  `Replace` 现在始终以配置里的 `key.Name` 为准，只保留成功/失败、冷却等健康字段；
+  `TestReplacePreservesHealth` 增加“改名必须进入快照”的断言。
+- **新增页面行为回归测试**：`TestPageRenameLogic` 用 Node VM + DOM stub 执行页面真实内联脚本，
+  断言改名合并顺序、重名拒绝、改名 + 改权重、改名 + 新增同名 Key 等场景；`node` 缺失时跳过。
+- 1.9.1 通过 config.yaml 原地注释热重载上线（四个面 `active_version=1.9.1 retired_version=1.9.0`，
+  PID 与启动时间不变）；生产公开验收 **39 passed, 0 failed**（messages 无启用模型跳过 1 项）。
+  隔离实例复验：`/api/models`、`/api/quota`、auth 目录、`/v8/management/credentials` 都只显示
+  `primary`，旧 `opencode-go-main.json` 已删除。宿主管理面板哈希不变，未关闭自动更新，未改宿主配置。
+
+### 1.9.0
+
+- **仪表盘支持修改 Key 名称**：已有 Key 的名称变成输入框（`data-key-rename`），点击即可改名，
+  回车/失焦生效，Esc 放弃；`main` 不再例外。改名记录进独立的 `edits.keys.rename` 补丁，
+  与删除、改权重/启用、新增 Key 一起按“删除 → 改权重/启用 → 改名 → 新增”的顺序合并保存，
+  保存按钮只改名字也会正常点亮。空名和重名（包括与待新增 Key 重名）会被拒绝。
+- **改名同步到 CPA 账号投影**：`keys[].name` 保存后，`internal/accounts` 删除旧的
+  `opencode-go-<旧名>.json`、按新名字写一份新投影；「配额管理 → Plugin」里的账号名随之更新，
+  余量仍由同一个 Key 拉取。改动不新增持久化位置，零残留矩阵不变。
+- **文档说明宿主配额页图标的限制**：CPA 管理面板用内置 `AUTH_FILE_ICONS` 给配额卡片选图标，
+  `opencode-go` 未命中时显示 `O`（「Plugin」标签显示 `P`）；插件 `metadata.logo` 只作用于
+  插件列表/侧边栏/插件页。改图标需要修改宿主的管理面板（且会被其自动更新覆盖），
+  本轮按“不改宿主”的原则只记录限制，不改宿主文件或配置。
+- 新增 `TestPageRenamesKeys`、`TestSyncRenamesMirrorFileWhenKeyNameChanges`，以及验收页面标记
+  `Key 改名提示` / `Key 改名输入`；`dashboard script parses` 继续兜底脚本语法。
+- 版本 1.9.0 通过 config.yaml 原地注释热重载上线（PID 不变），生产公开验收 **39 passed, 0 failed**
+  （messages 无启用模型跳过 1 项；改名端到端在隔离实例上验证）。1.9.0 随后被 1.9.1 取代：
+  隔离实例进一步复验发现热重载后 Key 池快照仍保留旧名，修复与复验见上。
+
+### 1.8.1
+
+- **修复 1.8.0 仪表盘无法使用**：`internal/dashboard/script.go` 的「CPA 账号」说明行多了一个逗号
+  （`…按配置复原。'),',`），内联脚本因此 `SyntaxError`，页面能加载但 Tab、按钮、数据全部失效
+  （浏览器不发任何 `/api/*` 请求）。服务器与插件本身正常，纯前端脚本问题。
+- **新增回归检查**：`internal/dashboard` 增加 `TestPageScriptParses`（有 `node` 时对页面内联脚本跑
+  `node --check`，没有则跳过），`scripts/acceptance.sh` 增加 `dashboard script parses`
+  （对**已部署页面**做同样的检查）。此前只有文案子串断言，看不出脚本语法错误。
+- 热重载上线（PID 不变）；生产公开验收 **37 passed, 0 failed**（新增脚本检查）。
+
+### 1.8.0
+
+- **接入 CPA 自带「配额管理 → Plugin」**：主面新增 `QuotaProvider` 能力
+  （`quota.identifier` / `describe` / `fetch` / `reset`，标识符 `opencode-go`），
+  把上游 `/usage` 的 rolling / weekly / monthly 三个窗口映射成宿主的
+  5 小时 / 周 / 月额度桶（`window` 取 `five_hour` / `weekly` / `monthly` 命中页面本地化标题，
+  `remainingFraction = 1 - percent/100`，`resetTime` 取 `resetsAt`，套餐显示 `plan`）。
+- **账号投影**：`internal/accounts` 把每个 Key 写成 `<auth-dir>/opencode-go-<key 名>.json`
+  （`0600`、带 `managed_by` 标记、`type: opencode-go`），宿主的认证文件列表因此把它们标成
+  `supports_quota` / `quota_provider: opencode-go` / `quota_plugin_id: cap-opencode-go`，
+  配额页即可像 Antigravity/Codex 一样按账号展示。同步是幂等、后台、单飞的：只在内容变化时写文件，
+  失败在仪表盘可见且不影响请求。
+- **卸载零残留**：`plugin.quiesce`（热替换）保留账号文件交给新实例，库 shutdown 导出（卸载/禁用/停服）
+  删除全部 `opencode-go-*.json`；`scripts/uninstall.sh` 兜底清理，`docs/rollback.md` §10 记录残留矩阵。
+- 新增配置项 `register-accounts`（默认 `true`）可关闭投影；仪表盘「账号管理」Tab 增加
+  「CPA 账号」统计与每张 Key 卡片的账号文件名，`/api/state` 新增 `accounts` 字段。
+- 通过 config.yaml 原地改注释热重载，未重启 CPA。
+
+### 1.8.0
+
+- **路由与容灾交由 CPA 宿主调度**：
+  - 插件不再自行维护 Key 轮询与冷却（移除内部 Key 权重与冷却/重试配置），改为完全跟随 CPA 宿主「网络配置」的路由策略（如轮询、填满优先等）。
+  - 插件仅为每个 Key 提供 `priority`（优先级，数值越大越优先）。
+  - 每个 Key 向 CPA 宿主 4 个协议面（chat、responses、messages、gemini）分别投影认证文件，携带 `priority` 属性。
+  - 网络代理配置（`proxy-url`、`default-proxy`、逐模型 `proxy`）依然由插件自主管理。
+- **统计增加 Key 筛选与逐模型每 Key 剩余显示**：
+  - 统计 Tab 增加「按 Key 筛选」下拉框，支持切换查看全部 Key 或指定 Key 的请求量、token 与费用。
+  - 每个模型行的「本月额度」单元格清晰展示各 Key 的剩余额度金额及百分比。
 
 ### 1.7.8
 

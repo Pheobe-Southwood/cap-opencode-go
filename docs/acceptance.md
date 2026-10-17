@@ -1,4 +1,4 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1，v1.7.2–v1.7.8 热重载补充）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v1.9.1 热重载补充）
 
 > v1.7.1（含 1.7.0 的统计口径修正与历史回放；1.7.1 只修两处页脚注/空状态文案）
 > 在生产实例 127.0.0.1:8317 重启到 1.7.1：四个面均加载 `-v1.7.1.so`，`plan=go`，PID `3651300`；
@@ -17,7 +17,208 @@
 > 2026-10-17 03:46 UTC 再热重载到 1.7.8，**PID `3651300` 仍不变、没有重启**；1.7.8 在同一个提醒里
 > 加入上游模型列表变更：四个面均映射到 `-v1.7.8.so`，API 返回 `model_list_*`，模型列表新增/移除
 > 由 Chromium 拦截模拟验证。完整公开验收仍以 1.7.1 的 32 项为准。
+> **2026-10-17 06:03 UTC 热重载到 1.8.0**（配额管理 → Plugin + 账号投影），**PID `3651300`、启动时间
+> `03:07:04 UTC` 均未变**，inode 不变；四个面均映射到 `-v1.8.0.so`，生产公开验收 **36 passed, 0 failed**
+> （新增 2 项账号检查；管理密钥仍不可用，管理 API 检查在隔离实例上以同一份二进制验证）。
+> **06:41 UTC 热重载到 1.8.1** 修复 1.8.0 的仪表盘脚本语法错误（页面能加载但 Tab/数据全失效），
+> **PID `3651300` 仍不变**；线上页面脚本 `node --check` 通过，生产公开验收 **37 passed, 0 failed**
+> （新增 `dashboard script parses`）。
+> **2026-10-17 07:23 / 07:26 UTC 热重载到 1.9.0 → 1.9.1**（仪表盘 Key 改名），**PID `3651300`、
+> 启动时间 `03:07:04 UTC`、config inode 均未变**；四个面 `active_version=1.9.1 retired_version=1.9.0`。
+> 生产公开验收 **39 passed, 0 failed**（messages 无启用模型跳过 1 项；新增 2 项页面改名标记）。
+> 宿主 `static/management.html` 哈希未变，未关闭面板自动更新，未改宿主配置。
 > 下面是 v1.7.8 / v1.7.6 的热重载记录，之后是 v1.7.1 记录与更早历史（v1.6 统计面板、v1.5.0 品牌整合、v1.4.1 仪表盘改造等）。
+
+---
+
+## v1.9.1 仪表盘 Key 改名（热重载；含 1.9.0 池快照修复）
+
+### 1. 交付
+
+- 已有 Key（含 `main`）的名称改为可编辑输入框：回车/失焦生效，Esc 放弃；空名、与已有 Key
+  或待新增 Key 重名会被拒绝。改名以 `edits.keys.rename` 独立记录，`buildPayload` 按
+  “删除 → 改权重/启用 → 改名 → 新增”合并，保存按钮只改名字也会点亮。
+- 改名保存后 `internal/accounts` 删除旧 `opencode-go-<旧名>.json`、创建新投影；
+  「配额管理 → Plugin」的账号名与余量随之更新。
+- 1.9.1 修复 `keys.Pool.Replace`：secret 不变时保留健康状态，但旧实现连 `state.Name` 一起保留，
+  导致宿主 `plugin.reconfigure` 后 `/api/models` 仍显示旧名（配置、配额、账号文件已是新名）。
+  现在以配置的 `key.Name` 为准，只保留成功/失败/冷却等健康字段。
+
+### 2. 测试
+
+```
+$ gofmt -l .            # 无输出
+$ go vet ./...          # 通过
+$ go test ./...         # 全绿（internal/dashboard、internal/accounts、internal/keys 等）
+```
+
+- `TestPageRenamesKeys`：页面存在改名输入、校验函数、payload 改名顺序。
+- `TestPageRenameLogic`：Node VM + DOM stub 执行页面真实内联脚本，覆盖空名/同名/重名、
+  改名后改权重、改名 + 新增同名 Key、`buildPayload` 顺序；无 node 时跳过。
+- `TestSyncRenamesMirrorFileWhenKeyNameChanges`：旧投影删除、新投影创建、marker/名称正确。
+- `TestReplacePreservesHealth`：改名后健康计数保留，且快照名称必须变为新名。
+- `TestPageScriptParses` 与验收脚本 `dashboard script parses`：线上页面脚本 `node --check` 通过。
+
+### 3. 隔离实例端到端（v8.0.27 同版本二进制，端口 8399）
+
+1.9.0 阶段：`GET/PUT /v8/management/config/plugins/configs/cap-opencode-go` 把 `main` 改成 `primary`，
+返回 `{"config-version":8,"status":"ok"}`；auth 目录只剩 `opencode-go-primary.json`（`name=primary`、
+`managed_by`、0600），`/v8/management/credentials` 仍是 `provider=opencode-go` / `supports_quota` /
+`quota_provider` / `quota_plugin_id=cap-opencode-go`。页面 `data-key-rename` / `id="keyNameHint"` /
+`node --check` 均通过。
+
+但同一实例的 `/api/models` 仍返回 `keys=["main"]`（`/api/quota` 已是 `primary`），暴露出池快照
+旧名问题。1.9.1 重建隔离实例后复验：
+
+```
+models: version=1.9.1 keys=["primary"] accounts={"primary":"opencode-go-primary.json"}
+quota:  keys=["primary"] accounts={"primary":"opencode-go-primary.json"}
+auth:   only opencode-go-primary.json (name=primary, managed_by=cap-opencode-go, 0600)
+cred:   opencode-go-primary.json / quota_provider=opencode-go / quota_plugin_id=cap-opencode-go
+```
+
+### 4. 生产热重载与验收（127.0.0.1:8317）
+
+- 07:23 UTC：1.9.0 四文件安装后原地追加 config 注释，四个面 `plugin hot reloaded
+  active_version=1.9.0 retired_version=1.8.1`。
+- 07:26 UTC：1.9.1 四文件安装后同样热重载，四个面 `active_version=1.9.1 retired_version=1.9.0`；
+  `MainPID=3651300`、`ActiveEnterTimestamp=03:07:04 UTC`、config inode `10653636` 均不变。
+- 生产公开验收 **39 passed, 0 failed, 1 skipped**（messages 无启用模型）；新增
+  `dashboard page: Key 改名提示` / `dashboard page: Key 改名输入`。
+  1.9.0 的首次验收曾遇到两次上游 `/responses` EOF（502）；同一请求手工重试 3 次均 200，
+  随后整套验收 39/0，故按上游瞬态处理，1.9.1 最终验收一次通过。
+- 线上 `/api/state`：`version=1.9.1`，`keys=["main"]`，`accounts.files={"main":"opencode-go-main.json"}`；
+  auth 文件 mtime 仍为 06:03:22（热替换未重建）。
+- 线上页面 135,396 字节，含 `id="keyNameHint"` 与 `data-key-rename="`，内联脚本 `node --check` 通过。
+
+### 5. 宿主配额页图标
+
+按用户决定不改图标，只记录限制：管理面板的 `AUTH_FILE_ICONS` 按 `quota_provider` 选图，
+`opencode-go` 未命中显示 `O`，「Plugin」标签显示 `P`；插件 `metadata.logo` 只用于插件列表、
+侧边栏和插件页。本轮没有修改 `static/management.html`（sha256 仍为
+`57558cd023475674634a114824b014d3e5ac161f6f3791e3d86b6adab962a700`），没有加入
+`disable-auto-update-panel`，也没有改宿主配置。
+
+## v1.8.1 仪表盘脚本语法修复（热重载 + 新增语法回归检查）
+
+### 1. 故障与定位
+
+- 现象：侧边栏点 OpenCode Go 后页面打不开、Tab 与按钮全部无效。
+- 服务端一切正常：`GET /v0/resource/plugins/cap-opencode-go/dashboard` 200（`Cache-Control: no-store`），
+  `/api/state`、`/api/quota`、`/api/models`、`/api/stats` 均 200 且响应在 2 秒内。
+- 日志显示 06:33 三次加载 dashboard 之后**没有任何 `/api/*` 请求**——说明页面内联脚本没有执行。
+- 把线上页面的 `<script>` 抽出来跑 `node --check`：
+
+```
+/live-script-0.js:918
+      aboutRow('CPA 账号', '…下一次同步会按配置复原。'),',
+                                                                 ^^
+SyntaxError: Invalid or unexpected token
+```
+
+根因：`internal/dashboard/script.go` 的「CPA 账号」说明行末尾多了一个逗号（`'),',` 而不是 `'),`），
+字符串未闭合 → 整个 81 KB 内联脚本无法解析 → 页面只剩静态骨架。1.8.0 的 `go test`/验收只做 HTML
+文案子串断言，因此没拦住。
+
+### 2. 修复与回归检查
+
+- 删除多余的逗号；把线上页面重新抽取后 `node --check` 通过（修复前失败、修复后通过，逐字复现）。
+- `internal/dashboard/page_test.go` 新增 `TestPageScriptParses`：抽取页面内联脚本写临时文件，
+  用 `node --check` 解析；机器上没有 node 时 `t.Skip`。已实测「把逗号加回去 → 用例 FAIL 并打印
+  行号与源码行；改回来 → PASS」。
+- `scripts/acceptance.sh` 新增 `dashboard script parses`：对**已部署页面**做同样检查（node 缺失时 SKIP）。
+
+### 3. 部署与验收（生产 127.0.0.1:8317）
+
+- 06:41 UTC 热重载到 **1.8.1**：四个面 `hot reloaded … active_version=1.8.1 retired_version=1.8.0`；
+  `MainPID=3651300`、`ActiveEnterTimestamp=2026-10-17 03:07:04 UTC`、config inode `10653636` 均未变。
+- 账号投影在热替换后保留（`opencode-go-main.json` 未重写，`created/updated/removed = 0`，
+  `accounts.synced=true`，`version=1.8.1`）。
+- `/api/quota` 返回真实上游窗口（rolling 0% / weekly 61% / monthly 45%）。
+- 线上页面脚本 `node --check` 通过；`grep "'),',"` 为 0，目标行恰好出现 1 次。
+- 公开验收：`== 37 passed, 0 failed ==`，其中 `dashboard script parses` PASS、两项账号检查 PASS、
+  messages 因无启用模型跳过 1 项（管理密钥不可用，管理 API 检查仍沿用隔离实例结果）。
+
+---
+
+## v1.8.0 CPA「配额管理 → Plugin」+ 账号投影（热重载 / 隔离实例 / 零残留）
+
+### 1. 部署（生产，不重启）
+
+- 06:03:18 UTC 备份 1.7.8 的四个 `.so` 与 `config.yaml` 到
+  `/root/cliproxyapi/backup-1.8.0-pre-20261017T060318Z`。
+- `CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.8.0` 只新增
+  `cap-opencode-go{,-responses,-messages,-gemini}-v1.8.0.so`，不覆盖在用文件。
+- 原地追加一行注释触发 fsnotify：inode `10653636` 前后不变；
+  `MainPID=3651300`、`ActiveEnterTimestamp=2026-10-17 03:07:04 UTC` 未变（没有重启）。
+- 日志：四个面 `plugin hot reloaded … active_version=1.8.0 retired_version=1.7.8`，
+  随后 `auth file changed (CREATE): opencode-go-main.json`。
+
+### 2. 账号投影与配额
+
+- `/root/.cli-proxy-api/opencode-go-main.json` 生成，`-rw-------`（0600），内容
+  `type=opencode-go`、`name=main`、`api_key=oc_sk_cd1a…`、`disabled=false`、
+  `managed_by=cap-opencode-go`。
+- `/v0/resource/plugins/cap-opencode-go/api/state`：
+  `version=1.8.0`、`accounts.enabled=true`、`accounts.auth_dir=/root/.cli-proxy-api`、
+  `accounts.files={"main":"opencode-go-main.json"}`、`error` 为空。
+  注意生产 `config.yaml` 没有顶层 `auth-dir`（只有 `oauth.auth-dir`），宿主下发的
+  `host.auth_dir` 因此为空，插件按宿主同样的规则回落到 `~/.cli-proxy-api` —— 与实施前的
+  `util.ResolveAuthDir("")` 一致，实测落点正确。
+- `/v1/models` 仍是 16 个模型、无重复：镜像 auth 会为宿主提供同一批模型，
+  但公开列表按模型 id 去重，不产生副本。
+
+### 3. 隔离实例（同版本二进制，验证宿主侧契约与「零残留」）
+
+实例：`/tmp/cpa-quota-test`（独立端口 8399、独立 auth-dir、假上游 `/usage`、自设管理密钥），
+`/usage` 返回 rolling 32% / weekly 60% / monthly 45%。
+
+- `GET /v8/management/plugins`：`cap-opencode-go` 的 `supports_quota=true`、
+  `quota_provider=opencode-go`、`supports_oauth=false`；三个从属面均为 false（只主面声明）。
+- `GET /v8/management/credentials`：`provider=opencode-go`、`supports_quota=true`、
+  `quota_provider=opencode-go`、`quota_plugin_id=cap-opencode-go`、`auth_index` 有值。
+  （`/v0/management/auth-files` 也返回同一份条目，但 v0 不带 `quota_plugin_id`，面板走 v8。）
+- `POST /v8/management/plugins/cap-opencode-go/quota {"auth_index":…}` 返回 1 个 group +
+  3 个 bucket：`five_hour` 0.68、`weekly` 0.4、`monthly` 0.55（= 1 - percent/100，已去掉浮点噪声），
+  `resetTime` 与 `description` 正确，`subscription.plan=Go`。升级到 Go Plus 时显示 `Go Plus`。
+- 热替换（1.8.1 → 1.8.2，同 ID 换 `.so` 路径）：旧实例收到 `plugin.quiesce`，
+  **账号文件未被删除**，新实例接管；日志 `plugin hot reloaded … retired_version=1.8.1`。
+- 删掉主面配置块：`plugin unloaded`（当前实例与退役实例各一次）→
+  `auth file changed (REMOVE): opencode-go-main.json` → **auth 目录为空**，
+  `/v8/management/credentials` 不再有 opencode-go 条目。
+- 停服（SIGTERM）：退出前同样清除账号文件；重新启动后 3 秒内自动重建（自愈）。
+- 把配置文件写坏后再修好（中间一次 `failed to reload config`）期间插件保持运行，账号不受影响。
+- 教训复核：直接 `cp` 覆盖**正在使用**的 `.so` 会让宿主在读被改写的页时崩溃（本轮在隔离实例上
+  实测重现，进程残留但 HTTP 不再响应）；升级必须新增版本号文件，与 README §7 一致。
+
+### 4. 公开验收（生产 127.0.0.1:8317）
+
+```
+== OpenCode Go acceptance @ http://127.0.0.1:8317 ==
+served models: chat=Beam responses=gpt-6-luna gemini=gemini-4-argon messages=none
+  PASS  chat/completions non-stream / stream / via claude client / via responses client
+  PASS  responses non-stream / stream / via chat client / via claude client
+  PASS  gemini generateContent / streamGenerateContent / via chat client
+  SKIP  messages family（无启用模型）
+  PASS  /v1/models catalogue（16 个）
+  PASS  dashboard state / live model list / quota resource（9 个窗口）
+  PASS  account projection（1 accounts, auth-dir /root/.cli-proxy-api）
+  PASS  account files（1 files, 0600, managed_by marker）
+  PASS  statistics resource / monthly window / data-update reminder / 页面 13 项
+== 36 passed, 0 failed ==
+```
+
+管理 API 的 5 项（`supports_quota`、`quota_provider`、`quota_plugin_id`、per-plugin quota fetch、
+`auth-files` 关联）生产端未跑：管理密钥在 `config.yaml` 里是 bcrypt 哈希，明文不可得；
+这 5 项在隔离实例上用**同一份 1.8.0 二进制**全部 PASS，页面侧由 36 项里的 2 项匿名检查兜底
+（`accounts.files` 与 auth 文件本体）。这与 1.7.1 记录里"管理密钥不可用、管理检查跳过"的处理一致。
+
+### 5. 单元测试
+
+`go test ./...`、`go vet ./...`、`go test -race ./internal/...` 全部通过；新增
+`internal/accounts`（Plan/Sync/Purge/顺序无关命名）、`internal/plugin`（配额映射、凭据来源优先级、
+`quota.identifier/describe/fetch/reset`、仅主面声明 `quota_provider`、quiesce vs shutdown 的清理语义、
+`register-accounts` 开关、`auth-dir` 解析）与 `internal/config`（新开关默认值）用例。
 
 ---
 

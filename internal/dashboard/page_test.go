@@ -4,6 +4,9 @@
 package dashboard
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -201,7 +204,7 @@ func TestPageMergesEditsInsteadOfRewritingTheBlock(t *testing.T) {
 	document := page(t)
 	for _, want := range []string{
 		"var edits = emptyEdits();",
-		"function emptyEdits(){ return { top:{}, models:{}, keys:{ add:{}, del:{}, set:{} } }; }",
+		"function emptyEdits(){ return { top:{}, models:{}, keys:{ add:{}, del:{}, set:{}, rename:{} } }; }",
 		"function buildPayload(base){",
 		"{ allowNotFound:true }",
 		"function saveWith(credential){",
@@ -219,6 +222,42 @@ func TestPageMergesEditsInsteadOfRewritingTheBlock(t *testing.T) {
 	}
 	if strings.Contains(document, "configLoaded") {
 		t.Error("a full local configuration copy is no longer kept; edits are patches")
+	}
+}
+
+// A key name is the handle every other view uses (quota rows, auth-file hints,
+// the account projection), so a rename is a first-class edit: recorded on its
+// own, checked against the names the host will actually end up with, and merged
+// before additions.
+func TestPageRenamesKeys(t *testing.T) {
+	document := page(t)
+	for _, want := range []string{
+		`id="keyNameHint"`,
+		`data-key-rename="`,
+		"function keyNameTaken(name, ignore){",
+		"function setKeyRename(original, raw){",
+		"edits.keys.rename[original] = target;",
+		"Object.keys(edits.keys.rename).forEach(function(name){",
+		"keys[index[name]].name = edits.keys.rename[name];",
+		"Key 名称不能为空",
+		"已存在同名 Key：",
+		"name + ' → ' + edits.keys.rename[name]",
+	} {
+		if !strings.Contains(document, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+
+	// Renames run after removals/per-key edits and before additions, and the
+	// index is rebuilt in between, so "rename A to B, then add a new A" keeps
+	// both keys instead of overwriting the renamed one.
+	renameAt := strings.Index(document, "keys[index[name]].name = edits.keys.rename[name];")
+	addAt := strings.Index(document, "keys.push({ name:name, key:added.secret, priority:added.priority, enabled:added.enabled });")
+	if renameAt < 0 || addAt < 0 || renameAt > addAt {
+		t.Fatal("buildPayload must apply renames before additions")
+	}
+	if !strings.Contains(document[renameAt:addAt], "index = {};") {
+		t.Error("buildPayload must rebuild the key index after renames")
 	}
 }
 
@@ -340,4 +379,70 @@ func TestJSStringEscapesInjection(t *testing.T) {
 	if !strings.Contains(document, `\u003c/SCRIPT\u003e`) {
 		t.Error("angle brackets must be escaped")
 	}
+}
+
+// The page is one inline script: a single syntax error leaves the document
+// rendered but dead (no tabs, no data), which is exactly what shipped in 1.8.0.
+// Substring assertions cannot catch that, so run the real parser when node is
+// available; a machine without node skips instead of failing.
+func TestPageScriptParses(t *testing.T) {
+	node, errLookPath := exec.LookPath("node")
+	if errLookPath != nil {
+		t.Skip("node is not installed; skipping the JavaScript syntax check")
+	}
+	document := page(t)
+	script, ok := inlineScript(document)
+	if !ok {
+		t.Fatal("the page has no inline <script> block")
+	}
+	path := filepath.Join(t.TempDir(), "page.js")
+	if errWrite := os.WriteFile(path, []byte(script), 0o600); errWrite != nil {
+		t.Fatalf("write script: %v", errWrite)
+	}
+	output, errCheck := exec.Command(node, "--check", path).CombinedOutput()
+	if errCheck != nil {
+		t.Fatalf("the page script does not parse: %v\n%s", errCheck, output)
+	}
+}
+
+// The rename path is the one piece of page logic that cannot be checked with
+// substring assertions: it depends on the order of delete/set/rename/add in
+// buildPayload. Run the real inline script in a Node VM with a DOM stub and a
+// tiny test hook injected before the startup calls. A machine without node
+// skips, like TestPageScriptParses.
+func TestPageRenameLogic(t *testing.T) {
+	node, errLookPath := exec.LookPath("node")
+	if errLookPath != nil {
+		t.Skip("node is not installed; skipping the JavaScript behaviour check")
+	}
+	document := page(t)
+	script, ok := inlineScript(document)
+	if !ok {
+		t.Fatal("the page has no inline <script> block")
+	}
+	scriptPath := filepath.Join(t.TempDir(), "page.js")
+	if errWrite := os.WriteFile(scriptPath, []byte(script), 0o600); errWrite != nil {
+		t.Fatalf("write script: %v", errWrite)
+	}
+	harness := filepath.Join("testdata", "rename_logic.js")
+	output, errRun := exec.Command(node, harness, scriptPath).CombinedOutput()
+	if errRun != nil {
+		t.Fatalf("rename logic harness failed: %v\n%s", errRun, output)
+	}
+}
+
+// inlineScript returns the body of the first inline <script> block.
+func inlineScript(document string) (string, bool) {
+	const open = "<script>"
+	const close = "</script>"
+	start := strings.Index(document, open)
+	if start < 0 {
+		return "", false
+	}
+	start += len(open)
+	end := strings.Index(document[start:], close)
+	if end < 0 {
+		return "", false
+	}
+	return document[start : start+end], true
 }

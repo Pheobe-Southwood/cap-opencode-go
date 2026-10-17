@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/keys"
 )
 
 // Window is one usage limit window.
@@ -59,7 +58,7 @@ type usageWindow struct {
 // quota of a key before the operator turns it back on. Individual failures are
 // reported per credential rather than failing the whole call, and the requests
 // run a few at a time so a long key list does not serialise the page load.
-func Fetch(ctx context.Context, settings config.Settings, pool *keys.Pool) []Snapshot {
+func Fetch(ctx context.Context, settings config.Settings) []Snapshot {
 	credentials := settings.Keys
 	out := make([]Snapshot, len(credentials))
 	const parallelism = 4
@@ -80,7 +79,7 @@ func Fetch(ctx context.Context, settings config.Settings, pool *keys.Pool) []Sna
 		go func(index int, credential config.Key) {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore; done <- index }()
-			windows, errFetch := fetchOne(ctx, settings, credential)
+			windows, errFetch := FetchKey(ctx, settings, credential)
 			if errFetch != nil {
 				out[index].Error = errFetch.Error()
 				return
@@ -95,11 +94,13 @@ func Fetch(ctx context.Context, settings config.Settings, pool *keys.Pool) []Sna
 		<-done
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].KeyName < out[j].KeyName })
-	_ = pool
 	return out
 }
 
-func fetchOne(ctx context.Context, settings config.Settings, credential config.Key) ([]Window, error) {
+// FetchKey queries the usage endpoint for one credential. The host's quota
+// provider RPC serves one credential per call, so the same request/mapping code
+// backs both the dashboard and the CPA quota page.
+func FetchKey(ctx context.Context, settings config.Settings, credential config.Key) ([]Window, error) {
 	endpoint := settings.BaseURL + "/usage"
 	request, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if errRequest != nil {

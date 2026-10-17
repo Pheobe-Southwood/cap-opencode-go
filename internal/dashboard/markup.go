@@ -69,6 +69,7 @@ const pageMarkup = `
             <button id="refreshQuota" class="small" type="button">刷新余量</button>
           </div>
         </div>
+        <div class="hint key-name-hint" id="keyNameHint">已有 Key 的名称可直接点击修改；保存后会同步重命名对应的 CPA 账号文件。新增 Key 请在下方表单里命名。</div>
         <div id="keyList" class="key-list"></div>
 
         <details class="adder" id="keyAdder">
@@ -80,21 +81,21 @@ const pageMarkup = `
             <label class="field"><span>API Key</span>
               <input type="password" id="keySecret" placeholder="oc_sk_…" autocomplete="off" spellcheck="false">
             </label>
-            <label class="field narrow"><span>权重</span>
-              <input type="number" id="keyWeight" min="1" step="1" value="1" inputmode="numeric">
+            <label class="field narrow"><span>优先级</span>
+              <input type="number" id="keyPriority" min="0" step="1" value="1" inputmode="numeric">
             </label>
             <div class="field actions">
               <button id="addKey" class="small" type="button">添加</button>
             </div>
           </div>
-          <div class="hint" id="keyFormHint">Key 只写入 CPA 的 config.yaml，本插件不落盘。</div>
+          <div class="hint" id="keyFormHint">Key 只写入 CPA 的 config.yaml，本插件不落盘。优先级数值越大越优先调用。</div>
         </details>
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>轮换与故障转移</h2></div>
+        <div class="card-head"><h2>宿主路由与优先级</h2></div>
         <div class="grid" id="rotationGrid"></div>
-        <div class="hint" style="margin-top:10px">请求按权重在启用中的 Key 之间轮换；某个 Key 返回 401/429/5xx 时会被冷却，冷却期内其它 Key 接管。关闭的 Key 不参与轮换，也不会上报额度。</div>
+        <div class="hint" style="margin-top:10px">Key 选择、轮换与故障转移完全由 CPA 宿主接管，跟随 CPA「网络配置」中的路由策略。插件提供 Key 优先级（数字越大越优先，相同优先级按宿主策略负载均衡）。关闭的 Key 不参与调度。</div>
       </div>
     </section>
 
@@ -128,6 +129,9 @@ const pageMarkup = `
           <h2>模型用量</h2>
           <div class="toolbar-group">
             <span class="hint" id="statsRangeHint"></span>
+            <select id="statsKey" aria-label="筛选 Key">
+              <option value="">全部 Key</option>
+            </select>
             <select id="statsRange" aria-label="统计范围">
               <option value="month">本月</option>
               <option value="all">累计</option>
@@ -277,11 +281,9 @@ const pageMarkup = `
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>超时、重试与冷却</h2></div>
+        <div class="card-head"><h2>超时设置</h2></div>
         <div class="grid">
           <label class="kv"><span class="k">请求超时（秒）</span><input type="number" id="cfgTimeout" min="1" step="1" inputmode="numeric"></label>
-          <label class="kv"><span class="k">Key 冷却（秒）</span><input type="number" id="cfgCooldown" min="0" step="1" inputmode="numeric"></label>
-          <label class="kv"><span class="k">失败重试次数</span><input type="number" id="cfgRetries" min="0" step="1" inputmode="numeric"></label>
         </div>
       </div>
 
