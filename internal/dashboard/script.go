@@ -1434,21 +1434,26 @@ const pageScript = `
       var used = Math.max(0, Number(model.monthly_percent) || 0);
       var width = Math.min(100, used);
       var level = used >= 100 ? 'err' : (used >= 80 ? 'warn' : '');
-      var mainBar = '<div class="stats-percent"><span class="v ' + (level === 'err' ? 'err-text' : level === 'warn' ? 'warn-text' : '') + '">' +
-        formatPercent(used) + '</span><div class="bar ' + level + '"><span style="width:' + width + '%"></span></div>' +
-        '<span class="stats-sub">' + formatUSD(model.cost_usd) + ' / ' + formatUSD(model.monthly_limit_usd) + '</span></div>';
+      var mainBar = '<div class="stats-percent">' +
+        '<div class="stats-percent-head">' +
+          '<span class="v ' + (level === 'err' ? 'err-text' : level === 'warn' ? 'warn-text' : '') + '">' + formatPercent(used) + '</span>' +
+          '<span class="stats-sub">' + formatUSD(model.cost_usd) + ' / ' + formatUSD(model.monthly_limit_usd) + '</span>' +
+        '</div>' +
+        '<div class="bar ' + level + '"><span style="width:' + width + '%"></span></div>' +
+      '</div>';
       var keyPills = '';
       if(model.by_key && model.by_key.length > 0){
         keyPills = '<div class="stats-key-remainders">' + model.by_key.map(function(bk){
           var remUSD = formatUSD(bk.remaining_usd);
           var remPct = bk.remaining_percent != null ? bk.remaining_percent.toFixed(0) + '%' : '';
           var bkLevel = bk.remaining_usd <= 0 ? 'err' : (bk.used_percent >= 80 ? 'warn' : '');
-          return '<span class="stats-key-rem-pill ' + bkLevel + '" title="' + esc(bk.key_name) + '：已用 ' + formatUSD(bk.cost_usd) + ' / 限额 ' + formatUSD(model.monthly_limit_usd) + '">' +
-            '<strong>' + esc(bk.key_name) + '</strong> 余 ' + remUSD + (remPct ? ' (' + remPct + ')' : '') +
-            '</span>';
+          return '<div class="stats-key-rem-pill ' + bkLevel + '" title="' + esc(bk.key_name) + '：已用 ' + formatUSD(bk.cost_usd) + ' / 限额 ' + formatUSD(model.monthly_limit_usd) + '">' +
+            '<span class="k-name">' + esc(bk.key_name) + '</span>' +
+            '<span class="k-val">余 ' + remUSD + (remPct ? ' (' + remPct + ')' : '') + '</span>' +
+          '</div>';
         }).join('') + '</div>';
       }
-      monthly = mainBar + keyPills;
+      monthly = '<div class="stats-quota-cell">' + mainBar + keyPills + '</div>';
     } else if(model.priced) monthly = '<span class="hint">限额未知</span>';
 
     var tps = model.tps_samples

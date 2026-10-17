@@ -278,14 +278,19 @@ const pageStyles = `
   .stats-model-badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
   .stats-cell-main{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
   .stats-sub{display:block;color:var(--text-tertiary);font-size:11px;white-space:nowrap}
-  .stats-percent{display:flex;flex-direction:column;gap:3px;min-width:106px}
-  .stats-percent .v{font-weight:700;font-variant-numeric:tabular-nums}
-  .stats-percent .bar{height:5px}
-  .stats-key-remainders{margin-top:5px;display:flex;flex-direction:column;gap:3px}
-  .stats-key-rem-pill{font-size:11px;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;background:var(--bg-tertiary);color:var(--text-secondary);white-space:nowrap}
+  .stats-quota-cell{display:flex;flex-direction:column;gap:5px;min-width:140px;width:100%}
+  .stats-percent{display:flex;flex-direction:column;gap:3px;min-width:0;width:100%}
+  .stats-percent-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .stats-percent-head .v{font-weight:700;font-variant-numeric:tabular-nums}
+  .stats-percent-head .stats-sub{color:var(--text-tertiary);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .stats-percent .bar{height:5px;width:100%}
+  .stats-key-remainders{margin-top:2px;display:flex;flex-direction:column;gap:3px;min-width:0;width:100%}
+  .stats-key-rem-pill{font-size:11px;display:flex;align-items:center;justify-content:space-between;gap:6px;
+    padding:2px 7px;border-radius:4px;background:var(--bg-tertiary);color:var(--text-secondary);min-width:0;box-sizing:border-box}
   .stats-key-rem-pill.warn{background:color-mix(in srgb,var(--amber-color) 15%,transparent);color:var(--amber-color)}
   .stats-key-rem-pill.err{background:color-mix(in srgb,var(--error-color) 15%,transparent);color:var(--error-color)}
-  .stats-key-rem-pill strong{font-weight:600;color:var(--text-primary)}
+  .stats-key-rem-pill .k-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--text-primary);min-width:0;flex:1 1 auto}
+  .stats-key-rem-pill .k-val{flex:0 0 auto;white-space:nowrap;font-variant-numeric:tabular-nums}
   .stats-footnote{margin-top:10px;line-height:1.65}
   .stats-notes{margin:8px 0 0;padding-left:18px;display:grid;gap:6px;color:var(--text-secondary);font-size:12px}
   .stats-notes strong{color:var(--text-primary)}
@@ -356,13 +361,16 @@ const pageStyles = `
        title, so it loses its label; the remaining fields keep theirs. */
     .stats-table-wrap{overflow:visible}
     table.responsive.stats-table td{display:flex;gap:10px;align-items:baseline}
+    table.responsive.stats-table td[data-label="本月额度"]{align-items:flex-start}
     table.responsive.stats-table td.num{text-align:left}
     table.responsive.stats-table td::before{flex:0 0 84px}
     table.responsive.stats-table td.stats-model-cell{display:block;padding-bottom:6px}
     table.responsive.stats-table td.stats-model-cell::before{display:none}
     .stats-table td.stats-model-cell{min-width:0}
+    .stats-quota-cell{min-width:0;flex:1 1 0}
     .stats-percent{min-width:0;width:100%}
     .stats-sub{white-space:normal}
+    .stats-percent-head .stats-sub{white-space:nowrap}
     .stats-plan-line{align-items:flex-start}
     .stats-freshness{align-items:flex-start;gap:5px 8px}
     .stats-notes{padding-left:16px}
