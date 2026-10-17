@@ -901,7 +901,7 @@ const pageScript = `
       aboutRow('协议面', '一个主插件 + 三个协议面插件（responses / messages / gemini），每个 .so 只声明一种上游协议，协议翻译由 CPA 完成。四个 .so 必须同版本安装，只有主插件需要配置，四个面在「状态」里逐面说明。'),
       aboutRow('别名', '在「模型」里为模型填写的别名会替代原名对外提供；清空别名即恢复原名，多个别名等于多个对外 id。'),
       aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。'),
-      aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、平均 TPS 与 TTFT。token、失败与请求总延迟来自宿主 usage 事件；TPS 是成功请求的有效 output ÷ 总延迟（整体吞吐，含首字），TTFT 由插件读流自测。v1.7 起可回放旧 Token Usage Tracker 中 opencode-go 的历史。'),
+      aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、整体 TPS、生成 TPS 与 TTFT。token、失败与请求总延迟来自宿主 usage 事件；整体 TPS 含首字，生成 TPS 只算插件测到的首内容到末内容，TTFT 由插件读流自测。v1.7 起可回放旧 Token Usage Tracker 中 opencode-go 的历史。'),
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),
       aboutRow('热重载', '替换插件文件同样热生效：把新版本 .so 放进 plugins/linux/amd64 后原地改一次 config.yaml 即可（不要用会替换 inode 的方式写文件）。'),
       aboutRow('残留', '插件只在 CPA 目录下写 plugins/ 与 data/cap-opencode-go/（shared.json、stats-&lt;role&gt;.json，可选 debug.log）；删除插件与配置块后无任何残留。'),
@@ -1214,6 +1214,7 @@ const pageScript = `
       ['刊例价', totals ? formatUSD(totals.cost_usd) : '—', stats ? (stats.range.kind === 'month' ? '本月' : '累计') + ' · 按价目表折算' : '正在读取…'],
       ['Token', totals ? formatTokens(totals.total_tokens) : '—', totals ? '输入 ' + formatTokens(totals.input_tokens) + ' · 输出 ' + formatTokens(totals.output_tokens) : ''],
       ['平均 TPS', totals && totals.tps_samples ? formatTPS(totals.avg_tps) : '—', totals && totals.tps_samples ? totals.tps_samples + ' 个成功请求 · 整体' : '成功请求 · 含首字'],
+      ['生成 TPS', totals && totals.gen_tps_samples ? formatTPS(totals.avg_gen_tps) : '—', totals && totals.gen_tps_samples ? totals.gen_tps_samples + ' 个插件实测样本' : '首内容后 · 插件实测'],
       ['平均 TTFT', totals && totals.ttft_samples ? formatTTFT(totals.avg_ttft_ms) : '—', totals && totals.ttft_samples ? totals.ttft_samples + ' 个成功流式' : '仅成功流式'],
       ['有用量模型', totals ? String(totals.models_used) : '—', '套餐 ' + statsPlanLabel()]
     ];
@@ -1306,6 +1307,9 @@ const pageScript = `
     var tps = model.tps_samples
       ? '<span class="stats-cell-main">' + formatTPS(model.avg_tps) + '</span><span class="stats-sub">' + model.tps_samples + ' 成功请求 · 整体</span>'
       : '<span class="hint">—</span>';
+    var genTps = model.gen_tps_samples
+      ? '<span class="stats-cell-main">' + formatTPS(model.avg_gen_tps) + '</span><span class="stats-sub">' + model.gen_tps_samples + ' 插件实测</span>'
+      : '<span class="hint">—</span>';
     var ttft = model.ttft_samples
       ? '<span class="stats-cell-main">' + formatTTFT(model.avg_ttft_ms) + '</span><span class="stats-sub">' + model.ttft_samples + ' 成功流式</span>'
       : '<span class="hint">—</span>';
@@ -1320,6 +1324,7 @@ const pageScript = `
       '<td class="num" data-label="刊例价">' + cost + '</td>' +
       '<td data-label="本月额度">' + monthly + '</td>' +
       '<td class="num" data-label="平均 TPS">' + tps + '</td>' +
+      '<td class="num" data-label="生成 TPS">' + genTps + '</td>' +
       '<td class="num" data-label="平均 TTFT">' + ttft + '</td>' +
       '<td data-label="最近使用">' + last + '</td>' +
     '</tr>';
@@ -1334,7 +1339,7 @@ const pageScript = `
       box.innerHTML = '<div class="empty-state">还没有用量数据。发一次请求后点「刷新」；v1.7 起可从旧 Token Usage Tracker 回放历史；若已有请求但这里仍为空，留意上方的诊断提示。</div>';
       return;
     }
-    var headers = ['模型','请求','输入','输出','缓存读/写','刊例价','本月额度','平均 TPS','平均 TTFT','最近使用'];
+    var headers = ['模型','请求','输入','输出','缓存读/写','刊例价','本月额度','平均 TPS','生成 TPS','平均 TTFT','最近使用'];
     var head = headers.map(function(label, index){
       var numeric = index >= 1 && index <= 5 || index === 7 || index === 8;
       return '<th' + (numeric ? ' class="num"' : '') + '>' + esc(label) + '</th>';

@@ -35,6 +35,8 @@ type StatsCounts struct {
 	TTFTSamples       int64   `json:"ttft_samples"`
 	TPSSamples        int64   `json:"tps_samples"`
 	AvgTPS            float64 `json:"avg_tps"`
+	GenTPSSamples     int64   `json:"gen_tps_samples"`
+	AvgGenTPS         float64 `json:"avg_gen_tps"`
 	AvgTTFTMS         float64 `json:"avg_ttft_ms"`
 }
 
@@ -335,6 +337,8 @@ func statsCountsFrom(counter stats.Counter) StatsCounts {
 		TTFTSamples:       counter.TTFTSamples,
 		TPSSamples:        counter.LatencySamples,
 		AvgTPS:            avgTPS(counter),
+		GenTPSSamples:     counter.GenSamples,
+		AvgGenTPS:         avgGenTPS(counter),
 		AvgTTFTMS:         avgTTFT(counter),
 	}
 }
@@ -348,6 +352,39 @@ func avgTPS(counter stats.Counter) float64 {
 		return 0
 	}
 	return roundFloat(float64(counter.LatencyOutput)/(float64(counter.LatencyNano)/1e9), 2)
+}
+
+// avgGenTPS is the plugin-measured decode rate: streamed output tokens divided
+// by the time from first content to last content. It excludes TTFT by
+// construction. The host usage event has no request id that can be joined to
+// the timing sample, so this is a secondary estimate; the paired end-to-end TPS
+// above remains the primary number. Gemini reasoning is not separately
+// available in this historical numerator, so Gemini can be slightly low.
+func avgGenTPS(counter stats.Counter) float64 {
+	if counter.GenSamples == 0 || counter.GenerationNano <= 0 || counter.StreamOutput <= 0 {
+		return 0
+	}
+	// Streams is available in legacy stats files and covers every streaming
+	// request. It can include failures or zero-output streams, so using it as
+	// the coverage denominator is deliberately conservative. New stats also
+	// record StreamOutputSamples, but mixing legacy and new counters must not
+	// shrink the denominator to the new-only sample count.
+	outputSamples := counter.Streams
+	if counter.StreamOutputSamples > outputSamples {
+		outputSamples = counter.StreamOutputSamples
+	}
+	if outputSamples == 0 {
+		return 0
+	}
+	output := float64(counter.StreamOutput)
+	if counter.GenSamples < outputSamples {
+		// Do not add output tokens for streams that have no generation sample:
+		// that was the old metric's inflation path. Scale the numerator by the
+		// timing coverage instead. The UI still shows the sample count, and the
+		// paired overall TPS remains the authoritative number.
+		output *= float64(counter.GenSamples) / float64(outputSamples)
+	}
+	return roundFloat(output/(float64(counter.GenerationNano)/1e9), 2)
 }
 
 func avgTTFT(counter stats.Counter) float64 {

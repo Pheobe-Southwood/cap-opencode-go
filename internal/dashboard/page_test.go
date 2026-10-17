@@ -305,8 +305,8 @@ func TestPageStatsSummarizesUsedModels(t *testing.T) {
 		"function statsSinceISO()", "function monthBefore(date)", "setUTCMonth(result.getUTCMonth() - 1)",
 		"var statsCalendarRetry = false;", "stats.range.since_source === 'calendar'",
 		`data-label="请求"`, `data-label="输入"`, `data-label="输出"`, `data-label="缓存读/写"`,
-		`data-label="刊例价"`, `data-label="本月额度"`, `data-label="平均 TPS"`, `data-label="平均 TTFT"`,
-		"成功请求的有效 output token ÷ 宿主请求总延迟", "回放到本统计", "金额为刊例价估算，不是 OpenCode 账单",
+		`data-label="刊例价"`, `data-label="本月额度"`, `data-label="平均 TPS"`, `data-label="生成 TPS"`, `data-label="平均 TTFT"`,
+		"成功请求的有效 output token ÷ 宿主请求总延迟", "不含 TTFT", "回放到本统计", "金额为刊例价估算，不是 OpenCode 账单",
 		"matchMedia('(max-width: 640px)')", "fold.open = false", ".fold-block{", ".stats-table-wrap{",
 	} {
 		if !strings.Contains(document, want) {

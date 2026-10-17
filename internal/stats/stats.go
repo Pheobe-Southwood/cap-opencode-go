@@ -36,21 +36,22 @@ const bucketLayout = "2006-01-02T15"
 // Counter is the cumulative count for one model, one hour bucket, or one time
 // range. All fields are additive.
 type Counter struct {
-	Requests      int64 `json:"requests,omitempty"`
-	Failed        int64 `json:"failed_requests,omitempty"`
-	Streams       int64 `json:"stream_requests,omitempty"`
-	Unmetered     int64 `json:"unmetered_requests,omitempty"`
-	Priced        int64 `json:"priced_requests,omitempty"`
-	Unpriced      int64 `json:"unpriced_requests,omitempty"`
-	Input         int64 `json:"input_tokens,omitempty"`
-	Output        int64 `json:"output_tokens,omitempty"`
-	Reasoning     int64 `json:"reasoning_tokens,omitempty"`
-	Cached        int64 `json:"cached_tokens,omitempty"`
-	CacheRead     int64 `json:"cache_read_tokens,omitempty"`
-	CacheCreation int64 `json:"cache_creation_tokens,omitempty"`
-	Total         int64 `json:"total_tokens,omitempty"`
-	CostNanoUSD   int64 `json:"cost_nano_usd,omitempty"`
-	StreamOutput  int64 `json:"stream_output_tokens,omitempty"`
+	Requests            int64 `json:"requests,omitempty"`
+	Failed              int64 `json:"failed_requests,omitempty"`
+	Streams             int64 `json:"stream_requests,omitempty"`
+	Unmetered           int64 `json:"unmetered_requests,omitempty"`
+	Priced              int64 `json:"priced_requests,omitempty"`
+	Unpriced            int64 `json:"unpriced_requests,omitempty"`
+	Input               int64 `json:"input_tokens,omitempty"`
+	Output              int64 `json:"output_tokens,omitempty"`
+	Reasoning           int64 `json:"reasoning_tokens,omitempty"`
+	Cached              int64 `json:"cached_tokens,omitempty"`
+	CacheRead           int64 `json:"cache_read_tokens,omitempty"`
+	CacheCreation       int64 `json:"cache_creation_tokens,omitempty"`
+	Total               int64 `json:"total_tokens,omitempty"`
+	CostNanoUSD         int64 `json:"cost_nano_usd,omitempty"`
+	StreamOutput        int64 `json:"stream_output_tokens,omitempty"`
+	StreamOutputSamples int64 `json:"stream_output_samples,omitempty"`
 	// LatencyOutput and LatencyNano are the paired numerator and denominator
 	// for the end-to-end TPS: one successful request's effective output tokens
 	// divided by the host-reported request latency. Both fields are updated
@@ -89,6 +90,7 @@ func (c *Counter) Add(other Counter) {
 	c.Total += other.Total
 	c.CostNanoUSD += other.CostNanoUSD
 	c.StreamOutput += other.StreamOutput
+	c.StreamOutputSamples += other.StreamOutputSamples
 	c.LatencyOutput += other.LatencyOutput
 	c.LatencyNano += other.LatencyNano
 	c.LatencySamples += other.LatencySamples
@@ -110,7 +112,7 @@ func (c *Counter) MergeTiming(other Counter) {
 
 func (c Counter) empty() bool {
 	return c.Requests == 0 && c.Total == 0 && c.TTFTSamples == 0 && c.GenSamples == 0 &&
-		c.LatencySamples == 0 && c.CostNanoUSD == 0
+		c.LatencySamples == 0 && c.StreamOutputSamples == 0 && c.CostNanoUSD == 0
 }
 
 // UsageSample is one host usage record after filtering and model resolution.
@@ -178,6 +180,7 @@ func (m *ModelStats) addUsage(sample UsageSample, at time.Time) {
 		counter.Streams = 1
 		if !sample.Failed && sample.Output > 0 {
 			counter.StreamOutput = sample.Output
+			counter.StreamOutputSamples = 1
 		}
 	}
 	if sample.Unmetered {

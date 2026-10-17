@@ -126,8 +126,9 @@ v1.6.0 新增了统计面板，它会写自己的计数器文件；这仍然全�
 | 浏览器 | 与 v1.4 相同：默认不存任何东西，`sessionStorage` 只在操作者主动勾选时使用 |
 
 统计文件只有模型 id、计数、费用、延迟与时间戳，不含 Key、提示词或响应内容。v1.7 的
-`latency_output_tokens` / `latency_nano` / `latency_samples` 是 additive 字段：回滚到 v1.6.1
-时旧版本会忽略它们，并继续用旧的 `stream_output_tokens` / `generation_nano` 计算旧口径 TPS；
+`latency_output_tokens` / `latency_nano` / `latency_samples` / `stream_output_samples` 是
+additive 字段：回滚到 v1.6.1 时旧版本会忽略它们，并继续用旧的 `stream_output_tokens` /
+`generation_nano` 计算旧口径 TPS；v1.7.2 的生成 TPS 也读取这两个旧字段，所以回滚不丢数据；
 回滚到 1.5.0 时这些文件被整体忽略。`replay-tracker-import.json` 只是回放标记，不影响运行；
 `scripts/uninstall.sh` 会连同整个数据目录一起删除。
 回滚清单仍与 v1.1.1 一致：4 个 `.so` + 4 个 `plugins.configs.*` 块 + `data/cap-opencode-go/`。

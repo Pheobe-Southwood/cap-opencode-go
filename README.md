@@ -7,7 +7,7 @@
 - **Gemini 4 Argon Contributor 可用**（CPA 内置 `gemini` provider 组因强制拼接 `/v1beta/` 无法调用它）
 - 客户端任意协议都能调用任意模型，协议转换由 **CPA 自己**完成
 - 侧边栏「插件」组内出现 `OpenCode Go` 入口，与 token 用量插件平级
-- **「统计」Tab**：按用过的模型看 token、刊例价、月额度百分比、平均整体 TPS / 首内容 TTFT；
+- **「统计」Tab**：按用过的模型看 token、刊例价、月额度百分比、平均整体 TPS / 生成 TPS / 首内容 TTFT；
   可从旧 Token Usage Tracker 回放 opencode-go 历史；手机端概览常驻，模型明细与统计口径默认折叠
 - **界面跟随管理中心的深色/浅色主题**（实时同步），并在手机宽度下自动改为单列卡片布局
 - **插件页不需要密码**：写入凭据直接复用管理中心已经存好的登录态，插件自己不保存任何密码
@@ -84,10 +84,11 @@ OpenCode 图标（`internal/brand` 内嵌的官方 mark，以 data URI 下发，
 - **TPS = 成功请求的有效 output token ÷ 宿主请求总延迟**。分子和分母来自同一条 usage 记录，
   包含首字、排队和网络时间，所以叫「整体 TPS」，不是纯解码速度；gemini 的 reasoning token
   计入分子；失败请求不计。非流式请求也有总延迟，因此也计入整体 TPS。
+- **生成 TPS = 插件实测的 output / 首个内容帧到最后一个内容帧的时间**，不含 TTFT，接近解码速度。
+  这是次要估算：宿主 usage 没有可与 timing 配对的 request id，分子覆盖成功流式 output，分母只覆盖
+  有 generation 的样本；按 timing 覆盖率缩放，样本数见列，不单独做严格 SLA。
 - **TTFT = 发起上游请求到首个真实内容帧**。只统计有内容且正常结束的流式请求；内容识别失败时
   **不再回退到首帧**，避免把 role/控制帧当成首字。TTFT 包含连接、排队和重试，不含 host 下游发送。
-- 旧版本留下的 `generation_nano` 只做诊断，不再参与 TPS，因为宿主 usage 事件没有可配对的
-  request id，不能把某个 token 数和一个 generation 时间硬拼在一起。
 
 费用按内嵌价目表折算，不是 OpenCode 账单。详见 [docs/design.md](docs/design.md) §7.8。
 
@@ -100,12 +101,12 @@ v1.7 附带一次性的 `cmd/replay-tracker`：读取 `cap-token-usage-tracker` 
 ```bash
 # 先停 CPA，避免运行中的 stats 写入覆盖合并结果
 systemctl stop cliproxyapi
-make VERSION=1.7.1 GO=/opt/go/bin/go replay
-./dist/replay-tracker-v1.7.1 \
+make VERSION=1.7.3 GO=/opt/go/bin/go replay
+./dist/replay-tracker-v1.7.3 \
   -tracker /root/cliproxyapi/data/token-usage-tracker.db \
   -stats-dir /root/cliproxyapi/data/cap-opencode-go
 # 上面的默认是 dry-run；确认扫描数量和截止时间后再加 -apply
-./dist/replay-tracker-v1.7.1 \
+./dist/replay-tracker-v1.7.3 \
   -tracker /root/cliproxyapi/data/token-usage-tracker.db \
   -stats-dir /root/cliproxyapi/data/cap-opencode-go -apply
 systemctl start cliproxyapi
@@ -133,7 +134,7 @@ systemctl start cliproxyapi
 export PATH=/opt/go/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 
-make build VERSION=1.7.1   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.7.1.so
+make build VERSION=1.7.3   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.7.3.so
 make test           # 单元测试
 make vet
 ```
@@ -147,7 +148,7 @@ make vet
 ## 4. 安装
 
 ```bash
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.7.1
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.7.3
 ```
 
 脚本只做两件事：把 4 个 `.so` 复制到 `$CPA_ROOT/plugins/linux/amd64/`，并打印需要粘贴的 YAML。
@@ -264,7 +265,7 @@ models:
 | Tab | 内容 |
 |---|---|
 | **账号管理**（默认） | 汇总条（启用 Key 数 / 最低剩余 / 冷却中 / 余量更新时间）；每个 Key 一张卡片：名称、掩码、健康状态、权重、启用开关、移除，以及 5 小时 / 本周 / 本月三条**剩余**进度条（含重置时间）；折叠的「添加 Key」表单；底部「轮换与故障转移」摘要 |
-| **统计** | 概览（账户本月额度 / 刊例价 / token / 平均整体 TPS / 首内容 TTFT / 有用量模型）；「本月 / 累计」切换；每个用过的模型一行：输入、输出、缓存读/写、刊例价、月额度百分比、平均整体 TPS、首内容 TTFT、最近使用；「统计口径与价目说明」默认折叠 |
+| **统计** | 概览（账户本月额度 / 刊例价 / token / 平均整体 TPS / 生成 TPS / 首内容 TTFT / 有用量模型）；「本月 / 累计」切换；每个用过的模型一行：输入、输出、缓存读/写、刊例价、月额度百分比、平均整体 TPS、生成 TPS、首内容 TTFT、最近使用；「统计口径与价目说明」默认折叠 |
 | **模型** | 统计 chip（模型 id / 本实例提供 / 已关闭 / 上游新增 / 已下线 / 已修改，点一下即按它筛选）；搜索 + 协议 + 状态筛选、「启用/停用筛选结果」、「从上游刷新」；每个模型一行，点「设置」展开别名 / 上游协议 / 代理 / 探测协议 / 恢复默认 |
 | **状态** | 运行状态（版本、协议族、Base URL、Session、代理、状态文件、启动时间与运行时长）；上游模型列表（数量、拉取时间、结果）；**协议面**卡片（四个 `.so` 各自的协议、插件 ID、承载模型、配置归属与缺失后果）；「关于与帮助」 |
 | **设置** | Base URL、Session、代理、超时/冷却/重试、状态目录与调试日志；底部「待保存的修改」逐条列出本次改动，可一键放弃 |
@@ -354,7 +355,7 @@ CPA 的插件列表是「一个 `.so` 一行」，而本插件按上游协议族
 - `GET /v0/resource/plugins/cap-opencode-go/api/state` — 配置与运行状态（不含上游调用）
 - `GET /v0/resource/plugins/cap-opencode-go/api/models[?refresh=1]` — 上游模型列表与本插件配置的合并视图（上游结果缓存 5 分钟）
 - `GET /v0/resource/plugins/cap-opencode-go/api/quota` — 每个 Key 的 5 小时 / 本周 / 本月用量（含已停用的 Key）
-- `GET /v0/resource/plugins/cap-opencode-go/api/stats?range=month|all[&since=RFC3339]` — 用过的模型的 token、刊例价、月额度百分比、平均整体 TPS / 首内容 TTFT（不含任何 Key）
+- `GET /v0/resource/plugins/cap-opencode-go/api/stats?range=month|all[&since=RFC3339]` — 用过的模型的 token、刊例价、月额度百分比、平均整体 TPS / 生成 TPS / 首内容 TTFT（不含任何 Key）
 
 需要鉴权的接口（宿主管理中间件校验，与其它管理 API 同一把密钥）：
 
@@ -387,14 +388,14 @@ CPA 的文件监听器（fsnotify）会在 **config.yaml 内容变化**时重新
 ```bash
 # 升级：装新 .so，再原地改一行 config.yaml 触发重载。
 # 注意：宿主重启时会清理旧版本 .so；需要回滚就先备份/保留 dist 里的 1.6.1。
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.7.1
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.7.3
 
 # 原地改一行注释（保持 inode）即可触发重载：把标记行在「有/无 -note」之间来回切
 python3 - <<'PY'
 path = "/root/cliproxyapi/config.yaml"
 with open(path) as handle:
     text = handle.read()
-marker = "# (v1.7.1"
+marker = "# (v1.7.3"
 tainted = marker + "-note:"
 if tainted in text:
     text = text.replace(tainted, marker + ":", 1)
@@ -464,8 +465,9 @@ bash scripts/acceptance.sh
 （Tab 骨架、统计页、账号管理、密码弹窗、无只读模式）与状态接口是否携带可编辑字段、是否隐藏密钥。
 统计检查会等待最多 25 秒（从属面每 5 秒落盘），断言 token、费用、TTFT/TPS 样本都非零。
 v1.7.1 在 v8.0.27 生产实例公开检查 **32 项全过**，0 失败（6 项管理检查因环境里没有
-明文管理密钥而跳过；messages 因子模型未启用跳过 1 项）；真实上游覆盖 chat/responses/gemini。
-实测与回放记录见 [docs/acceptance.md](docs/acceptance.md)。
+明文管理密钥而跳过；messages 因子模型未启用跳过 1 项）；v1.7.2 / 1.7.3 通过 config.yaml
+原地注释热重载上线，未重启 CPA，生成 TPS 指标由 API、页面和一次真实 Beam 流式请求验证。
+完整实测与回放记录见 [docs/acceptance.md](docs/acceptance.md)。
 
 ---
 
@@ -492,6 +494,19 @@ docs/                  design / rollback / acceptance
 ---
 
 ## 11. 变更记录
+
+### 1.7.3
+
+- 生成 TPS 的覆盖率修正：分子只按有 generation 样本的比例缩放，避免新记录把旧 output 全部塞进
+  一个很小的新样本分母；新增 `stream_output_samples` 统计（旧 stats 缺失时用 `stream_requests` 兜底）。
+- 只做热重载（config.yaml 原地增注释，inode 不变），未重启 CPA。
+
+### 1.7.2
+
+- **新增「生成 TPS」**：页面概览多一个 tile，模型表多一列，API 增加 `avg_gen_tps` /
+  `gen_tps_samples`。分母是插件测的首内容到末内容，不含 TTFT；因为宿主 usage 没有 request id
+  可与 timing 配对，它是带样本数的次要估算，整体 TPS 仍是主指标。
+- 通过 config.yaml 原地增注释热重载，未重启 CPA；PID 保持不变。
 
 ### 1.7.1
 

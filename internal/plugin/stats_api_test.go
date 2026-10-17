@@ -204,6 +204,44 @@ func TestStatsPayloadTPSUsesPairedLatency(t *testing.T) {
 	}
 }
 
+func TestStatsPayloadReportsGenerationTPS(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	at := time.Now().UTC().Add(-time.Minute)
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", Model: "glm-5.3",
+		RequestedAt: at, Stream: true, Latency: 5 * time.Second,
+		Detail: pluginapi.UsageDetail{OutputTokens: 1_000, TotalTokens: 1_000},
+	})
+	runtime.statsStore().ObserveTiming(stats.TimingSample{
+		Model: "glm-5.3", Family: "chat", At: at,
+		TTFT: time.Second, Generation: 2 * time.Second,
+	})
+	payload := runtime.statsPayload(url.Values{"range": {"all"}})
+	model := payload.Models[0]
+	if model.AvgTPS != 200 || model.TPSSamples != 1 {
+		t.Errorf("overall TPS = %v (%d), want 200 (1)", model.AvgTPS, model.TPSSamples)
+	}
+	if model.AvgGenTPS != 500 || model.GenTPSSamples != 1 {
+		t.Errorf("generation TPS = %v (%d), want 500 (1)", model.AvgGenTPS, model.GenTPSSamples)
+	}
+	if model.AvgTTFTMS != 1000 {
+		t.Errorf("TTFT = %v, want 1000", model.AvgTTFTMS)
+	}
+
+	// Without a generation timing sample there is no decode rate, even though
+	// the request still contributes to the paired overall TPS.
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", Model: "glm-5.3",
+		RequestedAt: at, Stream: true, Latency: 5 * time.Second,
+		Detail: pluginapi.UsageDetail{OutputTokens: 1_000, TotalTokens: 1_000},
+	})
+	payload = runtime.statsPayload(url.Values{"range": {"all"}})
+	model = payload.Models[0]
+	if model.AvgGenTPS != 500 || model.GenTPSSamples != 1 {
+		t.Errorf("generation TPS after unpaired stream = %v (%d), want unchanged", model.AvgGenTPS, model.GenTPSSamples)
+	}
+}
+
 func TestStatsPayloadCalendarFallback(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{

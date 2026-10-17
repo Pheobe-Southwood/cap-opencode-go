@@ -248,6 +248,10 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   分母是宿主请求总延迟。两者天然按请求配对，包含首字、排队与网络，所以是**整体 TPS**，
   不是纯解码速度；失败请求不计。非流式请求也有总延迟，因此也进入整体 TPS。
   旧 stats 没有 `latency_nano` 时 TPS 为空，不用 generation 时间冒充。
+- **生成 TPS（次要估算）**：`stream_output_tokens / generation_nano`，即插件测的首内容到末内容，
+  不含 TTFT。宿主 usage 没有可与 timing 配对的 request id，因此按 `generation_samples /
+  stream_requests` 的覆盖率缩放分子；样本数随 API 返回（`gen_tps_samples`），页面标注「插件实测」。
+  它更接近解码速度，但仍不是严格 benchmark；整体 TPS 才是严格配对的主指标。
 - **TTFT 与 generation 诊断**：四个面在 `pumpStream` 里自己打时间戳：发起上游请求前记
   `started`，第一个内容帧（chat 的 `delta.content/reasoning_content/tool_calls`、responses 的
   `*.delta`、messages 的 `content_block_delta`、gemini 的 `parts[].text/functionCall`）记
