@@ -333,17 +333,21 @@ func statsCountsFrom(counter stats.Counter) StatsCounts {
 		TotalTokens:       counter.Total,
 		CostUSD:           roundFloat(float64(counter.CostNanoUSD)/1e9, 9),
 		TTFTSamples:       counter.TTFTSamples,
-		TPSSamples:        counter.GenSamples,
+		TPSSamples:        counter.LatencySamples,
 		AvgTPS:            avgTPS(counter),
 		AvgTTFTMS:         avgTTFT(counter),
 	}
 }
 
+// avgTPS is successful-request output tokens divided by the host-reported
+// wall-clock request latency. Numerator and denominator are accumulated from
+// the same usage records; it is an end-to-end throughput number, not a
+// decode-only rate.
 func avgTPS(counter stats.Counter) float64 {
-	if counter.GenSamples == 0 || counter.GenerationNano <= 0 || counter.StreamOutput <= 0 {
+	if counter.LatencySamples == 0 || counter.LatencyNano <= 0 || counter.LatencyOutput <= 0 {
 		return 0
 	}
-	return roundFloat(float64(counter.StreamOutput)/(float64(counter.GenerationNano)/1e9), 2)
+	return roundFloat(float64(counter.LatencyOutput)/(float64(counter.LatencyNano)/1e9), 2)
 }
 
 func avgTTFT(counter stats.Counter) float64 {

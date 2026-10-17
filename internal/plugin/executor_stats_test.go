@@ -45,17 +45,29 @@ func TestPumpStreamMeasuresTTFT(t *testing.T) {
 	}
 }
 
-func TestPumpStreamFallbackToFirstFrame(t *testing.T) {
+func TestPumpStreamWithoutContentLeavesNoTimingSample(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	stubHostCall(t, func(string, []byte) ([]byte, error) { return abi.OK(map[string]any{}) })
 
-	// No frame carries content: TTFT falls back to the first kept frame.
+	// A role-only frame is not content. There is no first-frame fallback: an
+	// empty/control-only stream must not enter the TTFT average.
 	sse := "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\ndata: [DONE]\n\n"
 	runtime.pumpStream(&upstream.Stream{Body: io.NopCloser(strings.NewReader(sse))}, "stream-2",
 		streamTiming{model: "glm-5.3", started: time.Now()})
-	model := runtime.statsStore().Snapshot(time.Time{}).Models["glm-5.3"]
-	if model.Counter.TTFTSamples != 1 || model.Counter.TTFTNano <= 0 {
-		t.Errorf("fallback ttft = %+v", model.Counter)
+	if model, exists := runtime.statsStore().Snapshot(time.Time{}).Models["glm-5.3"]; exists {
+		t.Errorf("a content-free stream must not produce a timing sample: %+v", model)
+	}
+}
+
+func TestPumpStreamErrorFrameLeavesNoTimingSample(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	stubHostCall(t, func(string, []byte) ([]byte, error) { return abi.OK(map[string]any{}) })
+
+	sse := "data: {\"error\":{\"message\":\"quota exhausted\"}}\n\n"
+	runtime.pumpStream(&upstream.Stream{Body: io.NopCloser(strings.NewReader(sse))}, "stream-err",
+		streamTiming{model: "glm-5.3", started: time.Now()})
+	if model, exists := runtime.statsStore().Snapshot(time.Time{}).Models["glm-5.3"]; exists {
+		t.Errorf("an error frame must not produce a timing sample: %+v", model)
 	}
 }
 
@@ -76,18 +88,17 @@ func TestStreamTimingValues(t *testing.T) {
 	cases := []struct {
 		name     string
 		first    time.Time
-		content  time.Time
 		last     time.Time
 		wantTTFT time.Duration
 		wantGen  time.Duration
 	}{
-		{"content frame", start.Add(time.Second), start.Add(2 * time.Second), start.Add(5 * time.Second), 2 * time.Second, 3 * time.Second},
-		{"no content", start.Add(time.Second), time.Time{}, start.Add(5 * time.Second), time.Second, 4 * time.Second},
-		{"single frame", start.Add(time.Second), time.Time{}, start.Add(time.Second), time.Second, 0},
-		{"no frames", time.Time{}, time.Time{}, time.Time{}, 0, 0},
+		{"content frames", start.Add(2 * time.Second), start.Add(5 * time.Second), 2 * time.Second, 3 * time.Second},
+		{"no content", time.Time{}, time.Time{}, 0, 0},
+		{"single content frame", start.Add(time.Second), start.Add(time.Second), time.Second, 0},
+		{"no frames", time.Time{}, time.Time{}, 0, 0},
 	}
 	for _, tc := range cases {
-		ttft, gen := streamTimingValues(start, tc.first, tc.content, tc.last)
+		ttft, gen := streamTimingValues(start, tc.first, tc.last)
 		if ttft != tc.wantTTFT || gen != tc.wantGen {
 			t.Errorf("%s: ttft/gen = %s/%s, want %s/%s", tc.name, ttft, gen, tc.wantTTFT, tc.wantGen)
 		}

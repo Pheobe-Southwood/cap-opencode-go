@@ -136,12 +136,13 @@ const pageMarkup = `
       <details class="card fold-card" id="statsAboutFold">
         <summary>统计口径与价目说明</summary>
         <ul class="stats-notes">
-          <li><strong>数据来源</strong>：token、失败与流式标记来自宿主的 usage 事件；TTFT 与生成时间由插件读取上游流时自己测量（宿主对本插件的异步流桥接不提供 TTFT）。</li>
+          <li><strong>数据来源</strong>：token、失败与请求总延迟来自宿主的 usage 事件；TTFT 由插件读取上游流时自己测量（宿主对本插件的异步流桥接不提供 TTFT）。</li>
           <li><strong>刊例价</strong>：按官方价目表把 input / output / cache read / cache write 折算成美元。chat、responses、gemini 的 input 含缓存，messages 的 input 不含缓存；gemini 的输出费用含 reasoning。金额是估算，不是 OpenCode 账单。</li>
           <li><strong>月额度</strong>：模型本月刊例价 ÷ 该模型在当前套餐下的月限额。Go 与 Go Plus 的月限额不同，默认 Go，可在「设置」里切换；免费模型显示「不限」，已退出 Go 列表的旧模型月限额未知。</li>
           <li><strong>本月窗口</strong>：按上游 <code>/usage</code> 返回的 monthly 重置时间往前推一个月；拿不到重置时间时按 UTC 自然月，并在提示里说明。多 Key 取最晚的重置时间。</li>
-          <li><strong>TPS / TTFT</strong>：只统计成功的流式请求。TTFT 是发起上游请求到第一段文字/思考/工具参数帧的时间；生成时间是第一段内容到最后一帧。非流式请求只计 token 与费用。</li>
-          <li><strong>保留期</strong>：逐小时桶保留 40 天，累计总量永久保留；统计从安装 1.6.0 后开始，不回溯历史，也不读取其它插件的数据库。</li>
+          <li><strong>平均 TPS（整体）</strong>：成功请求的有效 output token ÷ 宿主请求总延迟。分子和分母来自同一条 usage 记录，包含 TTFT、排队与网络时间，因此是端到端吞吐，不是纯解码速度；gemini 的 reasoning token 计入分子，失败请求不计。</li>
+          <li><strong>平均 TTFT</strong>：插件从发起上游请求到第一段文字/思考/工具参数内容帧的时间，包含连接、排队与重试，不含 host 下游发送；只统计有实际内容且正常结束的流式请求，不做 first-frame 回退。</li>
+          <li><strong>保留期</strong>：逐小时桶保留 40 天，累计总量永久保留；v1.7 起可把旧 Token Usage Tracker 中 opencode-go 的请求回放到本统计，回放范围以导入时的截止时间为准。</li>
           <li><strong>价目版本</strong>：<span id="statsPriceRevision">—</span>。费用按记录时内嵌的价目表计算；上游调价不会重算历史金额。</li>
           <li><strong>隐私</strong>：统计文件只有模型 id、计数、费用与时间戳，不包含 Key、提示词或响应内容。</li>
         </ul>

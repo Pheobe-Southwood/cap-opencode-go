@@ -93,6 +93,7 @@ func TestUsageResolvesAliasAndPrices(t *testing.T) {
 		Model:       "DeepSeek-V4.1-Flash",
 		RequestedAt: usageAt(),
 		Stream:      true,
+		Latency:     2 * time.Second,
 		Detail: pluginapi.UsageDetail{
 			InputTokens: 1_000_000, OutputTokens: 1_000_000,
 			TotalTokens: 2_000_000,
@@ -111,6 +112,9 @@ func TestUsageResolvesAliasAndPrices(t *testing.T) {
 	}
 	if model.Counter.Priced != 1 || model.Counter.Streams != 1 || model.Counter.StreamOutput != 1_000_000 {
 		t.Errorf("counter = %+v", model.Counter)
+	}
+	if model.Counter.LatencyOutput != 1_000_000 || model.Counter.LatencyNano != int64(2*time.Second) || model.Counter.LatencySamples != 1 {
+		t.Errorf("paired TPS counter = %+v", model.Counter)
 	}
 }
 
@@ -142,6 +146,7 @@ func TestUsageGeminiAddsReasoningToOutputCost(t *testing.T) {
 		Provider:    "cap-opencode-go-gemini",
 		Model:       "gemini-4-argon-contributor",
 		RequestedAt: usageAt(),
+		Latency:     4 * time.Second,
 		Detail: pluginapi.UsageDetail{
 			OutputTokens: 1_000, ReasoningTokens: 1_000, TotalTokens: 2_000,
 		},
@@ -149,6 +154,9 @@ func TestUsageGeminiAddsReasoningToOutputCost(t *testing.T) {
 	model := runtime.statsStore().Snapshot(time.Time{}).Models["gemini-4-argon-contributor"]
 	if model.Counter.CostNanoUSD != 40_000_000 {
 		t.Errorf("gemini cost = %d nanoUSD, want 40000000", model.Counter.CostNanoUSD)
+	}
+	if model.Counter.LatencyOutput != 2_000 || model.Counter.LatencyNano != int64(4*time.Second) {
+		t.Errorf("gemini TPS output/latency = %+v, want reasoning included", model.Counter)
 	}
 }
 

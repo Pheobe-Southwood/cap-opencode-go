@@ -7,8 +7,8 @@
 - **Gemini 4 Argon Contributor 可用**（CPA 内置 `gemini` provider 组因强制拼接 `/v1beta/` 无法调用它）
 - 客户端任意协议都能调用任意模型，协议转换由 **CPA 自己**完成
 - 侧边栏「插件」组内出现 `OpenCode Go` 入口，与 token 用量插件平级
-- **「统计」Tab**：按用过的模型看 token、刊例价、月额度百分比、平均 TPS / TTFT；
-  手机端概览常驻，模型明细与统计口径默认折叠
+- **「统计」Tab**：按用过的模型看 token、刊例价、月额度百分比、平均整体 TPS / 首内容 TTFT；
+  可从旧 Token Usage Tracker 回放 opencode-go 历史；手机端概览常驻，模型明细与统计口径默认折叠
 - **界面跟随管理中心的深色/浅色主题**（实时同步），并在手机宽度下自动改为单列卡片布局
 - **插件页不需要密码**：写入凭据直接复用管理中心已经存好的登录态，插件自己不保存任何密码
 - **逐模型别名（重命名语义）**：别名会**替代**原名成为唯一的对外模型 id，模型列表与路由都只认别名，
@@ -74,11 +74,46 @@ OpenCode 图标（`internal/brand` 内嵌的官方 mark，以 data URI 下发，
 ### 统计的数据来自哪
 
 主面（`cap-opencode-go`）额外声明 `usage_plugin`，接收宿主在请求结束后投递的 usage 事件，
-因此 token / 缓存 / 失败 / 流式标记都由宿主统一解析，插件不解析响应来数 token。
+因此 token / 缓存 / 失败 / 请求总延迟都由宿主统一解析，插件不解析响应来数 token。
 实测宿主对本插件的异步流桥接**不提供 TTFT**（`ttft_ns=0`），所以四个面各自在读取上游 SSE 时
-测量首段内容时间与生成时间，写入 `data/cap-opencode-go/stats-<role>.json`；主面的 `/api/stats`
-把自己的 token 计数与三个从属面的 timing 文件合并。费用按内嵌价目表折算，不是 OpenCode 账单。
-详见 [docs/design.md](docs/design.md) §7.8。
+测量首个内容帧，写入 `data/cap-opencode-go/stats-<role>.json`；主面的 `/api/stats`
+把自己的 token 计数与三个从属面的 timing 文件合并。
+
+口径刻意保持可配对：
+
+- **TPS = 成功请求的有效 output token ÷ 宿主请求总延迟**。分子和分母来自同一条 usage 记录，
+  包含首字、排队和网络时间，所以叫「整体 TPS」，不是纯解码速度；gemini 的 reasoning token
+  计入分子；失败请求不计。非流式请求也有总延迟，因此也计入整体 TPS。
+- **TTFT = 发起上游请求到首个真实内容帧**。只统计有内容且正常结束的流式请求；内容识别失败时
+  **不再回退到首帧**，避免把 role/控制帧当成首字。TTFT 包含连接、排队和重试，不含 host 下游发送。
+- 旧版本留下的 `generation_nano` 只做诊断，不再参与 TPS，因为宿主 usage 事件没有可配对的
+  request id，不能把某个 token 数和一个 generation 时间硬拼在一起。
+
+费用按内嵌价目表折算，不是 OpenCode 账单。详见 [docs/design.md](docs/design.md) §7.8。
+
+### 回放旧 Token Usage Tracker
+
+v1.7 附带一次性的 `cmd/replay-tracker`：读取 `cap-token-usage-tracker` 的 bbolt 库，只挑
+`openai-compatible-opencode go` / `cap-opencode-go*` 的逐请求记录，按当前价目表重算费用，
+合并进 `stats-chat.json`。它只解析 token/延迟等统计字段，不写出 Key、提示词或响应正文。
+
+```bash
+# 先停 CPA，避免运行中的 stats 写入覆盖合并结果
+systemctl stop cliproxyapi
+make VERSION=1.7.1 GO=/opt/go/bin/go replay
+./dist/replay-tracker-v1.7.1 \
+  -tracker /root/cliproxyapi/data/token-usage-tracker.db \
+  -stats-dir /root/cliproxyapi/data/cap-opencode-go
+# 上面的默认是 dry-run；确认扫描数量和截止时间后再加 -apply
+./dist/replay-tracker-v1.7.1 \
+  -tracker /root/cliproxyapi/data/token-usage-tracker.db \
+  -stats-dir /root/cliproxyapi/data/cap-opencode-go -apply
+systemctl start cliproxyapi
+```
+
+默认只导入「现有 stats 最早一条记录之前」的历史，避免和已经存在的统计重复；导入前会把
+`stats-*.json` 备份到临时目录，成功后写 `replay-tracker-import.json` 标记，默认拒绝第二次导入。
+旧 tracker 的 `ttft_ns` 为 0 的请求只回放 token/费用/总延迟，不伪造 TTFT。
 
 ---
 
@@ -98,20 +133,21 @@ OpenCode 图标（`internal/brand` 内嵌的官方 mark，以 data URI 下发，
 export PATH=/opt/go/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 
-make build VERSION=1.6.1   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.6.1.so
+make build VERSION=1.7.1   # 产出 dist/cap-opencode-go{,-responses,-messages,-gemini}-v1.7.1.so
 make test           # 单元测试
 make vet
 ```
 
 `go.mod` 通过 `replace github.com/router-for-me/CLIProxyAPI/v8 => ../ref/cpa/CLIProxyAPI-v8`
-指向固定版本的 CPA 源码。只 import `sdk/pluginapi`、`sdk/pluginabi`，构建不需要下载第三方依赖图。
+指向固定版本的 CPA 源码。只 import `sdk/pluginapi`、`sdk/pluginabi`，插件 `.so` 不链接
+`bbolt`；只有 `cmd/replay-tracker` / `make replay` 需要 bbolt 与 `golang.org/x/sys`。
 
 ---
 
 ## 4. 安装
 
 ```bash
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.6.1
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.7.1
 ```
 
 脚本只做两件事：把 4 个 `.so` 复制到 `$CPA_ROOT/plugins/linux/amd64/`，并打印需要粘贴的 YAML。
@@ -228,7 +264,7 @@ models:
 | Tab | 内容 |
 |---|---|
 | **账号管理**（默认） | 汇总条（启用 Key 数 / 最低剩余 / 冷却中 / 余量更新时间）；每个 Key 一张卡片：名称、掩码、健康状态、权重、启用开关、移除，以及 5 小时 / 本周 / 本月三条**剩余**进度条（含重置时间）；折叠的「添加 Key」表单；底部「轮换与故障转移」摘要 |
-| **统计** | 概览（账户本月额度 / 刊例价 / token / 平均 TPS / 平均 TTFT / 有用量模型）；「本月 / 累计」切换；每个用过的模型一行：输入、输出、缓存读/写、刊例价、月额度百分比、平均 TPS、平均 TTFT、最近使用；「统计口径与价目说明」默认折叠 |
+| **统计** | 概览（账户本月额度 / 刊例价 / token / 平均整体 TPS / 首内容 TTFT / 有用量模型）；「本月 / 累计」切换；每个用过的模型一行：输入、输出、缓存读/写、刊例价、月额度百分比、平均整体 TPS、首内容 TTFT、最近使用；「统计口径与价目说明」默认折叠 |
 | **模型** | 统计 chip（模型 id / 本实例提供 / 已关闭 / 上游新增 / 已下线 / 已修改，点一下即按它筛选）；搜索 + 协议 + 状态筛选、「启用/停用筛选结果」、「从上游刷新」；每个模型一行，点「设置」展开别名 / 上游协议 / 代理 / 探测协议 / 恢复默认 |
 | **状态** | 运行状态（版本、协议族、Base URL、Session、代理、状态文件、启动时间与运行时长）；上游模型列表（数量、拉取时间、结果）；**协议面**卡片（四个 `.so` 各自的协议、插件 ID、承载模型、配置归属与缺失后果）；「关于与帮助」 |
 | **设置** | Base URL、Session、代理、超时/冷却/重试、状态目录与调试日志；底部「待保存的修改」逐条列出本次改动，可一键放弃 |
@@ -318,7 +354,7 @@ CPA 的插件列表是「一个 `.so` 一行」，而本插件按上游协议族
 - `GET /v0/resource/plugins/cap-opencode-go/api/state` — 配置与运行状态（不含上游调用）
 - `GET /v0/resource/plugins/cap-opencode-go/api/models[?refresh=1]` — 上游模型列表与本插件配置的合并视图（上游结果缓存 5 分钟）
 - `GET /v0/resource/plugins/cap-opencode-go/api/quota` — 每个 Key 的 5 小时 / 本周 / 本月用量（含已停用的 Key）
-- `GET /v0/resource/plugins/cap-opencode-go/api/stats?range=month|all[&since=RFC3339]` — 用过的模型的 token、刊例价、月额度百分比、平均 TPS / TTFT（不含任何 Key）
+- `GET /v0/resource/plugins/cap-opencode-go/api/stats?range=month|all[&since=RFC3339]` — 用过的模型的 token、刊例价、月额度百分比、平均整体 TPS / 首内容 TTFT（不含任何 Key）
 
 需要鉴权的接口（宿主管理中间件校验，与其它管理 API 同一把密钥）：
 
@@ -346,18 +382,19 @@ systemctl restart cliproxyapi
 
 CPA 的文件监听器（fsnotify）会在 **config.yaml 内容变化**时重新加载配置并重新扫描插件目录，
 按版本号选中最新 `.so`：路径不变就复用已加载的实例，路径变了就 `dlopen` 新库、退役旧库
-（日志：`plugin hot reloaded … active_version=… retired_version=…`）。因此：
+（日志：`plugin hot reloaded … active_version=… retired_version=…`）。热重载时旧版本文件可能仍在，但**宿主重启会清理旧版本 .so**，所以回滚依赖自己的备份或 `dist/`。因此：
 
 ```bash
-# 升级：装新 .so（旧版本文件留着，随时可回滚），再原地改一行 config.yaml 触发重载
-CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.6.1
+# 升级：装新 .so，再原地改一行 config.yaml 触发重载。
+# 注意：宿主重启时会清理旧版本 .so；需要回滚就先备份/保留 dist 里的 1.6.1。
+CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.7.1
 
 # 原地改一行注释（保持 inode）即可触发重载：把标记行在「有/无 -note」之间来回切
 python3 - <<'PY'
 path = "/root/cliproxyapi/config.yaml"
 with open(path) as handle:
     text = handle.read()
-marker = "# (v1.6.1"
+marker = "# (v1.7.1"
 tainted = marker + "-note:"
 if tainted in text:
     text = text.replace(tainted, marker + ":", 1)
@@ -385,12 +422,16 @@ PY
 
 - **出站请求日志**：插件用自己的 `http.Client` 才能实现逐模型代理开关，代价是这些出站请求
   不进 CPA 的请求日志。token 用量统计不受影响——宿主仍会解析我们返回的 payload 并投递给用量插件。
-- **统计依赖宿主 usage 事件**：token/费用来自主面订阅的 `usage.handle`，TTFT/生成时间由插件自测。
-  若宿主版本不支持 usage 插件，统计 Tab 会显示「没有匹配」的诊断提示；token 与费用不会退化成自解析。
-- **统计是估算**：刊例价按内嵌的 2026-10 价目表折算，不是 OpenCode 账单；统计从 v1.6 起开始累计，
-  不回溯历史；逐小时桶保留 40 天，累计总量永久保留。月额度百分比需要选对套餐（设置里的 `plan`）。
-- **TTFT/TPS 只算成功的流式请求**：非流式请求只计 token 与费用；上游中断/客户端断开的流不产生
-  TPS/TTFT 样本，但宿主已上报的 token 仍会入账。
+- **统计依赖宿主 usage 事件**：token/缓存/失败/请求总延迟来自主面订阅的 `usage.handle`，
+  TTFT 由插件在流式读取时自测。若宿主版本不支持 usage 插件，统计 Tab 会显示「没有匹配」的诊断提示；
+  token 与费用不会退化成自解析。
+- **统计是估算，但 TPS 已改为可配对**：刊例价按内嵌的 2026-10 价目表折算，不是 OpenCode 账单；
+  TPS 的分子（成功请求的有效 output）和分母（宿主总延迟）来自同一条 usage 记录，是含首字和排队的
+  **整体吞吐**，不是纯解码速度。逐小时桶保留 40 天，累计总量永久保留；v1.7 起可用 `replay-tracker`
+  把旧 Token Usage Tracker 中 opencode-go 的请求回放到本统计。月额度百分比需要选对套餐（`plan`）。
+- **TTFT 与失败样本**：TTFT 只统计有真实内容且正常结束的流式请求；内容识别失败不再回退到首帧，
+  上游错误帧、空流、客户端断开都不产生 TTFT 样本。宿主已上报的 token 仍会入账。
+  旧 tracker 中没有 TTFT 的历史记录只回放 token/费用/总延迟，不伪造 TTFT。
 - **不要在分离 goroutine 里调用 `host.log`**：实测会段错误（SIGSEGV）导致宿主进程崩溃。
   本插件的诊断改写到 `<state-dir>/debug.log`（`debug: true` 时）。
 - **responses 家族必须同时声明 `codex` 与 `openai-response`**：只声明 `codex` 时，宿主会发现
@@ -422,8 +463,9 @@ bash scripts/acceptance.sh
 四个协议面的品牌元数据（同一个图标、四个名称、只有主面带配置字段），以及仪表盘页面本身
 （Tab 骨架、统计页、账号管理、密码弹窗、无只读模式）与状态接口是否携带可编辑字段、是否隐藏密钥。
 统计检查会等待最多 25 秒（从属面每 5 秒落盘），断言 token、费用、TTFT/TPS 样本都非零。
-v1.6.1 在 v8.0.27 隔离实例 **40 项全过**；生产实例公开检查 **32 项全过**（6 项管理检查因
-环境里没有明文管理密钥而跳过）。实测结果见 [docs/acceptance.md](docs/acceptance.md)。
+v1.7.1 在 v8.0.27 生产实例公开检查 **32 项全过**，0 失败（6 项管理检查因环境里没有
+明文管理密钥而跳过；messages 因子模型未启用跳过 1 项）；真实上游覆盖 chat/responses/gemini。
+实测与回放记录见 [docs/acceptance.md](docs/acceptance.md)。
 
 ---
 
@@ -451,6 +493,25 @@ docs/                  design / rollback / acceptance
 
 ## 11. 变更记录
 
+### 1.7.1
+
+- 只修正两处统计页脚注/空状态文案（把「统计从 v1.6 起累计、不回溯」改为 v1.7 可回放历史），
+  并重跑生产公开验收 **32 passed, 0 failed**；统计口径与数据不变。
+
+### 1.7.0
+
+- **TPS 口径修正**：不再用「宿主 output token 总数 ÷ 插件 generation 时间」这两个没有 request id
+  关联的集合；改为同一条 usage 记录里的「成功请求有效 output ÷ 宿主请求总延迟」，即整体 TPS。
+  分母包含首字、排队与网络，分子与分母按请求配对；失败请求不计。非流式请求也计入整体 TPS。
+- **TTFT 口径收紧**：只统计有真实内容帧且正常结束的流式请求；去掉 first-frame 回退；上游 error
+  帧、空流、客户端断开不再留下 TTFT 样本；generation 只到最后一个内容帧，不再被控制帧/空行拉长。
+- **历史回放**：新增 `cmd/replay-tracker`，从旧 `cap-token-usage-tracker` bbolt 库只读导入
+  opencode-go 的逐请求 token/费用/总延迟；有 TTFT 的记录同时回放 TTFT。默认只导入现有 stats
+  起点之前的数据，导入前备份、导入后写 marker，拒绝重复导入。
+- stats schema 采用 additive 字段（`latency_output_tokens` / `latency_nano` / `latency_samples`），
+  旧 stats 文件可直接加载；旧数据没有总延迟时 TPS 为空，不用 generation 时间冒充。
+- 仪表盘文案、统计口径说明和单测同步更新；新增回放工具测试与 TPS 配对测试。
+
 ### 1.6.1
 
 - 统计页首次加载的月窗口竞态：如果 `/api/stats` 先于 `/api/quota` 返回、服务端按自然月统计，
@@ -462,7 +523,7 @@ docs/                  design / rollback / acceptance
 ### 1.6.0
 
 - **新增「统计」Tab**：按用过的模型展示输入/输出/缓存 token、按官方价目表折算的刊例价、
-  当前套餐下的月额度百分比、平均 TPS 与平均 TTFT，并支持「本月 / 累计」切换
+  当前套餐下的月额度百分比、平均整体 TPS 与首内容 TTFT，并支持「本月 / 累计」切换
 - 主面新增 `usage_plugin` 能力，接收宿主 `usage.handle`：token、缓存、失败与流式标记由宿主解析；
   四个面各自在流式读取时测量 TTFT 与生成时间，写入 `data/cap-opencode-go/stats-<role>.json`，
   主面的 `/api/stats` 合并四个面

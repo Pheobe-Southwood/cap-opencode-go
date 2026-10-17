@@ -18,21 +18,8 @@ const maxContentFrame = 512 * 1024
 // to timestamp TTFT and only until the first hit, so a deliberately shallow
 // parser is enough; token accounting comes from the host's usage record.
 func IsContent(role roles.Role, line []byte) bool {
-	if len(line) == 0 || len(line) > maxContentFrame {
-		return false
-	}
-	trimmed := bytes.TrimSpace(line)
-	if len(trimmed) == 0 || bytes.HasPrefix(trimmed, []byte(":")) {
-		return false
-	}
-	if bytes.HasPrefix(trimmed, []byte("event:")) {
-		return false
-	}
-	payload := trimmed
-	if bytes.HasPrefix(payload, []byte("data:")) {
-		payload = bytes.TrimSpace(payload[len("data:"):])
-	}
-	if len(payload) == 0 || payload[0] != '{' || bytes.Equal(payload, []byte("[DONE]")) {
+	payload := streamJSONPayload(line)
+	if len(payload) == 0 {
 		return false
 	}
 
@@ -45,6 +32,58 @@ func IsContent(role roles.Role, line []byte) bool {
 		return isMessagesContent(payload)
 	case roles.Gemini:
 		return isGeminiContent(payload)
+	default:
+		return false
+	}
+}
+
+// streamJSONPayload extracts the JSON object from one SSE data line. It is
+// deliberately shallow: the timing path only needs a best-effort first-content
+// or error detection, while token accounting comes from the host usage event.
+func streamJSONPayload(line []byte) []byte {
+	if len(line) == 0 || len(line) > maxContentFrame {
+		return nil
+	}
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 || bytes.HasPrefix(trimmed, []byte(":")) {
+		return nil
+	}
+	if bytes.HasPrefix(trimmed, []byte("event:")) {
+		return nil
+	}
+	payload := trimmed
+	if bytes.HasPrefix(payload, []byte("data:")) {
+		payload = bytes.TrimSpace(payload[len("data:"):])
+	}
+	if len(payload) == 0 || payload[0] != '{' || bytes.Equal(payload, []byte("[DONE]")) {
+		return nil
+	}
+	return payload
+}
+
+// IsStreamError reports whether one upstream frame is an explicit error. The
+// host may still deliver a 200 stream whose payload carries an error object;
+// such a stream must not contribute a TTFT sample.
+func IsStreamError(role roles.Role, line []byte) bool {
+	payload := streamJSONPayload(line)
+	if len(payload) == 0 {
+		return false
+	}
+	var frame struct {
+		Type  string          `json:"type"`
+		Error json.RawMessage `json:"error"`
+	}
+	if errUnmarshal := json.Unmarshal(payload, &frame); errUnmarshal != nil {
+		return false
+	}
+	if nonEmptyJSON(frame.Error) {
+		return true
+	}
+	switch role.Name {
+	case roles.Responses:
+		return frame.Type == "error" || frame.Type == "response.failed"
+	case roles.Messages:
+		return frame.Type == "error"
 	default:
 		return false
 	}

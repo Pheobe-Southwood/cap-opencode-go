@@ -901,7 +901,7 @@ const pageScript = `
       aboutRow('协议面', '一个主插件 + 三个协议面插件（responses / messages / gemini），每个 .so 只声明一种上游协议，协议翻译由 CPA 完成。四个 .so 必须同版本安装，只有主插件需要配置，四个面在「状态」里逐面说明。'),
       aboutRow('别名', '在「模型」里为模型填写的别名会替代原名对外提供；清空别名即恢复原名，多个别名等于多个对外 id。'),
       aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。'),
-      aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、平均 TPS 与 TTFT。token 来自宿主 usage 事件，TTFT/生成时间由插件读流时自测；统计从 v1.6 起开始累计，不回溯历史。'),
+      aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、平均 TPS 与 TTFT。token、失败与请求总延迟来自宿主 usage 事件；TPS 是成功请求的有效 output ÷ 总延迟（整体吞吐，含首字），TTFT 由插件读流自测。v1.7 起可回放旧 Token Usage Tracker 中 opencode-go 的历史。'),
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),
       aboutRow('热重载', '替换插件文件同样热生效：把新版本 .so 放进 plugins/linux/amd64 后原地改一次 config.yaml 即可（不要用会替换 inode 的方式写文件）。'),
       aboutRow('残留', '插件只在 CPA 目录下写 plugins/ 与 data/cap-opencode-go/（shared.json、stats-&lt;role&gt;.json，可选 debug.log）；删除插件与配置块后无任何残留。'),
@@ -1213,8 +1213,8 @@ const pageScript = `
       ['本月额度', quotaValue, quotaHint],
       ['刊例价', totals ? formatUSD(totals.cost_usd) : '—', stats ? (stats.range.kind === 'month' ? '本月' : '累计') + ' · 按价目表折算' : '正在读取…'],
       ['Token', totals ? formatTokens(totals.total_tokens) : '—', totals ? '输入 ' + formatTokens(totals.input_tokens) + ' · 输出 ' + formatTokens(totals.output_tokens) : ''],
-      ['平均 TPS', totals && totals.tps_samples ? formatTPS(totals.avg_tps) : '—', totals && totals.tps_samples ? totals.tps_samples + ' 个流式样本' : '仅成功流式'],
-      ['平均 TTFT', totals && totals.ttft_samples ? formatTTFT(totals.avg_ttft_ms) : '—', totals && totals.ttft_samples ? totals.ttft_samples + ' 个流式样本' : '仅成功流式'],
+      ['平均 TPS', totals && totals.tps_samples ? formatTPS(totals.avg_tps) : '—', totals && totals.tps_samples ? totals.tps_samples + ' 个成功请求 · 整体' : '成功请求 · 含首字'],
+      ['平均 TTFT', totals && totals.ttft_samples ? formatTTFT(totals.avg_ttft_ms) : '—', totals && totals.ttft_samples ? totals.ttft_samples + ' 个成功流式' : '仅成功流式'],
       ['有用量模型', totals ? String(totals.models_used) : '—', '套餐 ' + statsPlanLabel()]
     ];
     el('statsSummary').innerHTML = tiles.map(function(tile){
@@ -1304,10 +1304,10 @@ const pageScript = `
     } else if(model.priced) monthly = '<span class="hint">限额未知</span>';
 
     var tps = model.tps_samples
-      ? '<span class="stats-cell-main">' + formatTPS(model.avg_tps) + '</span><span class="stats-sub">' + model.tps_samples + ' 样本</span>'
+      ? '<span class="stats-cell-main">' + formatTPS(model.avg_tps) + '</span><span class="stats-sub">' + model.tps_samples + ' 成功请求 · 整体</span>'
       : '<span class="hint">—</span>';
     var ttft = model.ttft_samples
-      ? '<span class="stats-cell-main">' + formatTTFT(model.avg_ttft_ms) + '</span><span class="stats-sub">' + model.ttft_samples + ' 样本</span>'
+      ? '<span class="stats-cell-main">' + formatTTFT(model.avg_ttft_ms) + '</span><span class="stats-sub">' + model.ttft_samples + ' 成功流式</span>'
       : '<span class="hint">—</span>';
     var last = model.last_used ? esc(relPast(model.last_used)) : '<span class="hint">—</span>';
 
@@ -1331,7 +1331,7 @@ const pageScript = `
       return;
     }
     if(!stats.models || !stats.models.length){
-      box.innerHTML = '<div class="empty-state">还没有用量数据。发一次请求后点「刷新」；统计从 v1.6 起开始累计，不回溯历史。若已有请求但这里仍为空，留意上方的诊断提示。</div>';
+      box.innerHTML = '<div class="empty-state">还没有用量数据。发一次请求后点「刷新」；v1.7 起可从旧 Token Usage Tracker 回放历史；若已有请求但这里仍为空，留意上方的诊断提示。</div>';
       return;
     }
     var headers = ['模型','请求','输入','输出','缓存读/写','刊例价','本月额度','平均 TPS','平均 TTFT','最近使用'];
@@ -1362,7 +1362,7 @@ const pageScript = `
       if(stats.range.since_source === 'calendar') notes.push('未取得额度重置时间，按 UTC 自然月统计。');
       if(stats.range.clamped) notes.push('起点超出 40 天保留期，已截断。');
     }
-    notes.push('统计从 v1.6 起开始累计，不回溯历史；请求后最多 5 秒可见。金额为刊例价估算，不是 OpenCode 账单。');
+    notes.push('v1.7 起可从旧 Token Usage Tracker 回放 opencode-go 历史；新请求最多 5 秒可见。金额为刊例价估算，不是 OpenCode 账单。');
     text(el('statsFootnote'), notes.join(' '));
   }
   function load(){

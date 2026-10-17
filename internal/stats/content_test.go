@@ -79,6 +79,31 @@ func TestIsContentGemini(t *testing.T) {
 	}
 }
 
+func TestIsStreamError(t *testing.T) {
+	cases := []struct {
+		role string
+		line string
+		want bool
+	}{
+		{"chat", `data: {"error":{"message":"quota exhausted"}}`, true},
+		{"chat", `data: {"choices":[{"delta":{"content":"Hi"}}]}`, false},
+		{"responses", `data: {"type":"response.failed","response":{"error":{"code":"server_error"}}}`, true},
+		{"responses", `data: {"type":"error","message":"failed"}`, true},
+		{"responses", `data: {"type":"response.output_text.delta","delta":"Hi"}`, false},
+		{"messages", `data: {"type":"error","error":{"type":"overloaded_error"}}`, true},
+		{"messages", `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}`, false},
+		{"gemini", `data: {"error":{"code":503,"message":"unavailable"}}`, true},
+		{"gemini", `data: {"candidates":[{"content":{"parts":[{"text":"Hi"}]}}]}`, false},
+		{"chat", `event: error`, false},
+		{"chat", `data: [DONE]`, false},
+	}
+	for _, tc := range cases {
+		if got := IsStreamError(roles.ByName(tc.role), []byte(tc.line)); got != tc.want {
+			t.Errorf("IsStreamError(%s, %q) = %v, want %v", tc.role, tc.line, got, tc.want)
+		}
+	}
+}
+
 func TestIsContentRejectsHugeFrames(t *testing.T) {
 	role := roles.ByName("chat")
 	huge := `data: {"choices":[{"delta":{"content":"` + strings.Repeat("x", maxContentFrame) + `"}}]}`

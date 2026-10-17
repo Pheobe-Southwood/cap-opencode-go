@@ -144,6 +144,15 @@ func (r *Runtime) usageSample(record pluginapi.UsageRecord) (stats.UsageSample, 
 	unmetered := tokens.Input == 0 && tokens.Output == 0 && tokens.Reasoning == 0 &&
 		tokens.Cached == 0 && tokens.CacheRead == 0 && tokens.CacheCreation == 0
 	costNano, priced := pricing.Cost(model, tokens, family != roles.Messages, family == roles.Gemini, at)
+	tpsOutput := tokens.Output
+	if family == roles.Gemini && tokens.Reasoning > 0 {
+		// Gemini reports thoughts separately from visible output, but they are
+		// generated during the same request latency and belong in throughput.
+		tpsOutput += tokens.Reasoning
+	}
+	if tpsOutput < 0 {
+		tpsOutput = 0
+	}
 
 	return stats.UsageSample{
 		Model:         model,
@@ -161,5 +170,7 @@ func (r *Runtime) usageSample(record pluginapi.UsageRecord) (stats.UsageSample, 
 		Stream:        record.Stream,
 		Failed:        record.Failed,
 		Unmetered:     unmetered,
+		Latency:       record.Latency,
+		TPSOutput:     tpsOutput,
 	}, true
 }

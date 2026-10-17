@@ -234,21 +234,27 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
 - **从属面版本无法在插件侧读取**（从属面不注册管理路由），所以「同版本」只能作为约定写在
   卡片与 README 里；升级时用 `scripts/install.sh <版本>` 一次装四个
 
-## 7.8 统计面板：宿主记账 + 插件测时（v1.6）
+## 7.8 统计面板：宿主记账 + 插件测时（v1.7）
 
 统计要回答「用过的模型花了多少、占月额度多少、快不快」。这需要两类数据，而它们的最佳来源不同：
 
-- **token / 缓存 / 失败 / 流式标记**：宿主的 usage 事件已经按协议解析并归一化
+- **token / 缓存 / 失败 / 请求总延迟**：宿主的 usage 事件已经按协议解析并归一化
   （`pluginapi.UsageRecord.Detail`）。插件自己再解析一遍响应既重复又容易和宿主的翻译层漂移。
   因此**只有主面**声明 `usage_plugin: true`，宿主把四个面执行的请求都投递给它；三个从属面不订阅，
   否则同一条记录会被四个运行时各记一次。
-- **TTFT 与生成时间**：实测宿主对本插件异步流桥接（`host.stream.emit`）的 usage 记录
-  `ttft_ns` 恒为 0，`latency_ns` 正常。因此四个面在 `pumpStream` 里自己打时间戳：
-  发起上游请求前记 `started`，第一个保留帧到来时记 `firstFrame`，第一个内容帧
-  （chat 的 `delta.content/reasoning_content/tool_calls`、responses 的 `*.delta`、
-  messages 的 `content_block_delta`、gemini 的 `parts[].text/functionCall`）记 `firstContent`，
-  最后一帧记 `lastFrame`。TTFT = `firstContent - started`（找不到内容帧时退化为 `firstFrame`），
-  生成时间 = `lastFrame - firstContent`。只有完整结束的流才写入；失败/中断的流不拉低均值。
+- **TPS**：宿主 usage 记录的 `latency_ns` 正常，但 `ttft_ns` 对本插件异步流桥接恒为 0。
+  TPS 因此不再使用插件 generation 时间，而是同一条 usage 记录里的
+  `effective output / latency`：分子是成功请求的有效 output（gemini 把 reasoning 计入），
+  分母是宿主请求总延迟。两者天然按请求配对，包含首字、排队与网络，所以是**整体 TPS**，
+  不是纯解码速度；失败请求不计。非流式请求也有总延迟，因此也进入整体 TPS。
+  旧 stats 没有 `latency_nano` 时 TPS 为空，不用 generation 时间冒充。
+- **TTFT 与 generation 诊断**：四个面在 `pumpStream` 里自己打时间戳：发起上游请求前记
+  `started`，第一个内容帧（chat 的 `delta.content/reasoning_content/tool_calls`、responses 的
+  `*.delta`、messages 的 `content_block_delta`、gemini 的 `parts[].text/functionCall`）记
+  `firstContent`，之后每个内容帧更新 `lastContent`。TTFT = `firstContent - started`。
+  内容识别失败时**没有 first-frame 回退**；上游 error 帧、空流、客户端断开都不产生样本。
+  generation = `lastContent - firstContent`，只保留为诊断，不参与 TPS；framed 协议的
+  blank/event/[DONE] 行不会再把 generation 拉长。
 
 四个 `.so` 是四个独立运行时，不能共享内存，于是沿用 `shared.json` 的模式，每个面写
 `<state-dir>/stats-<role>.json`（主面写 chat 文件），主面的 `/api/stats` 读取自己的快照 +
@@ -265,8 +271,11 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
 - **月额度**：模型在「本月窗口」内的刊例价 ÷ 当前 `plan` 下该模型的月限额。`/usage` 只返回百分比，
   无法可靠反推套餐，所以套餐必须配置（默认 `go`）。窗口起点由页面取所有 Key 的 monthly
   `resets_at` 最晚值往前推一个月；拿不到时服务端回落到 UTC 自然月，并在 `range.since_source` 标记。
-- **保留期**：逐小时桶保留 40 天（覆盖一个月的窗口），全量 totals 永久保留；统计从 v1.6 起开始累计，
-  不读取 token tracker 的 BoltDB，也不回溯历史。
+- **保留期**：逐小时桶保留 40 天（覆盖一个月的窗口），全量 totals 永久保留。v1.7 起可用
+  `cmd/replay-tracker` 从旧 token tracker 的 BoltDB **只读**回放 opencode-go 历史；默认只导入
+  现有 stats 最早记录之前的部分，导入前备份、导入后写 marker，拒绝重复导入。
+- **历史回放**：只复制逐请求 token、费用、总延迟和可用的 TTFT；旧记录的 `ttft_ns=0` 时不伪造
+  TTFT，只回放 token/费用/总延迟。模型别名按 `shared.json` 映射，费用按当前价目表重算。
 - **API**：`GET /api/stats?range=month|all[&since=RFC3339]`，返回 `usage_records{received,matched}`
   便于诊断 provider 标签不匹配；响应只有模型 id、计数、费用与时间戳，不含 Key/提示词/响应。
 - **页面**：概览常驻；模型明细在 ≤640px 默认折叠；统计口径始终折叠。桌面端是表格，手机端

@@ -17,7 +17,7 @@ SUFFIX_gemini    := cap-opencode-go-gemini
 
 TARGETS := $(foreach role,$(ROLES),$(DIST)/$(SUFFIX_$(role))-v$(VERSION).so)
 
-.PHONY: all build test vet fmt clean list install uninstall
+.PHONY: all build test vet fmt clean list install uninstall replay
 
 all: build
 
@@ -61,3 +61,8 @@ install: build
 
 uninstall:
 	@bash scripts/uninstall.sh
+
+# Build the one-time importer separately from the plugin .so files. The plugin
+# itself does not link bbolt; only this operator tool does.
+replay:
+	$(GO) build -o $(DIST)/replay-tracker-v$(VERSION) ./cmd/replay-tracker

@@ -1,12 +1,79 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.6.1）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1）
 
-> v1.6.1（「统计」Tab：宿主 usage 记账 + 插件自测 TTFT/TPS + 价目表/套餐月额度；
-> 1.6.1 修正首屏月窗口竞态、月末倒推与保存后刷新）
-> 在生产实例 127.0.0.1:8317 热重载实测：PID 不变、版本 1.6.1、`plan=go`；
-> 公开验收 **32 passed, 0 failed**（管理密钥是 bcrypt 哈希，环境里没有明文，故 6 项管理检查跳过）；
-> 隔离实例 127.0.0.1:8399 跑完整套 **40 passed, 0 failed**（含 messages 族、四个协议面、管理探测）。
-> 无头浏览器验证生产统计页桌面 + 手机（390px）无 JS 异常、无横向溢出、手机默认折叠模型明细。
-> 下面是本轮记录，其后是历史记录（v1.5.0 协议面品牌整合、v1.4.1 仪表盘改造、v1.3.0 别名重命名、v1.2.0、v1.1.1）。
+> v1.7.1（含 1.7.0 的统计口径修正与历史回放；1.7.1 只修两处页脚注/空状态文案）
+> 在生产实例 127.0.0.1:8317 重启到 1.7.1：四个面均加载 `-v1.7.1.so`，`plan=go`，PID `3651300`；
+> 1.7.0 阶段回放 5,628 条历史记录（366,045,455 tokens，$27.835431 刊例价，4,531 条 TTFT）；
+> 1.7.1 公开验收 **32 passed, 0 failed**（管理密钥不可用，6 项管理检查跳过；messages 无启用模型，1 项跳过）。
+> `go test ./...`、`go vet ./...`、`go test -race ./internal/...` 通过。
+> 本轮没有重跑隔离实例的 40 项，因此不以旧隔离结果代替 1.7.1；真实上游请求的 chat /
+> responses / gemini 路径由生产公开验收覆盖。
+> 下面是 v1.7.1 记录，其后是历史记录（v1.6 统计面板、v1.5.0 品牌整合、v1.4.1 仪表盘改造等）。
+
+---
+
+## v1.7.1 TPS/TTFT 口径修正与历史回放（生产重启 + 公开 32 项）
+
+### 1. 部署与回放
+
+2026-10-17 03:04 UTC，停止 `cliproxyapi.service`，备份 stats、1.6.1 四个 `.so` 与
+`config.yaml` 到 `/root/cliproxyapi/backup-1.7.0-20261017T030417Z`；新增四个
+`-v1.7.0.so`，用 `dist/replay-tracker-v1.7.0` 先 dry-run 再 `-apply`：
+
+```
+scanned: 6049 opencode-go records; selected: 5628; skipped by cutoff: 421; invalid: 0
+range:   2026-10-05T05:29:41Z .. 2026-10-17T02:21:02Z
+tokens:  366045455; list price: $27.835431; latency samples: 5628; TTFT samples: 4531
+backup:  /tmp/cpa-opencode-go-stats-backup-20261017T030438
+imported 5628 records into stats-chat.json (marker: replay-tracker-import.json)
+```
+
+- 截止时间取现有 stats 的最早一条 `2026-10-17T02:21:08Z`，避免和 v1.6 已统计的 420 条重复。
+  回放后 5,628 + 420 = 6,048 条；导入的 366,045,455 + 原有 53,850,587 = 419,896,042 tokens，
+  与 `stats-chat.json` 的总量逐项相等，说明没有重复计数。
+- 5628 条中 4531 条有真实 TTFT；其余（旧 `cap-opencode-go*` 记录 `ttft_ns=0`）只回放
+  token/费用/总延迟，不伪造 TTFT。
+- 导入后 `stats-chat.json` 为 0600、137,084 bytes；`grep oc_sk_` / `grep api_key` 均无输出。
+- 1.7.0 启动日志显示四个面均为 `version=1.7.0`；因为只修两处页面脚注，随后以
+  `-v1.7.1.so` 再重启一次，四个面均为 `version=1.7.1`，新 PID `3651300`；stats 与 marker 不变。
+
+### 2. 公开验收（真实上游）
+
+```
+== OpenCode Go acceptance @ http://127.0.0.1:8317 ==
+served models: chat=Beam responses=gpt-6-luna gemini=gemini-4-argon messages=none
+...
+PASS  statistics resource  ready | matched=444 requests=6072 tokens=420099867
+      ttft=4924 tps=5534 missing_families=- warnings=
+...
+== 32 passed, 0 failed ==
+```
+
+- chat（Beam）、responses（gpt-6-luna）、gemini（gemini-4-argon）的流式/非流式及跨协议调用均通过；
+  messages 因子模型未启用被脚本跳过。
+- 统计累计 12 个模型、6,072 请求、420,099,867 tokens、约 $28.36 刊例价；TPS 样本 5,534，
+  TTFT 样本 4,924；没有 provider 过滤 warning。
+- 单独用 `Beam` 发 `stream=true, max_tokens=8` 后，`received` 从 420 增到 421，
+  `beam-free` 的 `requests/stream_requests/ttft_samples/generation_samples/latency_samples`
+  各增加 1，`latency_output_tokens` 增加 8，证明实时路径也走新的配对 TPS 与内容帧 TTFT。
+- 月窗口当前仍因 `/api/quota` 无 monthly 窗口而回落 UTC 自然月（`since_source=calendar`）；
+  Gemini 26.7%、DeepSeek 15.3% 等百分比按当前价目表计算，随历史回放一并补齐。
+
+### 3. 口径变更
+
+- **旧**：`Σ output tokens / Σ generation_nano`，分子来自宿主、分母来自插件，二者没有 request id
+  关联；缺失 timing 的流会计入分子不计入分母，单帧/合帧样本会把 TPS 放大。
+- **新**：`Σ 成功请求有效 output / Σ 宿主 latency_nano`，同一 usage 记录成对累加；
+  gemini reasoning 计入分子，失败请求不计；非流式请求也计入整体 TPS。它是端到端吞吐，
+  包含首字/排队/网络，不能当纯解码速度。
+- TTFT 只取 `firstContent - started`；没有内容帧就没有样本，不再回退 firstFrame；上游 error 帧、
+  空流、客户端断开均排除；generation 只到最后一个内容帧，仅作诊断，不参与 TPS。
+
+### 4. 回滚
+
+保留 `/root/cliproxyapi/backup-1.7.0-20261017T030417Z`（四个 1.6.1 `.so` 与 stats）和
+`/root/cliproxyapi/backup-1.7.1-20261017T030704Z`（1.7.0 四个 `.so` 与最新 stats）。
+回滚时停服、放回 1.6.1 四个 `.so`、覆盖 stats、启动；v1.7 的 additive `latency_*` 字段会被
+1.6.1 忽略。1.7.1 的页面脚注变化不影响 stats schema。详细步骤见 [rollback.md](rollback.md)。
 
 ---
 

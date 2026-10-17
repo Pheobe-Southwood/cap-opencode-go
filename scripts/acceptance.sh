@@ -269,14 +269,15 @@ else
   printf '  WARN  %-46s no window data returned\n' "quota resource"
 fi
 
-# Statistics: the main face receives host usage events and the four faces write
-# their own timing file, so wait through one 5s debounce before judging TTFT/TPS.
+# Statistics: the main face receives host usage events (including request latency)
+# and the four faces write their own TTFT timing file, so wait through one 5s debounce.
 STATS_FILE="/tmp/cpa-opencodego-acceptance-stats.$$"
 stats_ready=0
 stats_detail=""
-# Every family that had a streaming check must show at least one TTFT/TPS
-# sample: the main face times chat itself, the siblings write their timing file
-# and may take one 5s debounce longer to appear.
+# Every family that had a streaming check must show at least one TTFT sample and
+# at least one paired TPS sample. TPS comes from host latency on every successful
+# request; TTFT comes from the content-frame timing files and may take one 5s
+# debounce longer to appear.
 EXPECTED_FAMILIES=""
 [ -n "${CHAT_MODEL}" ] && EXPECTED_FAMILIES="${EXPECTED_FAMILIES} chat"
 [ -n "${RESP_MODEL}" ] && EXPECTED_FAMILIES="${EXPECTED_FAMILIES} responses"

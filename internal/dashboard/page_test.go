@@ -306,7 +306,7 @@ func TestPageStatsSummarizesUsedModels(t *testing.T) {
 		"var statsCalendarRetry = false;", "stats.range.since_source === 'calendar'",
 		`data-label="请求"`, `data-label="输入"`, `data-label="输出"`, `data-label="缓存读/写"`,
 		`data-label="刊例价"`, `data-label="本月额度"`, `data-label="平均 TPS"`, `data-label="平均 TTFT"`,
-		"只统计成功的流式请求", "统计从 v1.6 起开始累计", "金额为刊例价估算，不是 OpenCode 账单",
+		"成功请求的有效 output token ÷ 宿主请求总延迟", "回放到本统计", "金额为刊例价估算，不是 OpenCode 账单",
 		"matchMedia('(max-width: 640px)')", "fold.open = false", ".fold-block{", ".stats-table-wrap{",
 	} {
 		if !strings.Contains(document, want) {

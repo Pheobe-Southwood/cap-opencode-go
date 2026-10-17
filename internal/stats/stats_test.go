@@ -37,6 +37,8 @@ func TestStoreObservesUsageAndTiming(t *testing.T) {
 		CostNanoUSD:   12_345_000,
 		Priced:        true,
 		Stream:        true,
+		Latency:       4 * time.Second,
+		TPSOutput:     200,
 	})
 	store.ObserveTiming(TimingSample{
 		Model:      "glm-5.3",
@@ -61,6 +63,9 @@ func TestStoreObservesUsageAndTiming(t *testing.T) {
 	}
 	if model.Counter.StreamOutput != 200 || model.Counter.TTFTSamples != 1 || model.Counter.GenSamples != 1 {
 		t.Errorf("stream/timing counters = %+v", model.Counter)
+	}
+	if model.Counter.LatencyOutput != 200 || model.Counter.LatencyNano != int64(4*time.Second) || model.Counter.LatencySamples != 1 {
+		t.Errorf("paired throughput counters = %+v", model.Counter)
 	}
 	if model.Counter.TTFTNano != int64(800*time.Millisecond) || model.Counter.GenerationNano != int64(2*time.Second) {
 		t.Errorf("timing nanos = %d/%d", model.Counter.TTFTNano, model.Counter.GenerationNano)
@@ -88,8 +93,8 @@ func TestStoreObservesUsageAndTiming(t *testing.T) {
 func TestStoreRangeUsesHourBuckets(t *testing.T) {
 	store, _ := openTemp(t, "chat")
 	base := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
-	store.ObserveUsage(UsageSample{Model: "glm-5.3", At: base, Input: 10, Output: 1, Priced: true, Stream: true})
-	store.ObserveUsage(UsageSample{Model: "glm-5.3", At: base.Add(3 * time.Hour), Input: 20, Output: 2, Priced: true, Stream: true})
+	store.ObserveUsage(UsageSample{Model: "glm-5.3", At: base, Input: 10, Output: 1, Priced: true, Stream: true, Latency: time.Second, TPSOutput: 1})
+	store.ObserveUsage(UsageSample{Model: "glm-5.3", At: base.Add(3 * time.Hour), Input: 20, Output: 2, Priced: true, Stream: true, Latency: 2 * time.Second, TPSOutput: 2})
 	store.ObserveTiming(TimingSample{Model: "glm-5.3", At: base, TTFT: time.Second, Generation: time.Second})
 	store.ObserveTiming(TimingSample{Model: "glm-5.3", At: base.Add(3 * time.Hour), TTFT: 2 * time.Second, Generation: 2 * time.Second})
 

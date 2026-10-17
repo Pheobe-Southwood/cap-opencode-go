@@ -176,21 +176,23 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 	reader := bufio.NewReaderSize(stream.Body, 64*1024)
 	closeMessage := ""
 	emitted := 0
-	firstFrame := time.Time{}
+	streamError := false
 	firstContent := time.Time{}
-	lastFrame := time.Time{}
+	lastContent := time.Time{}
 	for {
 		line, errRead := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			chunk, keep := streamChunk(r.role, line, payloadStyle)
 			if keep {
 				now := time.Now()
-				if firstFrame.IsZero() {
-					firstFrame = now
+				if stats.IsStreamError(r.role, chunk) {
+					streamError = true
 				}
-				lastFrame = now
-				if firstContent.IsZero() && stats.IsContent(r.role, chunk) {
-					firstContent = now
+				if stats.IsContent(r.role, chunk) {
+					if firstContent.IsZero() {
+						firstContent = now
+					}
+					lastContent = now
 				}
 				if errEmit := emitStreamChunk(streamID, chunk); errEmit != nil {
 					closeMessage = errEmit.Error()
@@ -206,20 +208,20 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 			break
 		}
 	}
-	ttft, generation := streamTimingValues(timing.started, firstFrame, firstContent, lastFrame)
+	ttft, generation := streamTimingValues(timing.started, firstContent, lastContent)
 	r.trace("stream finished", map[string]any{
 		"role":       string(r.role.Name),
 		"stream_id":  streamID,
 		"chunks":     emitted,
 		"close_note": closeMessage,
+		"stream_err": streamError,
 		"ttft_ms":    float64(ttft.Microseconds()) / 1000,
 		"gen_ms":     float64(generation.Microseconds()) / 1000,
 	})
-	// A failed/partial stream has no meaningful TTFT: the first content may
-	// never have arrived, and its tokens are counted by the host's usage event
-	// (if any) but it must not lower the average.
-	if closeMessage == "" && timing.model != "" {
-		if store := r.statsStore(); store != nil && ttft > 0 {
+	// A stream with no content, an upstream error frame, or a broken transport
+	// has no meaningful TTFT. Failed/partial streams must not lower the average.
+	if closeMessage == "" && !streamError && timing.model != "" && ttft > 0 {
+		if store := r.statsStore(); store != nil {
 			store.ObserveTiming(stats.TimingSample{
 				Model:      timing.model,
 				Family:     string(r.role.Name),
@@ -232,23 +234,19 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 	closeStream(streamID, closeMessage)
 }
 
-// streamTimingValues turns the frame timestamps into TTFT and generation time.
-// A stream whose content detector never matches falls back to its first frame,
-// so a protocol quirk still produces a usable TTFT; a single-frame stream has
-// no generation samples.
-func streamTimingValues(started, firstFrame, firstContent, lastFrame time.Time) (time.Duration, time.Duration) {
-	if started.IsZero() || firstFrame.IsZero() {
+// streamTimingValues turns the content timestamps into TTFT and generation
+// time. There is deliberately no first-frame fallback: a stream that never
+// produced content is not a TTFT sample. Generation ends at the last content
+// frame, so framed protocols' blank/control/[DONE] lines cannot stretch it.
+func streamTimingValues(started, firstContent, lastContent time.Time) (time.Duration, time.Duration) {
+	if started.IsZero() || firstContent.IsZero() {
 		return 0, 0
 	}
-	textStart := firstContent
-	if textStart.IsZero() {
-		textStart = firstFrame
-	}
-	ttft := textStart.Sub(started)
+	ttft := firstContent.Sub(started)
 	if ttft < 0 {
 		ttft = 0
 	}
-	generation := lastFrame.Sub(textStart)
+	generation := lastContent.Sub(firstContent)
 	if generation < 0 {
 		generation = 0
 	}

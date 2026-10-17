@@ -31,6 +31,7 @@ func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
 		Model:       "DeepSeek-V4.1-Flash",
 		RequestedAt: at,
 		Stream:      true,
+		Latency:     2 * time.Second,
 		Detail: pluginapi.UsageDetail{
 			InputTokens: 1_000_000, OutputTokens: 1_000, TotalTokens: 1_001_000,
 		},
@@ -45,6 +46,7 @@ func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
 		Model:       "claude-haiku-5-5",
 		RequestedAt: at,
 		Stream:      true,
+		Latency:     2 * time.Second,
 		Detail: pluginapi.UsageDetail{
 			InputTokens: 1_000, CacheReadTokens: 100_000, CacheCreationTokens: 1_000,
 			OutputTokens: 1_000, TotalTokens: 103_000,
@@ -168,6 +170,37 @@ func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
 		if *model.MonthlyPercent < want-0.001 || *model.MonthlyPercent > want+0.001 {
 			t.Errorf("Go Plus percent = %v, want %v", *model.MonthlyPercent, want)
 		}
+	}
+}
+
+func TestStatsPayloadTPSUsesPairedLatency(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", Model: "glm-5.3",
+		RequestedAt: time.Now().UTC(),
+		Latency:     2 * time.Second,
+		Detail:      pluginapi.UsageDetail{InputTokens: 100, OutputTokens: 100, TotalTokens: 200},
+	})
+	payload := runtime.statsPayload(url.Values{"range": {"all"}})
+	model := payload.Models[0]
+	if model.AvgTPS != 50 || model.TPSSamples != 1 {
+		t.Errorf("non-stream paired TPS = %v (%d), want 50 (1)", model.AvgTPS, model.TPSSamples)
+	}
+	if model.TTFTSamples != 0 {
+		t.Errorf("a non-stream request must not produce a TTFT sample: %+v", model)
+	}
+
+	// A stream without latency/timing must not be folded into the TPS
+	// numerator or denominator; TTFT is independent and requires content.
+	sendUsage(t, runtime, pluginapi.UsageRecord{
+		Provider: "cap-opencode-go", Model: "glm-5.3",
+		RequestedAt: time.Now().UTC(), Stream: true,
+		Detail: pluginapi.UsageDetail{OutputTokens: 999, TotalTokens: 999},
+	})
+	payload = runtime.statsPayload(url.Values{"range": {"all"}})
+	model = payload.Models[0]
+	if model.AvgTPS != 50 || model.TPSSamples != 1 || model.TTFTSamples != 0 {
+		t.Errorf("unpaired stream polluted TPS/TTFT: %+v", model)
 	}
 }
 
