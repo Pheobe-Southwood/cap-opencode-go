@@ -1195,9 +1195,53 @@ const pageScript = `
   }
   function renderUsageStats(){
     if(!el('statsSummary')) return;
+    renderPriceFreshness();
     renderUsageSummary();
     renderUsageTable();
     renderUsageMeta();
+  }
+  function priceAgeText(days){
+    if(days <= 0) return '今天';
+    if(days === 1) return '昨天';
+    return days + ' 天前';
+  }
+  function renderPriceFreshness(){
+    var badge = el('statsPriceBadge');
+    var hint = el('statsPriceFreshness');
+    var line = el('statsPriceFreshLine');
+    var notice = el('statsPriceNotice');
+    if(!stats){
+      if(badge){ badge.className = 'pill'; text(badge, '价目表 —'); }
+      text(hint, statsBusy ? '正在读取…' : '统计读取后才能判断价目表是否到期');
+      if(notice) notice.hidden = true;
+      if(line) line.hidden = false;
+      return;
+    }
+    var revision = stats.price_book_revision || '未知';
+    var url = stats.price_book_url || 'https://opencode.ai/docs/go/';
+    var checked = stats.price_book_checked_at || '';
+    var dueAt = stats.price_book_due_at || '';
+    var refresh = Number(stats.price_book_refresh_after_days) || 30;
+    var age = Number(stats.price_book_age_days);
+    if(!isFinite(age) || age < 0) age = 0;
+    var due = !!stats.price_book_update_due;
+    if(badge){ badge.className = 'pill' + (due ? ' warn' : ' ok'); text(badge, '价目表 ' + revision); }
+    var checkedText = checked ? ('核对于 ' + checked + '（' + priceAgeText(age) + '）') : '核对日期未知';
+    var dueText = dueAt ? (due ? ' · 提醒日期 ' + dueAt + '（已到期）' : ' · 下次提醒 ' + dueAt) : '';
+    text(hint, checkedText + dueText + ' · ' + refresh + ' 天周期');
+    [el('statsPriceLink'), el('statsPriceNoticeLink')].forEach(function(link){ if(link) link.href = url; });
+    if(!due){
+      if(notice) notice.hidden = true;
+      if(line) line.hidden = false;
+      return;
+    }
+    // The due banner already carries the checked date and the official link.
+    // Hide the one-line status so a phone does not show the same reminder twice.
+    if(line) line.hidden = true;
+    text(el('statsPriceNoticeBadge'), age + ' 天未核对');
+    var noticeChecked = checked ? ('内嵌价目表（' + revision + '）核对于 ' + checked + '，') : ('内嵌价目表（' + revision + '）');
+    text(el('statsPriceNoticeText'), noticeChecked + '已到 ' + refresh + ' 天核对周期。OpenCode Go 可能已经调整价格、月额度或模型列表；当前统计仍按旧表折算。');
+    if(notice) notice.hidden = false;
   }
   function renderUsageSummary(){
     var totals = stats ? stats.totals : null;
@@ -1361,7 +1405,10 @@ const pageScript = `
     text(el('statsRangeHint'), statsBusy ? '读取中…' : '每 5 秒落盘');
     var count = stats && stats.models ? stats.models.length : 0;
     text(el('statsModelsHint'), stats ? (count + ' 个模型 · ' + (stats.range.kind === 'month' ? '本月' : '累计') + ' ' + formatUSD(stats.totals.cost_usd)) : '正在读取…');
-    if(stats && stats.price_book_revision) text(el('statsPriceRevision'), '价目表 ' + stats.price_book_revision);
+    if(stats && stats.price_book_revision){
+      text(el('statsPriceRevision'), '价目表 ' + stats.price_book_revision + (stats.price_book_checked_at ? ' · 核对于 ' + stats.price_book_checked_at : ''));
+      if(stats.price_book_checked_at) text(el('statsPriceCheckedAt'), stats.price_book_checked_at);
+    }
     var notes = [];
     if(stats && stats.range){
       if(stats.range.since_source === 'calendar') notes.push('未取得额度重置时间，按 UTC 自然月统计。');

@@ -11,6 +11,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
 	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
+	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
 	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
 )
@@ -78,6 +79,19 @@ func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
 	}
 	if payload.PriceBookRevision == "" || payload.PriceBookRevision != "2026-10" {
 		t.Errorf("price book revision = %q", payload.PriceBookRevision)
+	}
+	freshness := pricing.SnapshotFreshness(time.Now().UTC())
+	if payload.PriceBookCheckedAt != freshness.CheckedAt.Format("2006-01-02") ||
+		payload.PriceBookAgeDays != freshness.AgeDays ||
+		payload.PriceBookRefreshAfterDays != pricing.RefreshAfterDays ||
+		payload.PriceBookUpdateDue != freshness.UpdateDue ||
+		payload.PriceBookDueAt != freshness.DueAt.Format("2006-01-02") {
+		t.Errorf("price book freshness = checked %q age %d refresh %d due %v at %q; want %+v",
+			payload.PriceBookCheckedAt, payload.PriceBookAgeDays, payload.PriceBookRefreshAfterDays,
+			payload.PriceBookUpdateDue, payload.PriceBookDueAt, freshness)
+	}
+	if payload.PriceBookURL != pricing.SourceURL || payload.PriceBookCheckedAt == "" || payload.PriceBookDueAt == "" {
+		t.Errorf("price book source metadata = %q/%q/%q", payload.PriceBookURL, payload.PriceBookCheckedAt, payload.PriceBookDueAt)
 	}
 	if payload.Range.SinceSource != "quota" || payload.Range.Since == "" || payload.Range.Clamped {
 		t.Errorf("range = %+v", payload.Range)

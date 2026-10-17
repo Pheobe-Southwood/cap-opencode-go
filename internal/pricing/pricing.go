@@ -21,11 +21,59 @@ import (
 // Revision identifies the embedded price table.
 const Revision = "2026-10"
 
+// SnapshotCheckedAt is the UTC date on which the embedded table was last
+// compared with the official Go pricing page. It is deliberately a date, not
+// build time: a rebuild that does not re-check the upstream table must not make
+// stale prices look fresh.
+const SnapshotCheckedAt = "2026-10-17"
+
+// RefreshAfterDays is the dashboard's reminder cadence for re-checking the
+// upstream price table. OpenCode changes model lists, limited-time limits and
+// token rates outside the plugin's release cycle, so a monthly nudge is safer
+// than waiting for someone to remember.
+const RefreshAfterDays = 30
+
 // SourceURL documents where the Go prices and limits come from.
 const SourceURL = "https://opencode.ai/docs/go/"
 
 // ConsoleModelsURL documents the fallback table for retired model ids.
 const ConsoleModelsURL = "https://opencode.ai/docs/console/models/"
+
+// Freshness describes how old the embedded price snapshot is. UpdateDue is a
+// calendar reminder, not a claim that the upstream page has changed; it only
+// says the operator should look again.
+type Freshness struct {
+	CheckedAt time.Time
+	DueAt     time.Time
+	AgeDays   int
+	UpdateDue bool
+}
+
+var snapshotCheckedAt = func() time.Time {
+	value, err := time.Parse("2006-01-02", SnapshotCheckedAt)
+	if err != nil {
+		panic("pricing: invalid SnapshotCheckedAt: " + err.Error())
+	}
+	return value
+}()
+
+// SnapshotFreshness compares the embedded snapshot date with now in UTC. Dates
+// are compared at midnight so the reminder does not flip at an arbitrary hour.
+func SnapshotFreshness(now time.Time) Freshness {
+	checkedAt := snapshotCheckedAt
+	dueAt := checkedAt.AddDate(0, 0, RefreshAfterDays)
+	nowDay := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	ageDays := int(nowDay.Sub(checkedAt).Hours() / 24)
+	if ageDays < 0 {
+		ageDays = 0
+	}
+	return Freshness{
+		CheckedAt: checkedAt,
+		DueAt:     dueAt,
+		AgeDays:   ageDays,
+		UpdateDue: !nowDay.Before(dueAt),
+	}
+}
 
 // Plan is an OpenCode Go subscription tier. Go Plus has higher monthly limits
 // for the same per-token prices.

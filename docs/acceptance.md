@@ -1,4 +1,4 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1，v1.7.3 热重载补充）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1，v1.7.2–v1.7.6 热重载补充）
 
 > v1.7.1（含 1.7.0 的统计口径修正与历史回放；1.7.1 只修两处页脚注/空状态文案）
 > 在生产实例 127.0.0.1:8317 重启到 1.7.1：四个面均加载 `-v1.7.1.so`，`plan=go`，PID `3651300`；
@@ -11,7 +11,70 @@
 > 1.7.2 新增生成 TPS 指标，1.7.3 修正覆盖率；API `avg_gen_tps/gen_tps_samples`、页面「生成 TPS」列
 > 和一次真实 Beam 流式请求已验证。下面的 32 项完整验收仍是 1.7.1 的结果，未把 1.7.3 的热重载检查
 > 冒充成完整验收。
+> 2026-10-17 03:34 UTC 再热重载到 1.7.6，**PID `3651300` 仍不变、没有重启**；1.7.6 在统计页新增
+> 价目核对日期与「数据该更新了」周期提醒，四个面均映射到 `-v1.7.6.so`。API、页面常驻状态和
+> 到期横幅（Chromium 拦截 `/api/stats` 模拟第 30 天）已验证；统计文件 schema 没有变化。
 > 下面是 v1.7.1 记录，其后是历史记录（v1.6 统计面板、v1.5.0 品牌整合、v1.4.1 仪表盘改造等）。
+
+---
+
+## v1.7.6 价目核对提醒（热重载 + API / 页面 / 桌面与手机）
+
+### 1. 部署
+
+- 03:32 / 03:33 UTC 先以 1.7.4 / 1.7.5 热重载预览；03:34 UTC 最终热重载到 **1.7.6**。
+  1.7.4/1.7.5 是中间版本，1.7.6 修掉一个只在到期态出现的 CSS 问题：`.stats-freshness` 的
+  `display:flex` 覆盖了 `hidden` 属性，导致手机端同时显示横幅和重复的一行状态。现在到期态只保留
+  横幅，非到期态显示一行「核对于 … · 下次提醒 …」。
+- 四个 `-v1.7.6.so` 均在 `/proc/3651300/maps` 中；主面 `/api/state` 返回 `version=1.7.6`。
+- `config.yaml` 仍是**原地追加注释**触发 fsnotify：inode `10653636` 前后不变，没有重启 CPA；
+  PID `3651300`、服务启动时间 `03:07:04 UTC` 均未变。
+- 部署前备份了 1.7.5 四个 `.so` 与 config 到
+  `/root/cliproxyapi/backup-1.7.6-pre-20261017T033434Z`。
+
+### 2. 口径与 API
+
+`internal/pricing` 新增 `SnapshotCheckedAt = "2026-10-17"`（最后一次人工核对官方 Go 页面的日期）
+和 `RefreshAfterDays = 30`；`SnapshotFreshness` 按 UTC 日历天计算年龄，满 30 天后
+`price_book_update_due=true`。日期和构建时间刻意分开：只重新编译而没有重新核对，旧价格不会显得新。
+
+`GET /api/stats` 的 additive 字段（生产实测）：
+
+```
+price_book_revision:          2026-10
+price_book_checked_at:        2026-10-17
+price_book_age_days:          0
+price_book_refresh_after_days: 30
+price_book_update_due:        false
+price_book_due_at:            2026-11-16
+price_book_url:               https://opencode.ai/docs/go/
+```
+
+同一时刻 totals 为 6,202 请求、438,318,884 tokens、12 个模型；没有新增 stats 文件字段或状态文件。
+这是**周期提醒**，不是自动抓取；到期只表示应该去官方价目表重新核对，确认变更后仍需更新
+`internal/pricing` 并发布新版本，历史金额不重算。
+
+### 3. 页面验证
+
+- 非到期态：统计页概览下方显示一行绿色「价目表 2026-10」+「核对于 2026-10-17（今天）·
+  下次提醒 2026-11-16 · 30 天周期」+「官方价目表 ↗」；到期横幅隐藏。
+- 到期态：用 Chromium DevTools Protocol 拦截 `/api/stats`，把同一份真实响应改为
+  `checked_at=2026-09-17 / age=30 / update_due=true / due_at=2026-10-17`，页面显示
+  「数据该更新了」、徽标「30 天未核对」、官方链接和「这只是周期提醒，不代表上游已经调价」说明；
+  重复的一行状态同时隐藏。
+- 桌面 1440×1100 与手机 390×844 均验证；手机端到期横幅在概览上方，模型明细仍按原有的
+  ≤640px 规则折叠，没有把内容重新平铺。
+- 页面实际返回的 `/dashboard` 含 `statsPriceNotice`、`statsPriceFreshness`、`statsPriceCheckedAt`
+  等标记；JS 通过 `node --check`。
+
+### 4. 自动化
+
+- `go test ./...`、`go vet ./...`、`go test -race ./internal/...` 通过。
+- 新增 `TestSnapshotFreshnessUsesCalendarDays`，覆盖同日、29 天、第 30 天、第 75 天和早于核对日；
+  `TestStatsPayloadMergesFacesAndComputesAverages` 断言 API 的五个新字段；页面测试断言提醒元素、
+  文案和 `.stats-freshness[hidden]` 规则。
+- `scripts/acceptance.sh` 新增两项：统计 API 的价目提醒元数据、页面 `statsPriceNotice` 标记。
+  本轮没有重跑完整公开验收（仍以 1.7.1 的 **32 passed, 0 failed** 为准），因此不宣称 34 项全过。
 
 ---
 

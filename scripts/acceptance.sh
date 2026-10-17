@@ -345,6 +345,34 @@ else
   printf '  FAIL  %-46s\n' "statistics monthly window"
   FAIL=$((FAIL + 1))
 fi
+price_check="$(printf '%s' "${monthly}" | python3 -c '
+import json, sys
+try:
+    payload = json.load(sys.stdin)
+except Exception as error:
+    print("unreadable: " + str(error))
+    raise SystemExit
+keys = ("price_book_checked_at", "price_book_age_days", "price_book_refresh_after_days",
+        "price_book_update_due", "price_book_due_at")
+missing = [key for key in keys if key not in payload]
+ok = (not missing and payload.get("price_book_checked_at")
+      and payload.get("price_book_due_at")
+      and payload.get("price_book_refresh_after_days") == 30
+      and str(payload.get("price_book_url", "")).startswith("https://")
+      and isinstance(payload.get("price_book_age_days"), int)
+      and isinstance(payload.get("price_book_update_due"), bool))
+print(("ok" if ok else "invalid") + " checked=%s age=%s refresh=%s due=%s at=%s" % (
+    payload.get("price_book_checked_at"), payload.get("price_book_age_days"),
+    payload.get("price_book_refresh_after_days"), payload.get("price_book_update_due"),
+    payload.get("price_book_due_at")))
+' 2>/dev/null || true)"
+if [[ "${price_check}" == ok* ]]; then
+  printf '  PASS  %-46s %s\n' "statistics price book reminder" "${price_check#ok }"
+  PASS=$((PASS + 1))
+else
+  printf '  FAIL  %-46s %s\n' "statistics price book reminder" "${price_check:-invalid response}"
+  FAIL=$((FAIL + 1))
+fi
 rm -f "${STATS_FILE}"
 
 # The protocol probe is a management route, so it needs the management key; the
@@ -383,6 +411,7 @@ page_checks=(
   'id="statsSummary"|统计概览'
   'id="usageStatsTable"|统计表'
   'id="statsAboutFold"|统计口径折叠'
+  'id="statsPriceNotice"|价目核对提醒'
   'data-label="平均 TTFT"|TTFT 列'
   'id="cfgPlan"|套餐设置'
   'id="pane-models"|模型 tab'

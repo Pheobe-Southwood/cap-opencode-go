@@ -82,22 +82,28 @@ type StatsUsageRecords struct {
 
 // StatsPayload is GET /api/stats.
 type StatsPayload struct {
-	GeneratedAt       time.Time         `json:"generated_at"`
-	Range             StatsRange        `json:"range"`
-	Plan              string            `json:"plan"`
-	PlanLabel         string            `json:"plan_label"`
-	PriceBookRevision string            `json:"price_book_revision"`
-	PriceBookURL      string            `json:"price_book_url"`
-	UsageRecords      StatsUsageRecords `json:"usage_records"`
-	Models            []StatsModel      `json:"models"`
-	Totals            StatsTotals       `json:"totals"`
-	Warnings          []string          `json:"warnings,omitempty"`
+	GeneratedAt               time.Time         `json:"generated_at"`
+	Range                     StatsRange        `json:"range"`
+	Plan                      string            `json:"plan"`
+	PlanLabel                 string            `json:"plan_label"`
+	PriceBookRevision         string            `json:"price_book_revision"`
+	PriceBookURL              string            `json:"price_book_url"`
+	PriceBookCheckedAt        string            `json:"price_book_checked_at"`
+	PriceBookAgeDays          int               `json:"price_book_age_days"`
+	PriceBookRefreshAfterDays int               `json:"price_book_refresh_after_days"`
+	PriceBookUpdateDue        bool              `json:"price_book_update_due"`
+	PriceBookDueAt            string            `json:"price_book_due_at"`
+	UsageRecords              StatsUsageRecords `json:"usage_records"`
+	Models                    []StatsModel      `json:"models"`
+	Totals                    StatsTotals       `json:"totals"`
+	Warnings                  []string          `json:"warnings,omitempty"`
 }
 
 // statsPayload builds the page's read model. It never contacts the upstream and
 // never includes a key, a prompt, or a response body.
 func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 	now := time.Now().UTC()
+	freshness := pricing.SnapshotFreshness(now)
 	kind, since, source, clamped := resolveStatsRange(query, now)
 	store := r.statsStore()
 	snapshot := store.Snapshot(since)
@@ -242,12 +248,17 @@ func (r *Runtime) statsPayload(query url.Values) StatsPayload {
 	}
 
 	return StatsPayload{
-		GeneratedAt:       now,
-		Range:             rangePayload,
-		Plan:              string(plan),
-		PlanLabel:         plan.Label(),
-		PriceBookRevision: pricing.Revision,
-		PriceBookURL:      pricing.SourceURL,
+		GeneratedAt:               now,
+		Range:                     rangePayload,
+		Plan:                      string(plan),
+		PlanLabel:                 plan.Label(),
+		PriceBookRevision:         pricing.Revision,
+		PriceBookURL:              pricing.SourceURL,
+		PriceBookCheckedAt:        freshness.CheckedAt.Format("2006-01-02"),
+		PriceBookAgeDays:          freshness.AgeDays,
+		PriceBookRefreshAfterDays: pricing.RefreshAfterDays,
+		PriceBookUpdateDue:        freshness.UpdateDue,
+		PriceBookDueAt:            freshness.DueAt.Format("2006-01-02"),
 		UsageRecords: StatsUsageRecords{
 			Received: snapshot.Received,
 			Matched:  snapshot.Matched,

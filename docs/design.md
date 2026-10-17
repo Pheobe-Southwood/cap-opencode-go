@@ -234,7 +234,7 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
 - **从属面版本无法在插件侧读取**（从属面不注册管理路由），所以「同版本」只能作为约定写在
   卡片与 README 里；升级时用 `scripts/install.sh <版本>` 一次装四个
 
-## 7.8 统计面板：宿主记账 + 插件测时（v1.7）
+## 7.8 统计面板：宿主记账 + 插件测时（v1.7–v1.7.6）
 
 统计要回答「用过的模型花了多少、占月额度多少、快不快」。这需要两类数据，而它们的最佳来源不同：
 
@@ -272,6 +272,12 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   长上下文档位、DeepSeek 工作峰谷价、免费/未定价模型）。chat/responses/gemini 的 input 包含缓存，
   messages 的 input 不包含；gemini 的 output 费用含 reasoning。按请求开始时间取档位与峰谷，
   以 nano-USD 整数累计，API 再换算成美元。
+- **价目核对提醒**：`SnapshotCheckedAt` 记录这张内嵌表最后一次与官方 Go 页面人工核对的日子，
+  与构建时间分开——只重新编译而没重新核对，旧价格不会假装变新。`SnapshotFreshness` 以 UTC
+  日历天计算 `age_days`，满 `RefreshAfterDays`（30 天）就把 `price_book_update_due` 置为 true；
+  `/api/stats` 一并返回 `price_book_checked_at`、`price_book_due_at` 等字段。页面常驻显示核对日期，
+  到期后显示「数据该更新了」和官方链接。它只是人工核对提醒，不做网络抓取，也不自动改写价目表或
+  历史金额。
 - **月额度**：模型在「本月窗口」内的刊例价 ÷ 当前 `plan` 下该模型的月限额。`/usage` 只返回百分比，
   无法可靠反推套餐，所以套餐必须配置（默认 `go`）。窗口起点由页面取所有 Key 的 monthly
   `resets_at` 最晚值往前推一个月；拿不到时服务端回落到 UTC 自然月，并在 `range.since_source` 标记。
@@ -284,7 +290,7 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   便于诊断 provider 标签不匹配；响应只有模型 id、计数、费用与时间戳，不含 Key/提示词/响应。
 - **页面**：概览常驻；模型明细在 ≤640px 默认折叠；统计口径始终折叠。桌面端是表格，手机端
   用 `table.responsive` 的 `data-label` 变成逐模型卡片。费用、百分比、TPS/TTFT 都在前端格式化，
-  没有新增运行时依赖。
+  没有新增运行时依赖。价目核对状态只占一行，到期横幅在概览上方，不改变模型明细的折叠行为。
 
 ## 8. 版本兼容
 

@@ -162,6 +162,37 @@ func TestMonthlyLimitsByPlan(t *testing.T) {
 	}
 }
 
+func TestSnapshotFreshnessUsesCalendarDays(t *testing.T) {
+	if RefreshAfterDays != 30 {
+		t.Fatalf("RefreshAfterDays = %d, want 30", RefreshAfterDays)
+	}
+	cases := []struct {
+		now     time.Time
+		wantAge int
+		wantDue bool
+	}{
+		{time.Date(2026, 10, 1, 23, 0, 0, 0, time.UTC), 0, false},
+		{time.Date(2026, 10, 17, 23, 59, 59, 999999999, time.UTC), 0, false},
+		{time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC), 1, false},
+		{time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC), 29, false},
+		{time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC), 30, true},
+		{time.Date(2026, 12, 31, 12, 0, 0, 0, time.UTC), 75, true},
+	}
+	for _, tc := range cases {
+		got := SnapshotFreshness(tc.now)
+		if got.AgeDays != tc.wantAge || got.UpdateDue != tc.wantDue {
+			t.Errorf("SnapshotFreshness(%s) = age %d due %v, want %d/%v",
+				tc.now.Format(time.RFC3339), got.AgeDays, got.UpdateDue, tc.wantAge, tc.wantDue)
+		}
+		if got.CheckedAt.Format("2006-01-02") != SnapshotCheckedAt {
+			t.Errorf("checked date = %s, want %s", got.CheckedAt.Format("2006-01-02"), SnapshotCheckedAt)
+		}
+		if got.DueAt.Format("2006-01-02") != "2026-11-16" {
+			t.Errorf("due date = %s, want 2026-11-16", got.DueAt.Format("2006-01-02"))
+		}
+	}
+}
+
 // The catalogue is the plugin's advertised model list; every id that is not
 // explicitly unpriced must have a price in the book, otherwise the statistics
 // tab would silently report "未定价" for a model the plugin serves.

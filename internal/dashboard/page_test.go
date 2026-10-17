@@ -300,14 +300,17 @@ func TestPageStatsSummarizesUsedModels(t *testing.T) {
 		`id="tab-stats"`, `id="pane-stats"`, `id="statsSummary"`, `id="usageStatsTable"`,
 		`id="statsModelsFold"`, `id="statsAboutFold"`, `id="statsRange"`, `id="refreshStats"`,
 		`id="statsError"`, `id="statsWarnings"`, `id="statsPlanHint"`, `id="statsPlanBtn"`,
-		`id="statsPriceRevision"`, `id="cfgPlan"`,
+		`id="statsPriceRevision"`, `id="statsPriceCheckedAt"`, `id="statsPriceNotice"`,
+		`id="statsPriceNoticeBadge"`, `id="statsPriceFreshness"`, `id="statsPriceFreshLine"`, `id="statsPriceLink"`, `id="cfgPlan"`,
 		"/api/stats", "function loadUsageStats(force)", "function renderUsageTable()", "function usageRow(model)",
+		"function renderPriceFreshness()", "price_book_update_due", "price_book_checked_at",
+		"数据该更新了", "不代表上游已经调价", "30 天周期",
 		"function statsSinceISO()", "function monthBefore(date)", "setUTCMonth(result.getUTCMonth() - 1)",
 		"var statsCalendarRetry = false;", "stats.range.since_source === 'calendar'",
 		`data-label="请求"`, `data-label="输入"`, `data-label="输出"`, `data-label="缓存读/写"`,
 		`data-label="刊例价"`, `data-label="本月额度"`, `data-label="平均 TPS"`, `data-label="生成 TPS"`, `data-label="平均 TTFT"`,
 		"成功请求的有效 output token ÷ 宿主请求总延迟", "不含 TTFT", "回放到本统计", "金额为刊例价估算，不是 OpenCode 账单",
-		"matchMedia('(max-width: 640px)')", "fold.open = false", ".fold-block{", ".stats-table-wrap{",
+		"matchMedia('(max-width: 640px)')", "fold.open = false", ".fold-block{", ".stats-table-wrap{", ".stats-freshness{", ".stats-freshness[hidden]{display:none}",
 	} {
 		if !strings.Contains(document, want) {
 			t.Errorf("the page is missing %q", want)

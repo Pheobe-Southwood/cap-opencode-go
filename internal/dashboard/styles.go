@@ -147,6 +147,11 @@ const pageStyles = `
     border-radius:var(--radius-md);padding:10px 12px;margin-top:12px;color:var(--text-secondary);font-size:12px}
   .notice:first-child{margin-top:0}
   .notice.err{border-color:color-mix(in srgb,var(--error-color) 45%,transparent);background:color-mix(in srgb,var(--error-color) 10%,transparent)}
+  .notice.remind{border-left:3px solid var(--amber-color)}
+  .notice-title{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px;
+    color:var(--text-primary);font-size:13px}
+  .notice-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:7px}
+  .notice a{color:inherit;text-decoration:underline;text-underline-offset:2px;font-weight:600}
   .err-text{color:var(--error-color)}
   .warn-text{color:var(--amber-color)}
   .ok-text{color:var(--success-color)}
@@ -240,6 +245,11 @@ const pageStyles = `
      methodology is always folded. */
   .stats-plan-line{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 2px}
   .stats-plan-line .hint{min-width:0}
+  .stats-freshness{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;
+    color:var(--text-tertiary);font-size:12px;min-width:0}
+  .stats-freshness .hint{min-width:0}
+  .stats-freshness a{color:var(--text-secondary);text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+  .stats-freshness[hidden]{display:none}
   .fold-block{border-top:1px dashed var(--border-color);margin-top:12px;padding-top:10px}
   .fold-block > summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px;
     font-weight:700;min-height:32px;flex-wrap:wrap}
@@ -342,6 +352,7 @@ const pageStyles = `
     .stats-percent{min-width:0;width:100%}
     .stats-sub{white-space:normal}
     .stats-plan-line{align-items:flex-start}
+    .stats-freshness{align-items:flex-start;gap:5px 8px}
     .stats-notes{padding-left:16px}
     /* The credential dialog becomes a bottom sheet on phones. */
     .modal-backdrop{padding:0;align-items:flex-end}

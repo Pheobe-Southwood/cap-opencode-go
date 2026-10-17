@@ -101,6 +101,14 @@ const pageMarkup = `
     <!-- ---------------------------------------------------- 统计 -->
     <section class="pane" id="pane-stats" role="tabpanel" aria-labelledby="tab-stats" hidden>
       <div id="statsError" class="notice err" hidden></div>
+      <div id="statsPriceNotice" class="notice remind" hidden>
+        <div class="notice-title"><strong>数据该更新了</strong><span class="pill warn" id="statsPriceNoticeBadge"></span></div>
+        <div id="statsPriceNoticeText"></div>
+        <div class="notice-actions">
+          <a id="statsPriceNoticeLink" href="https://opencode.ai/docs/go/" target="_blank" rel="noopener">去官方价目表核对 ↗</a>
+          <span class="hint">核对后更新插件内嵌价目表并发布新版本；这只是周期提醒，不代表上游已经调价。</span>
+        </div>
+      </div>
       <div id="statsWarnings" class="notice" hidden></div>
 
       <div class="stat-strip" id="statsSummary"></div>
@@ -108,6 +116,11 @@ const pageMarkup = `
       <div class="stats-plan-line">
         <span class="hint" id="statsPlanHint"></span>
         <button id="statsPlanBtn" class="ghost small" type="button">调整套餐</button>
+      </div>
+      <div class="stats-freshness" id="statsPriceFreshLine">
+        <span class="pill" id="statsPriceBadge">价目表 —</span>
+        <span class="hint" id="statsPriceFreshness">正在读取…</span>
+        <a id="statsPriceLink" href="https://opencode.ai/docs/go/" target="_blank" rel="noopener">官方价目表 ↗</a>
       </div>
 
       <div class="card">
@@ -145,6 +158,7 @@ const pageMarkup = `
           <li><strong>平均 TTFT</strong>：插件从发起上游请求到第一段文字/思考/工具参数内容帧的时间，包含连接、排队与重试，不含 host 下游发送；只统计有实际内容且正常结束的流式请求，不做 first-frame 回退。</li>
           <li><strong>保留期</strong>：逐小时桶保留 40 天，累计总量永久保留；v1.7 起可把旧 Token Usage Tracker 中 opencode-go 的请求回放到本统计，回放范围以导入时的截止时间为准。</li>
           <li><strong>价目版本</strong>：<span id="statsPriceRevision">—</span>。费用按记录时内嵌的价目表计算；上游调价不会重算历史金额。</li>
+          <li><strong>价目核对提醒</strong>：内嵌价目表核对于 <span id="statsPriceCheckedAt">—</span>，按 30 天周期在「统计」页提醒；到期后只是提示去<a href="https://opencode.ai/docs/go/" target="_blank" rel="noopener">官方价目表</a>重新核对，不代表上游一定已经调价。核对后需要更新 <code>internal/pricing</code> 并发布新版本，历史金额不会自动重算。</li>
           <li><strong>隐私</strong>：统计文件只有模型 id、计数、费用与时间戳，不包含 Key、提示词或响应内容。</li>
         </ul>
       </details>
