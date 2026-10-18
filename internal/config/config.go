@@ -126,21 +126,9 @@ type Settings struct {
 	Keys          []Key                   `yaml:"keys" json:"keys,omitempty"`
 	Models        map[string]ModelSetting `yaml:"models" json:"models,omitempty"`
 	ModelsDefault ModelSetting            `yaml:"models-default" json:"models-default"`
-	// RegisterAccounts projects every configured key into a host auth file so
-	// the host management centre lists the keys as accounts and can show their
-	// quota (配额管理 → Plugin). It is on unless explicitly disabled.
-	RegisterAccounts *bool `yaml:"register-accounts" json:"register-accounts,omitempty"`
 	// HostProxyURL is filled from the host config summary and is never read
 	// from YAML.
 	HostProxyURL string `yaml:"-" json:"host-proxy-url,omitempty"`
-}
-
-// AccountsEnabled reports whether the keys are projected onto host auth files.
-func (s Settings) AccountsEnabled() bool {
-	if s.RegisterAccounts == nil {
-		return true
-	}
-	return *s.RegisterAccounts
 }
 
 // Default returns the built-in defaults.

@@ -2,10 +2,10 @@
 # Remove the OpenCode Go provider plugins and every file they own.
 #
 # Deleting the plugin libraries plus the plugins.configs.* entries restores the
-# previous state. The v1.8 projection writes one auth file per configured key
-# into the host auth directory so CPA can show the accounts in 配额管理 → Plugin;
-# the plugin already deletes those files when it is unloaded, and this script
-# removes any leftovers (crash, SIGKILL, or a host that never loaded the plugin).
+# previous state. v1.12 removed the v1.8-v1.11 auth projection, so the current
+# plugin writes no auth files at all; the scan below only removes leftovers from
+# an older version (or from a rollback to one), and it never touches an
+# operator's own auth files or files of any other provider.
 set -euo pipefail
 
 ROOT="${CPA_ROOT:-/root/cliproxyapi}"
@@ -90,7 +90,6 @@ Now delete the matching entries from ${ROOT}/config.yaml and restart CLIProxyAPI
 Leave plugins.enabled and any other plugin entries untouched.
 Then run:  systemctl restart cliproxyapi
 
-Note: removing the four config blocks while CPA is running already triggers the
-plugin unload, which deletes the mirrored account files by itself; the cleanup
-above only covers a crashed or force-killed instance.
+Note: v1.12+ never writes auth files, so the cleanup above only matters for a
+host that previously ran v1.8-v1.11 (or was rolled back to one).
 EOF

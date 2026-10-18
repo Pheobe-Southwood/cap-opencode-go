@@ -33,6 +33,5 @@ func configFields(role roles.Role) []pluginapi.ConfigField {
 		{Name: "debug", Type: pluginapi.ConfigFieldTypeBoolean, Description: "开启后把流式与上游诊断写入 <状态目录>/debug.log。"},
 		{Name: "state-dir", Type: pluginapi.ConfigFieldTypeString, Description: "插件自有状态目录，留空为 <CPA 根>/data/cap-opencode-go。"},
 		{Name: "plan", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"go", "go-plus"}, Description: "OpenCode Go 套餐：go（$10/月）或 go-plus（$40/月），用于统计 Tab 的逐模型月额度百分比。"},
-		{Name: "register-accounts", Type: pluginapi.ConfigFieldTypeBoolean, Description: "把 keys 投影成 CPA 认证文件，使每个 Key 在 CPA 的「配额管理 → Plugin」里显示为一个账号；默认开启，插件卸载时自动删除。"},
 	}
 }

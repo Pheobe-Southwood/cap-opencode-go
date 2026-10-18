@@ -344,19 +344,6 @@ const pageScript = `
     for(var i=0;i<all.length;i++){ if(all[i].key_name === name) return all[i]; }
     return null;
   }
-  // accounts is the plugin's projection of the keys onto host auth files: CPA's
-  // 配额管理 → Plugin lists one account per file.
-  function accountsInfo(){ return (state && state.accounts) || null; }
-  function accountFileOf(name){
-    var info = accountsInfo();
-    if(!info || !info.files) return '';
-    return info.files[name] || '';
-  }
-  function accountsView(){
-    var info = accountsInfo();
-    if(!info || !info.files) return [];
-    return Object.keys(info.files).map(function(name){ return info.files[name]; });
-  }
 
   // ------------------------------------------------------- pending changes
   function countEdits(){
@@ -564,15 +551,13 @@ const pageScript = `
       if(key.last_used) meta.push('<span class="hint">最近使用 ' + esc(relPast(key.last_used)) + '</span>');
       if(key.last_status) meta.push('<span class="hint">最近状态 ' + esc(key.last_status) + '</span>');
     }
-    var account = accountFileOf(view.name);
-    if(account) meta.push('<span class="hint">CPA 账号 ' + esc(account) + (edits.keys.rename[view.name] ? '（保存后改名）' : '') + '</span>');
     // Only persisted keys are renameable in place. A pending addition is
     // renamed in the add form, which keeps the add map and the rename map from
     // ever sharing a key.
     var nameField = view.isNew
       ? '<span class="key-name">' + esc(view.label) + '</span>'
       : '<input class="key-name-input" type="text" data-key-rename="' + esc(view.name) + '" value="' + esc(view.label) + '" ' +
-        'aria-label="Key 名称" title="点击修改名称，回车或失焦生效；保存后同步重命名 CPA 账号文件" ' +
+        'aria-label="Key 名称" title="点击修改名称，回车或失焦生效" ' +
         'autocomplete="off" spellcheck="false" size="' + Math.max(6, Math.min(32, String(view.label).length + 1)) + '">';
     var error = key && key.last_error ? '<div class="err-text" style="font-size:12px">' + esc(String(key.last_error).slice(0, 160)) + '</div>' : '';
     return '<div class="key-card' + (view.enabled ? '' : ' is-off') + (view.isNew ? ' is-new' : '') + '" data-key-card="' + esc(view.name) + '">' +
@@ -616,13 +601,11 @@ const pageScript = `
         if(!worst || left < worst.left) worst = {left:left, key:view.name, label:window.label || window.key};
       });
     });
-    var accountFiles = accountsView();
     var stats = [
       ['Key', enabled + ' 启用 / ' + views.length],
       ['最低剩余', worst ? worst.left.toFixed(0) + '%' : '—', worst ? worst.key + ' · ' + worst.label : '尚无窗口数据'],
       ['调度方式', '跟随宿主', 'CPA 网络配置管理'],
       ['协议面', (state && state.siblings ? state.siblings.length : 0) + ' 个', '四个协议族共用这份配置'],
-      ['CPA 账号', accountFiles.length + ' 个', accountFiles.length ? '配额管理 → Plugin 里可见' : '未投影到 CPA'],
       ['余量更新', quota && quota.at ? new Date(quota.at).toLocaleTimeString() : '—']
     ];
     el('accountStats').innerHTML = stats.map(function(stat){
@@ -933,12 +916,11 @@ const pageScript = `
       aboutRow('版本', '插件 <code>' + esc(version) + '</code> · 主实例 <code>' + esc(PLUGIN_ID) + '</code>'),
       aboutRow('协议面', '一个主插件 + 三个协议面插件（responses / messages / gemini），每个 .so 只声明一种上游协议，协议翻译由 CPA 完成。四个 .so 必须同版本安装，只有主插件需要配置，四个面在「状态」里逐面说明。'),
       aboutRow('别名', '在「模型」里为模型填写的别名会替代原名对外提供；清空别名即恢复原名，多个别名等于多个对外 id。'),
-      aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。'),
+      aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。v1.12 起插件不再向 CPA 投影认证文件，「配额管理 → Plugin」不再列出 OpenCode Go，余量请在本页查看。'),
       aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、整体 TPS、生成 TPS 与 TTFT。token、失败与请求总延迟来自宿主 usage 事件；整体 TPS 含首字，生成 TPS 只算插件测到的首内容到末内容，TTFT 由插件读流自测。v1.7 起可回放旧 Token Usage Tracker 中 opencode-go 的历史。'),
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),
       aboutRow('热重载', '替换插件文件同样热生效：把新版本 .so 放进 plugins/linux/amd64 后原地改一次 config.yaml 即可（不要用会替换 inode 的方式写文件）。'),
-      aboutRow('CPA 账号', '每个 Key 会在 CPA 的 auth 目录里投影成一个认证文件（<code>opencode-go-&lt;key 名&gt;.json</code>，权限 0600，带 <code>managed_by</code> 标记），因此「配额管理 → Plugin」能像 Antigravity / Codex 一样显示 5 小时 / 本周 / 本月余量。投影是单向的：路由仍由这里的 Key 池决定，在 CPA 里启停或删除账号不影响转发，下一次同步会按配置复原。'),
-      aboutRow('残留', '插件只在 CPA 目录下写 plugins/、data/cap-opencode-go/（shared.json、stats-&lt;role&gt;.json，可选 debug.log）和 auth 目录里的 opencode-go-*.json；认证文件在插件被卸载（删配置块 / 禁用 / 停服）时自动删除，热替换升级则交给新实例接管，删除插件与配置块后无任何残留。'),
+      aboutRow('残留', '插件只在 CPA 目录下写 plugins/、data/cap-opencode-go/（shared.json、stats-&lt;role&gt;.json，可选 debug.log）；v1.12 起不再写任何认证文件，删除插件与配置块后无任何残留。'),
       aboutRow('仓库', '<a href="' + REPO_URL + '" target="_blank" rel="noreferrer noopener">' + esc(REPO_URL.replace('https://', '')) + '</a>')
     ].join('');
   }

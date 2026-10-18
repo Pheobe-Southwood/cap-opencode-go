@@ -1,4 +1,4 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v1.9.1 热重载补充）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v1.12.0 热重载补充）
 
 > v1.7.1（含 1.7.0 的统计口径修正与历史回放；1.7.1 只修两处页脚注/空状态文案）
 > 在生产实例 127.0.0.1:8317 重启到 1.7.1：四个面均加载 `-v1.7.1.so`，`plan=go`，PID `3651300`；
@@ -28,6 +28,151 @@
 > 生产公开验收 **39 passed, 0 failed**（messages 无启用模型跳过 1 项；新增 2 项页面改名标记）。
 > 宿主 `static/management.html` 哈希未变，未关闭面板自动更新，未改宿主配置。
 > 下面是 v1.7.8 / v1.7.6 的热重载记录，之后是 v1.7.1 记录与更早历史（v1.6 统计面板、v1.5.0 品牌整合、v1.4.1 仪表盘改造等）。
+> **2026-10-17 14:03 UTC 热重载到 1.11.0**（账号投影瘦身：每 Key 4 个认证文件 → 1 个），
+> `MainPID=4128447`、`ActiveEnterTimestamp=10:02:25 UTC`、config inode `10621868` 均不变；
+> 四个面 `active_version=1.11.0`，auth 目录收敛为 1 个 chat 面文件，生产公开验收
+> **39 passed, 0 failed**（messages 无启用模型跳过 1 项）；隔离实例 **50 passed, 0 failed** 覆盖四族。
+> 详见下面第一节。
+> **2026-10-17 15:06 / 15:14 UTC 热重载到 1.12.0**（移除账号投影与宿主配额集成），
+> `MainPID=4128447`、`ActiveEnterTimestamp=10:02:25 UTC`、config inode `10621868` 均不变；
+> 四个面 `active_version=1.12.0`（gemini 首次安装被 `head -6` 截断，15:14 补装后重载），
+> 生产公开验收 **37 passed, 0 failed**（messages 无启用模型跳过 1 项；删除了 5 项账号/配额检查），
+> 隔离实例（messages 启用、auth 目录为空）**45 passed, 0 failed**。详见下面第一节。
+
+---
+
+## v1.12.0 移除账号投影与宿主配额集成（生产热重载 + 隔离实例 + 回滚演练）
+
+### 1. 交付
+
+按操作者要求（“不用注册认证文件和配合管理了”）整体移除 v1.8 引入的宿主侧集成：
+
+- 删除 `internal/accounts` 整包、`internal/plugin/accounts.go`、`internal/plugin/quota_provider.go`
+  及其测试；`Runtime` 不再保存 host auth 目录，`plugin.register` / `model.static` / `/api/state`
+  不再触发账号同步，`plugin.quiesce` 与 `Shutdown` 不再有清理语义（`Shutdown` 只 flush 统计）。
+- 主面不再声明 `quota_provider`，不再应答 `quota.identifier|describe|fetch|reset`；
+  `internal/quota.FetchKey` 收回为包内 `fetchKey`（只剩仪表盘余量在用）。
+- 删除配置项 `register-accounts` 与 `AccountsEnabled()`；旧配置里的该字段被宽松 YAML 忽略，
+  新增回归用例 `TestRemovedRegisterAccountsKeyIsIgnored` 固定这一行为。
+- `/api/state` 不再有 `accounts` 字段，`/api/quota` 不再有 `accounts` 键；仪表盘删除「CPA 账号」
+  统计行、Key 卡片小字与「关于」里的投影说明；`scripts/acceptance.sh` 删除 5 项账号/配额检查；
+  `scripts/uninstall.sh` 保留 marker 扫描作为 v1.8–v1.11 遗留文件的一次性兜底。
+- `go test ./...`、`go vet ./...`、`gofmt -l internal cmd` 全绿；页面脚本 `node --check` 通过
+  （验收里的 `dashboard script parses`）。
+
+### 2. 先验证“零 auth 也能工作”（1.11.0，隔离实例）
+
+删除前先用 1.11.0 + `register-accounts: false` 在隔离实例上把 auth 目录清空：
+
+- 宿主日志 `5 clients (0 auth entries + … + 5 OpenAI-compat)`，`/v1/models` 仍返回 13 个模型；
+- 四族流式/非流式 12/12 协议检查 PASS（chat=Beam、responses=gpt-6-luna、gemini=gemini-4-argon、
+  messages=claude-haiku-5-5）；只有账号投影与宿主配额那几项 FAIL/SKIP，而它们正是本次要删除的检查。
+- 结论：路由是插件自己的 `model_router`（`TargetKind=self`），宿主 auth 只服务于配额页展示。
+
+### 3. 隔离实例（1.12.0，messages 启用，auth 目录为空）
+
+- 先放一个 v1.11 格式的遗留文件 `auth/opencode-go-legacy-key.json`：插件**不创建也不删除**它
+  （与 1.11 的 quiesce/shutdown 清理语义不同），宿主把它列为 `provider=opencode-go` 凭据；
+- `/api/state` 无 `accounts` 字段；`/api/quota` 只有 `keys`，每 Key 仍有 3 个窗口（真实上游）；
+  `/v8/management/plugins` 四个面 `supports_quota=false`、`quota_provider` 为空，主面 13 个配置字段；
+- 删掉遗留文件后 `/v8/management/credentials` 在约 6 秒内从 1 条变成 0 条（宿主 fsnotify），
+  插件继续服务 13 个模型；
+- 完整验收 **45 passed, 0 failed**（原 50 项减去 5 项账号/配额检查）。
+
+### 4. 生产热重载（PID / 启动时间 / inode 均不变）
+
+- `VERSION=1.12.0 make install` 后原地给 `config.yaml` 追加注释触发重载：
+  `MainPID=4128447`、`ActiveEnterTimestamp=10:02:25 UTC`、config inode `10621868` 全部不变；
+- `main.log`：`15:06:48` 热重载 chat / responses / messages 到 `active_version=1.12.0`；
+  gemini 的 `.so` 因安装命令被 `head -6` 截断而没装上，15:14 补装后再次热重载
+  （`15:14:37 … cap-opencode-go-gemini active_version=1.12.0 retired_version=1.11.0`）；
+  最终 `/proc/4128447/maps` 里四个 `-v1.12.0.so` 全部加载；
+- 热重载后删除遗留的 `~/.cli-proxy-api/opencode-go-user-example-com.json`（先确认
+  `managed_by: cap-opencode-go`），auth 目录不再有 opencode-go 文件；
+- 生产公开验收 **37 passed, 0 failed**（messages 无启用模型跳过 1 项），四族照常工作；
+  由于环境里的管理密钥是哈希值，管理 API 检查仍跳过，能力变化由隔离实例的同一份二进制验证。
+
+### 5. 回滚演练（隔离实例）
+
+- 把隔离实例的 `register-accounts` 改回 `true` 并装回 1.11.0：启动后 auth 目录重新出现
+  `opencode-go-user-example-com.json`，`/api/state` 又带 `accounts`（旧版本行为，预期）；
+- 覆盖安装 1.12.0 并热重载：文件**仍然存在**（1.12 不清理，需要手动删一次），
+  `/api/state` 恢复无 `accounts`；此时该凭据 `supports_quota` 为空，不会出现在「配额管理 → Plugin」；
+- 手动删除后凭据列表清空，插件继续服务 13 个模型。
+
+### 6. 未做与预期结果
+
+- 没有修改宿主、没有关闭管理面板自动更新、没有改 `config.yaml` 的结构（只追加注释）；
+- 「配额管理 → Plugin」不再列出 OpenCode Go、「认证文件」页不再有 `opencode-go-*` 行，这是本次
+  移除的**预期结果**；余量仍在插件仪表盘「账号管理」Tab（直查上游 `/usage`）。
+
+---
+
+## v1.11.0 账号投影瘦身：每 Key 4 个认证文件 → 1 个（生产热重载 + 隔离实例）
+
+### 1. 交付
+
+- **背景**：「配额管理 → Plugin」需要宿主 auth 记录，而「认证文件」页与配额页共用同一份
+  `/v8/management/credentials` 列表，宿主 v8.0.27 没有“只对配额页可见”的隐藏标记；完全隐藏与
+  保留配额页不可兼得。v1.10.2 起路由已改为插件自执行（`TargetKind=self`），
+  `--responses/--messages/--gemini` 三个投影文件只剩「认证文件」页的显示噪音。
+- `internal/accounts.DefaultRoles` 改为只投影 chat 面（`opencode-go-<key 名>.json`）；旧后缀文件
+  由现有“不在期望集合的 marker 文件即删除”逻辑在第一次同步删除，没有新增版本检测或迁移代码。
+- 投影文件的 `note` 改为「…；仅用于「配额管理 → Plugin」显示」；`register-accounts` 语义不变
+  （关闭后不自动删除已生成文件）。
+- README §5/§6/§8、`docs/design.md` §7.9.3、`docs/rollback.md` 与仪表盘「关于」同步说明
+  为什么认证文件页仍会看到 1 行/Key。
+
+### 2. 测试
+
+```
+$ gofmt -l internal cmd        # 无输出
+$ go vet ./...                 # 通过
+$ go test ./...                # 全绿
+```
+
+- `internal/accounts`：`TestPlanBuildsStableMirrorFiles` 期望 2 项（2 Key × 1 面）；
+  新增 `TestSyncRemovesStaleRoleSuffixFiles`（4 个 marker 文件 → 只剩 chat 文件，`removed=3`）。
+- `internal/plugin`：账号同步用例从 8/4 个文件改为 2/1 个。
+- `scripts/acceptance.sh`：`account files` 只接受 `type=opencode-go`，旧后缀文件残留会直接 FAIL。
+
+### 3. 隔离实例（v8.0.27 同版本二进制，端口 8399，独立 auth-dir）
+
+启动前在 auth 目录预置旧版 4 个 marker 文件（chat + `--responses/--messages/--gemini`）：
+
+```
+启动后 auth 目录: opencode-go-user-example-com.json 一个（0600，managed_by，note 新文案）
+state: version=1.11.0 accounts.files={"user@example.com":"opencode-go-user-example-com.json"}
+credentials: 1 条 provider=opencode-go / supports_quota=true / quota_provider=opencode-go /
+             quota_plugin_id=cap-opencode-go / auth_index 有值
+quota fetch: five_hour 0.93 / weekly 0.34 / monthly 0.52（真实上游 /usage，Go 套餐）
+```
+
+公开验收（真实上游）：
+
+- 首次（messages 未启用）**48 passed, 0 failed, 1 skipped**；
+- 打开 `claude-haiku-5-5`（messages）后复跑 **50 passed, 0 failed**，四族流式/非流式全部覆盖
+  （chat=Beam、responses=gpt-6-luna、gemini=gemini-4-argon、messages=claude-haiku-5-5）。
+
+回滚演练（同一隔离实例）：
+
+- 换回 v1.10.3 四个 `.so` + 原地改 config：`version=1.10.3`，auth 目录自动恢复 4 个文件，
+  credentials 4 条（只有 chat 带 `supports_quota`）——旧版本行为；
+- 再换回 v1.11.0：`version=1.11.0`，auth 目录重新收敛到 1 个文件。
+
+### 4. 生产热重载（127.0.0.1:8317）
+
+- 14:02 UTC 安装 `-v1.11.0.so` 四个文件；14:03 UTC 原地追加 config 注释触发 hot reload。
+- `MainPID=4128447`、`ActiveEnterTimestamp=10:02:25 UTC`、config inode `10621868` 均不变；
+  四个面 `active_version=1.11.0`（`/proc/4128447/maps` 同时保留退役的 1.10.3 映射）。
+- auth 目录由 4 个 `opencode-go-*` 文件收敛为 1 个 `opencode-go-user-example-com.json`
+  （`--responses/--messages/--gemini` 已删除），文件带新 `note`。
+- 生产公开验收 **39 passed, 0 failed, 1 skipped**（messages 无启用模型）：`account projection`
+  1 个账号、`account files` 1 个文件（0600 + marker）、四族请求除 messages 外全部 PASS。
+- 管理密钥在 `config.yaml` 里是 bcrypt 哈希、明文不可得，5 项管理检查未在生产跑；隔离实例上
+  用同一份 1.11.0 二进制全部 PASS（plugin list、quota provider、credentials 关联、quota fetch、
+  管理协议探测）。
+- 未改宿主文件/配置，宿主管理面板自动更新保持开启。
 
 ---
 

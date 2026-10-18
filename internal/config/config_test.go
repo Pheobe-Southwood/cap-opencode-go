@@ -260,28 +260,14 @@ models:
 	}
 }
 
-func TestRegisterAccountsDefaultsToOn(t *testing.T) {
-	settings, errParse := Parse([]byte("keys:\n  - name: main\n    key: oc_sk_main\n"))
+// An old config may still carry the removed register-accounts key; the lenient
+// YAML parser must ignore it instead of failing the whole plugin config.
+func TestRemovedRegisterAccountsKeyIsIgnored(t *testing.T) {
+	settings, errParse := Parse([]byte("register-accounts: false\nkeys:\n  - name: main\n    key: oc_sk_main\n"))
 	if errParse != nil {
 		t.Fatalf("parse: %v", errParse)
 	}
-	if !settings.AccountsEnabled() {
-		t.Fatal("the account projection is on unless it is explicitly disabled")
-	}
-
-	disabled, errParse := Parse([]byte("register-accounts: false\nkeys:\n  - name: main\n    key: oc_sk_main\n"))
-	if errParse != nil {
-		t.Fatalf("parse: %v", errParse)
-	}
-	if disabled.AccountsEnabled() {
-		t.Fatal("register-accounts: false must disable the projection")
-	}
-
-	enabled, errParse := Parse([]byte("register-accounts: true\n"))
-	if errParse != nil {
-		t.Fatalf("parse: %v", errParse)
-	}
-	if !enabled.AccountsEnabled() {
-		t.Fatal("register-accounts: true must enable the projection")
+	if len(settings.Keys) != 1 || settings.Keys[0].Name != "main" {
+		t.Fatalf("keys = %+v", settings.Keys)
 	}
 }

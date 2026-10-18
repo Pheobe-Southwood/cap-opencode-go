@@ -79,7 +79,7 @@ func Fetch(ctx context.Context, settings config.Settings) []Snapshot {
 		go func(index int, credential config.Key) {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore; done <- index }()
-			windows, errFetch := FetchKey(ctx, settings, credential)
+			windows, errFetch := fetchKey(ctx, settings, credential)
 			if errFetch != nil {
 				out[index].Error = errFetch.Error()
 				return
@@ -97,10 +97,9 @@ func Fetch(ctx context.Context, settings config.Settings) []Snapshot {
 	return out
 }
 
-// FetchKey queries the usage endpoint for one credential. The host's quota
-// provider RPC serves one credential per call, so the same request/mapping code
-// backs both the dashboard and the CPA quota page.
-func FetchKey(ctx context.Context, settings config.Settings, credential config.Key) ([]Window, error) {
+// fetchKey queries the usage endpoint for one credential. Fetch fans out over
+// the configured keys through this helper.
+func fetchKey(ctx context.Context, settings config.Settings, credential config.Key) ([]Window, error) {
 	endpoint := settings.BaseURL + "/usage"
 	request, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if errRequest != nil {

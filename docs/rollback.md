@@ -2,8 +2,8 @@
 
 插件的设计前提是**零残留**：它不修改 CPA 源码，不改动任何内置 provider 组
 （`openai-compatibility` / `gemini` / `codex` …），也不写 CPA 自己的数据库。
-v1.8 起它会**投影**认证文件（每个 Key 一个，见 §10），但这些文件在插件被卸载时由插件自己删除，
-所以"删除插件 → 没有任何残留"的结论仍然成立。它拥有的只有下面三类文件。
+v1.8–v1.11 它曾**投影**认证文件（每个 Key 一个，见 §10），v1.12 已移除该功能，
+现在插件完全不碰 auth 目录。它落盘的东西只有下面这些。
 
 ## 1. 插件拥有的文件
 
@@ -12,7 +12,7 @@ v1.8 起它会**投影**认证文件（每个 Key 一个，见 §10），但这�
 | 插件库 | `<root>/plugins/<goos>/<goarch>/cap-opencode-go*-v<ver>.so` | `scripts/uninstall.sh` |
 | 配置块 | `config.yaml` 的 `plugins.configs.cap-opencode-go*` | 操作者手动删除（脚本会打印清单） |
 | 数据目录 | `<root>/data/cap-opencode-go/`（`shared.json`、`stats-<role>.json`、可选的 `replay-tracker-import.json` / `debug.log`） | `scripts/uninstall.sh` |
-| 投影账号（v1.8） | `<auth-dir>/opencode-go-<key 名>[--<role>].json`（每个 Key 投影 4 个协议面认证文件，带 `managed_by: cap-opencode-go`） | 插件卸载时自动删除；`scripts/uninstall.sh` 兜底 |
+| 历史投影账号（v1.8–v1.11） | `<auth-dir>/opencode-go-<key 名>.json`（带 `managed_by: cap-opencode-go`） | v1.12 不再生成；`scripts/uninstall.sh` 按标记兜底清理 |
 
 `<root>` 默认 `/root/cliproxyapi`，可用 `CPA_ROOT` 覆盖。
 
@@ -56,7 +56,7 @@ ls /root/cliproxyapi/data/cap-opencode-go 2>/dev/null || echo "无残留"
 | `GET /v0/resource/plugins/cap-opencode-go/dashboard` | 404 |
 | `<root>/data/cap-opencode-go/` | 不存在 |
 | `<root>/plugins/linux/amd64/*.so` | 0 个 |
-| `<root>/auth` 目录 | 0 个文件（v1.8 的投影账号文件由插件在卸载时删除，见 §10） |
+| `<root>/auth` 目录 | 0 个文件（v1.12 起插件不写 auth 目录；历史投影文件见 §10） |
 
 ## 5. v1.2.0 之后仍然零残留
 
@@ -142,43 +142,35 @@ v1.7 回放工具只在停服时读 `token-usage-tracker.db`，不修改该库�
 1.7.8 的价目/模型核对提醒只新增 `/api/stats` 字段和页面元素，不改 stats 文件、不新增状态文件；
 回滚到 1.7.3 / 1.7.1 时这些字段会被旧页面忽略，提醒消失，统计数字不变。
 
-## 10. v1.8 之后仍然零残留（新增投影账号文件，卸载时自动删除）
+## 10. v1.12 起不再写认证文件（历史投影由 uninstall.sh 兜底）
 
-v1.8 为了把 Key 显示在 CPA 自带的「配额管理 → Plugin」里，会往宿主的 auth 目录写文件——这是
-唯一通道（宿主没有"只放内存"的 auth 注册接口）。这些文件由插件自己清理：
+v1.8–v1.11 为了把 Key 显示在 CPA 自带的「配额管理 → Plugin」里，会往宿主的 auth 目录写
+`opencode-go-<key 名>.json`（v1.11 起每 Key 1 个 chat 面文件）。v1.12 已整体移除该功能：
+插件不再创建、改写或删除任何 auth 文件，也不再声明宿主配额 Provider。
 
-| 位置 | v1.8.0 之后 |
+| 位置 | v1.12.0 之后 |
 |---|---|
 | `plugins/linux/amd64/*.so` | 只有插件库（当前版本；重启会清理旧版本） |
 | `data/cap-opencode-go/` | 与 v1.6 / v1.7 相同 |
-| `<auth-dir>/opencode-go-*.json` | 每个配置的 Key 投影 4 个协议面认证文件；`0600`；带 `managed_by` 标记；**卸载时删除** |
-| `config.yaml` | 可能多一行 `register-accounts: false`（只有操作者主动关闭投影时） |
+| `<auth-dir>/opencode-go-*.json` | **不再生成**；从旧版本升级时手动删一次，`uninstall.sh` 也会按 `managed_by` 标记兜底 |
+| `config.yaml` | 不再有 `register-accounts`（旧配置里残留该行会被宽松 YAML 忽略） |
 | 浏览器 | 与 v1.4 相同，默认不存任何东西 |
 
-v1.9（1.9.0 / 1.9.1）的 Key 改名只是把投影文件名从 `opencode-go-<旧名>.json` 换成
-`opencode-go-<新名>.json`：旧文件按陈旧投影删除，没有新增持久化位置，因此回滚矩阵与 v1.8 相同。
-回滚到 v1.8.x 时旧版本会按当时的 `keys[].name` 重新投影，不会留下 1.9 专属文件。
-
-清理判据来自宿主的生命周期回调（详见 `docs/design.md` §7.9.4）：
-
-| 场景 | 宿主行为 | 插件行为 |
-|---|---|---|
-| 热替换升级（换 `.so` 路径） | 先发 `plugin.quiesce` 再加载新实例 | 旧实例停写、**不删**；新实例接管同一批账号 |
-| 删配置块 / `enabled: false` / 停服 | `detachPlugin` → 调库 shutdown 导出 | **删除**全部 `opencode-go-*.json` |
-| `kill -9` / 崩溃 / 只删 `.so` 后重启 | 没有 shutdown 调用，或宿主从未加载插件 | 无法清理 → **`uninstall.sh` 兜底删除** |
-| 热回滚到 1.7.x | 属热替换（quiesce） | **不删**（旧版本不认识这些文件）→ 按下面手动删一次 |
-
-回滚到 1.7.x 时补一条命令：
+从 v1.8–v1.11 升级到 v1.12：热重载完成后删一次历史文件即可（1.11 只留 1 个 chat 面文件，
+更早版本是 4 个协议面文件）：
 
 ```bash
-rm -f "${HOME}/.cli-proxy-api"/opencode-go-*.json   # 或在 CPA 认证文件页逐个删除
-# auth-dir 若在 config.yaml 里改过，用实际路径；CPA 会在下一次 fsnotify 事件里移除对应凭据
+rm -f "${HOME}/.cli-proxy-api"/opencode-go-*.json   # auth-dir 若改过，用实际路径
+# 或只做标记清理：CPA_AUTH_DIR=… bash scripts/uninstall.sh
 ```
 
-只想关闭投影、保留插件：在 `plugins.configs.cap-opencode-go` 里设 `register-accounts: false`，
-然后删一次已生成的文件（插件只在卸载时清理）。`scripts/uninstall.sh` 也会扫描
-`${CPA_AUTH_DIR:-}`、`<root>/auth`、`~/.cli-proxy-api` 并删除带 marker 的文件，其它 provider 的
-认证文件与操作者自己放的同名文件不会被碰。
+**回滚到 v1.11 或更早会重新出现这些文件**：旧版本仍会投影（1.11 = 1 个 chat 面文件，
+v1.8–v1.10 = 4 个协议面文件）。这是旧版本的正常行为；再升级回 v1.12 后按上面命令再删一次。
+
+v1.12 的卸载流程因此更简单：`Shutdown` 只 flush 统计文件，auth 目录不再需要任何清理；
+`scripts/uninstall.sh` 仍会扫描 `${CPA_AUTH_DIR:-}`、`<root>/auth`、`~/.cli-proxy-api` 并删除
+带 `managed_by: cap-opencode-go` 标记的历史文件，其它 provider 的认证文件与操作者自己放的同名
+文件不会被碰。
 
 ## 11. 常见疑问
 

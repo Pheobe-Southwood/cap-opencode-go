@@ -102,9 +102,6 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 			Body:       dashboard.Page(r.PluginID(), string(r.role.Name)),
 		})
 	case strings.HasSuffix(path, resourceState):
-		// Opening the dashboard is also the self-healing hook for the account
-		// projection: if a sync failed earlier it is retried here.
-		r.syncAccountsAsync()
 		return okJSON(pluginapi.ManagementResponse{
 			StatusCode: http.StatusOK,
 			Headers:    jsonHeaders(),
@@ -141,9 +138,6 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 			Headers:    jsonHeaders(),
 			Body: mustJSON(map[string]any{
 				"keys": snapshots,
-				// The dashboard shows which host auth file represents each key,
-				// which is what the operator sees in CPA's 配额管理 page.
-				"accounts": r.accountsState(),
 			}),
 		})
 	default:
@@ -234,9 +228,6 @@ type StatePayload struct {
 	StartedAt      time.Time         `json:"started_at"`
 	Extra          map[string]string `json:"extra_headers,omitempty"`
 	Upstream       *UpstreamSummary  `json:"upstream,omitempty"`
-	// Accounts describes the auth files projected into the host auth directory:
-	// one per configured key, so CPA's 配额管理 → Plugin lists them.
-	Accounts AccountsPayload `json:"accounts"`
 }
 
 // SiblingRow describes one protocol face of the provider.
@@ -342,7 +333,6 @@ func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) Stat
 		ConfigError: r.LastError(),
 		StartedAt:   r.startedAt,
 		Extra:       settings.ExtraHeaders,
-		Accounts:    r.accountsState(),
 	}
 }
 
