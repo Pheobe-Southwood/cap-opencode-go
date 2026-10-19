@@ -64,9 +64,9 @@ OpenCode Go 的 37 个模型分布在 4 个上游端点上，若用一个 provid
 宿主只把 `plugins.configs.<pluginID>` 交给对应实例，实例之间无法互相读取配置。
 因此：
 
-- `cap-opencode-go`（chat 角色）是唯一配置源
+- `cpa-opencodego`（chat 角色）是唯一配置源
 - 它在每次 `plugin.register` / `plugin.reconfigure` 时把解析后的配置写入
-  `<root>/data/cap-opencode-go/shared.json`（原子写：临时文件 + rename）
+  `<root>/data/cpa-opencodego/shared.json`（原子写：临时文件 + rename）
 - 其余三个实例在每次 RPC 前 `stat` 该文件，mtime 变化才重新加载
 
 选择文件而不是复制三份配置，是为了让 Key 只存一处、代理策略只有一份真相。
@@ -315,9 +315,63 @@ v1.12 按操作者要求整体移除：不再写认证文件、不再声明 `quo
 路由一直由插件自己的 `model_router` 负责（§7.5），所以这次移除不影响任何协议面的转发；
 `scripts/uninstall.sh` 保留对历史 `opencode-go-*.json` 的标记清理。
 
+## 7.10 请求日志：插件自测与宿主记账分离（v2.0）
+
+「统计」Tab 的 token 与失败数来自宿主 usage 事件，但那条链路没有对外暴露可关联的请求 id，因此
+无法把宿主 token 与插件测到的 TTFT / 生成时长配成同一行。v2.0 新增「请求日志」Tab 时没有去改宿主
+契约，而是让 executor 自己在转发路径上埋点：
+
+- 每条上游尝试生成一个 `reqlog.Entry`：开始时间、协议面、模型、Key、状态、错误摘要、
+  `x-opencode-log-id`、会话哈希、TTFT、生成时长、总耗时、以及从上游响应帧解析出的 token。
+- token 解析按族进行，并在解析前用 `bytes.Contains` 预筛：chat 的 `usage`、messages 的
+  `message_start.message.usage` + `message_delta.usage`、responses 的
+  `response.completed.response.usage`、gemini 的 `usageMetadata`；非流式直接解析完整 body。
+- **不修改请求体**来换取 usage（不加 `stream_options`），因此不会改变模型行为或 DSH 能力。
+- 每个面写自己的 `requests-<role>.jsonl`（最多 2000 条 / 7 天，>4 MiB 原子压缩），主面在
+  `/api/requests` 合并四个文件；写入失败只记警告，绝不影响请求。
+- 两个新指标：生成 TPS = 有效输出 ÷（首内容帧 → 末内容帧）；端到端 TPS = 有效输出 ÷ 总耗时。
+  失败请求与非流式请求没有 TTFT；失败/无 usage 的请求不计算 TPS，页面显示 “—”。
+- 隐私边界：只存元数据、计数与时间戳；会话只存 8 位 SHA-256 前缀；错误正文截断为 300 字符。
+
+## 7.11 新协议布局与旧版兼容（v2.0）
+
+OpenCode Go 把托管推理从单一 `/v1` 根迁移到按 API family 划分的端点：
+
+```
+{go} = https://opencode.ai/inference/go
+chat       {go}/openai/v1/chat/completions
+responses  {go}/openai/v1/responses
+messages   {go}/anthropic/v1/messages
+gemini     {go}/google/v1beta/models/{id}:generateContent
+models     {go}/v1/models          usage {go}/v1/usage
+```
+
+插件用 `endpoint-layout` 选择布局：`auto`（默认）在 base-url 以 `/v1` 结尾时走旧单根，
+否则走新分族；`base-urls` 可按族固定 API 根。旧配置（`.../inference/go/v1`、`.../zen/go/v1`）
+不改一行就能继续工作，因此迁移是可选的、渐进的。
+
+同一版本还收紧了两个兼容点：
+
+1. **`developer` 角色归一化**：OpenCode Go 新 router 的部分网关节点不接受 Chat Completions 的
+   `developer` 角色（HTTP 400 `chat message role developer is not supported by the router gRPC
+   frontend`）。插件在发送前把 OpenAI 形状请求（chat 的 `messages[]`、responses 的 `input[]`）
+   里的 `developer` 改写为 `system`；两者在这些 provider 上语义相同，因此不影响模型能力。
+   `developer-role: keep` 可关闭。
+2. **请求头边界**：插件只自行发送 `x-opencode-session`；`User-Agent` 从入站请求透传，插件不合成、
+   也不提供 UA 配置。这样 OpenCode 看到的是真实客户端身份，而不是代理伪造的身份。
+
+模型族归属没有改变：实测同一模型在 chat 与 anthropic 两个族端点都能正常服务，所以 v2 不做
+跨族迁移，只改端点拼装方式。
+
 ## 8. 版本兼容
 
 插件 ABI 是 `dlopen` + C ABI（`ABIVersion = 1`，注册 `schema_version = 6`），
 与宿主的 Go 工具链、依赖版本**无关**（现网的 `cap-token-usage-tracker` 用 go1.26.8 + v7 SDK
 构建，在 v8.0.27 宿主上正常工作即为例证）。本项目只 import public 的 `sdk/pluginapi` 与
 `sdk/pluginabi`，不依赖 `internal/*`，因此 CPA 升级只需要重新编译。
+
+v2.0 把插件 id 从 `cap-opencode-go` 改为 `cpa-opencodego`（宿主按 `.so` 文件名推导 id），
+因此配置块（`plugins.configs.*`）与状态目录要随之改名/迁移；宿主支持插件热重载，原地替换
+`.so` 并改写 `config.yaml` 即可完成升级，**不需要重启**。旧 id 的 `.so` 若残留在插件目录里会
+被注册成第二套 provider，`scripts/install.sh` / `scripts/uninstall.sh` 会主动清理。provider key
+（`opencode-go*`）保持不变，所以 usage 归属与宿主侧既有引用不受影响。

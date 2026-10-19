@@ -32,7 +32,7 @@ package dashboard
 import (
 	"strings"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/brand"
 )
 
 // Page returns the dashboard document for a plugin id and role.

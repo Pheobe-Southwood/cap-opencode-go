@@ -48,7 +48,7 @@ const (
 	// Repository is the repository URL for plugin source and support. The
 	// management centre renders it as the plugin row's "open repository" link
 	// and the dashboard links it from the about panel.
-	Repository = "https://github.com/Pheobe-Southwood/cap-opencode-go"
+	Repository = "https://github.com/Pheobe-Southwood/cpa-opencodego"
 	// Attribution credits the upstream project whose mark is embedded above.
 	Attribution = "OpenCode 图标 © SST (https://opencode.ai, MIT)"
 )

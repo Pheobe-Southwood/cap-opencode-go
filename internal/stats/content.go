@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // maxContentFrame bounds the frame inspected for a first-content timestamp. A

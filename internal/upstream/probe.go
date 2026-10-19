@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // probeTimeout bounds one protocol-family probe so the dashboard never waits on

@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // maxErrorBody caps how much upstream error text is surfaced downstream.
@@ -38,6 +38,10 @@ type Call struct {
 	Stream         bool
 	Body           []byte
 	Session        string
+	// UserAgent is the inbound client's User-Agent, forwarded verbatim so the
+	// upstream sees the real client instead of a synthesised plugin identity.
+	// The plugin owns exactly one request header of its own: x-opencode-session.
+	UserAgent string
 	// Credential is the selected upstream credential chosen by CPA's AuthManager.
 	Credential config.Key
 }
@@ -168,9 +172,10 @@ func (c *Client) Stream(ctx context.Context, call Call) (*Stream, error) {
 }
 
 func (c *Client) do(ctx context.Context, call Call, credential config.Key, settings config.Settings) (*http.Response, error) {
-	endpoint := settings.BaseURL + call.Role.BuildPath(call.Model, call.Stream)
+	endpoint := settings.EndpointURL(call.Role, call.Model, call.Stream)
 	body := call.Body
 	if call.Role.StripsStreamField() {
+		body = normalizeDeveloperRoles(call.Role, body, settings.DeveloperRoleRewrite())
 		body = rewriteModelField(body, call.RequestedModel, call.Model)
 		body = forceStreamFlag(body, call.Stream)
 	}
@@ -185,6 +190,9 @@ func (c *Client) do(ctx context.Context, call Call, credential config.Key, setti
 	headers.Set("Content-Type", "application/json")
 	headers.Set("Authorization", "Bearer "+credential.Key)
 	headers.Set("Accept", acceptHeader(call.Stream))
+	if userAgent := strings.TrimSpace(call.UserAgent); userAgent != "" {
+		headers.Set("User-Agent", userAgent)
+	}
 	if session := strings.TrimSpace(call.Session); session != "" {
 		headers.Set("x-opencode-session", session)
 	}

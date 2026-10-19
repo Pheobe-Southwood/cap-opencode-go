@@ -70,6 +70,7 @@ OpenCode Go 聚合了大量顶级大语言模型（DeepSeek V4.1、Claude Haiku 
   - **平均 TTFT**：精准捕捉发起请求到接收首个有效字耗时，直观反映网络建连与排队开销。
 - **费用与配额进度**：内置官方价目快照，按 Go / Go Plus 套餐智能推算逐模型月度限额消耗进度，并在每行清晰展示各 Key 的余量分布。
 - **更新提醒**：内置价目表每 30 天或上游模型变动时在面板顶部温和提醒核对，保持数据准确。
+- **逐条请求日志**：新增「请求日志」Tab，逐条列出每次上游尝试的时间、输入/输出/合计 token、TTFT、生成 TPS、端到端 TPS、状态与错误；失败请求和上游 `x-opencode-log-id` 都能直接查看。
 
 ---
 
@@ -85,15 +86,17 @@ OpenCode Go 聚合了大量顶级大语言模型（DeepSeek V4.1、Claude Haiku 
 
 ---
 
+> **v2.0.0**：插件 id 与仓库已更名为 `cpa-opencodego`；新增「请求日志」Tab，并支持 OpenCode Go 新分族端点（旧 `/v1` 端点继续兼容）。升级前请阅读 [v2 升级指南](docs/UPGRADE-v2.md)。
+
 ## 快速使用
 
 ### 第一步：获取与部署插件
 
 将编译好的 4 个 `.so` 文件复制到 CPA 宿主的插件目录（通常为 `plugins/linux/amd64/`）：
-- `cap-opencode-go-v1.12.0.so`
-- `cap-opencode-go-responses-v1.12.0.so`
-- `cap-opencode-go-messages-v1.12.0.so`
-- `cap-opencode-go-gemini-v1.12.0.so`
+- `cpa-opencodego-v2.0.0.so`
+- `cpa-opencodego-responses-v2.0.0.so`
+- `cpa-opencodego-messages-v2.0.0.so`
+- `cpa-opencodego-gemini-v2.0.0.so`
 
 ### 第二步：添加宿主配置
 
@@ -104,22 +107,25 @@ plugins:
   enabled: true
   dir: "plugins"
   configs:
-    cap-opencode-go:
+    cpa-opencodego:
       enabled: true
-      base-url: "https://opencode.ai/inference/go/v1"
+      base-url: "https://opencode.ai/inference/go"
+      endpoint-layout: "auto"
+      developer-role: "rewrite"
+      request-log: true
       keys:
         - name: "primary-key"
           key: "oc_sk_your_api_key_here"
           priority: 10
           enabled: true
-    cap-opencode-go-responses: { enabled: true }
-    cap-opencode-go-messages:  { enabled: true }
-    cap-opencode-go-gemini:    { enabled: true }
+    cpa-opencodego-responses: { enabled: true }
+    cpa-opencodego-messages:  { enabled: true }
+    cpa-opencodego-gemini:    { enabled: true }
 ```
 
 ### 第三步：在控制台畅享使用
 
-1. 启动或重启 CLIProxyAPI 服务。
+1. 启动 CLIProxyAPI 服务；升级时把 `.so` 与配置原地替换即可热重载，不需要重启。
 2. 打开 CPA 管理面板，在左侧导航栏「插件」中点击 **OpenCode Go** 入口。
 3. 即可在可视化界面中管理所有模型开关、为各模型挑选代理策略、监控实时额度与性能指标！
 

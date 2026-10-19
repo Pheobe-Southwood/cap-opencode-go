@@ -10,10 +10,10 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/dashboard"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/quota"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/dashboard"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/quota"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // Resource paths served by the main build. Only /dashboard carries a Menu, so
@@ -24,6 +24,7 @@ const (
 	resourceQuota     = "/api/quota"
 	resourceModels    = "/api/models"
 	resourceStats     = "/api/stats"
+	resourceRequests  = "/api/requests"
 )
 
 type managementRegistrationResponse struct {
@@ -60,6 +61,7 @@ func (r *Runtime) handleManagementRegister(request []byte) []byte {
 			{Path: resourceQuota, Description: "OpenCode Go 各 Key 的额度余量"},
 			{Path: resourceModels, Description: "OpenCode Go 上游模型列表与本插件模型配置的合并视图"},
 			{Path: resourceStats, Description: "本插件用过的模型的 token、刊例价、月额度、平均 TPS 与 TTFT"},
+			{Path: resourceRequests, Description: "逐条请求日志：时间、token、TTFT、生成 TPS、端到端 TPS 与失败状态"},
 		},
 	}
 	return okJSON(response)
@@ -128,6 +130,13 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 			StatusCode: http.StatusOK,
 			Headers:    jsonHeaders(),
 			Body:       mustJSON(r.statsPayload(managementRequest.Query)),
+		})
+	case strings.HasSuffix(path, resourceRequests):
+		r.refreshShared()
+		return okJSON(pluginapi.ManagementResponse{
+			StatusCode: http.StatusOK,
+			Headers:    jsonHeaders(),
+			Body:       mustJSON(r.requestsPayload(managementRequest.Query)),
 		})
 	case strings.HasSuffix(path, resourceQuota):
 		r.refreshShared()
@@ -220,6 +229,13 @@ type StatePayload struct {
 	ModelsDefault  string            `json:"models_default_proxy"`
 	TimeoutSeconds int               `json:"timeout_seconds"`
 	Plan           string            `json:"plan"`
+	EndpointLayout string            `json:"endpoint_layout"`
+	Endpoints      map[string]string `json:"endpoints"`
+	ModelsURL      string            `json:"models_url"`
+	UsageURL       string            `json:"usage_url"`
+	DeveloperRole  string            `json:"developer_role"`
+	RequestLog     bool              `json:"request_log"`
+	Migration      string            `json:"migration,omitempty"`
 	Debug          bool              `json:"debug"`
 	Keys           []KeyState        `json:"keys"`
 	Models         []ModelRow        `json:"models"`
@@ -252,6 +268,9 @@ type SiblingRow struct {
 	Formats []string `json:"formats"`
 	// Endpoint is the upstream endpoint family this face talks to.
 	Endpoint string `json:"endpoint"`
+	// ResolvedEndpoint is the URL the face actually calls for the active
+	// endpoint layout, so the operator can verify the v1/v2 migration.
+	ResolvedEndpoint string `json:"resolved_endpoint,omitempty"`
 	// Main reports whether this face carries the sidebar page and the plugin
 	// configuration. Exactly one face does.
 	Main bool `json:"main"`
@@ -273,6 +292,14 @@ func (r *Runtime) StatePayload() StatePayload {
 func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) StatePayload {
 	settings := r.Settings()
 	resolver := r.Resolver()
+	endpoints := make(map[string]string, len(roles.All))
+	for _, role := range roles.All {
+		sample := "model"
+		if entries := resolver.EntriesForFamily(role.Name); len(entries) > 0 {
+			sample = entries[0].ID
+		}
+		endpoints[string(role.Name)] = settings.EndpointURL(role, sample, false)
+	}
 	siblings := make([]SiblingRow, 0, len(roles.All))
 	for _, role := range roles.All {
 		served := resolver.EntriesForFamily(role.Name)
@@ -284,13 +311,14 @@ func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) Stat
 			sample = append(sample, entry.ID)
 		}
 		siblings = append(siblings, SiblingRow{
-			PluginID: role.PluginSuffix,
-			Role:     string(role.Name),
-			Provider: role.Provider,
-			Label:    role.Label,
-			Protocol: role.Protocol,
-			Formats:  append([]string(nil), role.Formats...),
-			Endpoint: role.Endpoint,
+			PluginID:         role.PluginSuffix,
+			Role:             string(role.Name),
+			Provider:         role.Provider,
+			Label:            role.Label,
+			Protocol:         role.Protocol,
+			Formats:          append([]string(nil), role.Formats...),
+			Endpoint:         role.Endpoint,
+			ResolvedEndpoint: endpoints[string(role.Name)],
 			// The main face is the one that registers the management API, which
 			// is the chat build; it owns the page and the configuration.
 			Main:       role.Name == roles.Chat,
@@ -315,6 +343,13 @@ func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) Stat
 		ModelsDefault:  settings.ModelConfig("__default__").Proxy,
 		TimeoutSeconds: settings.RequestTimeoutSeconds,
 		Plan:           settings.Plan,
+		EndpointLayout: string(settings.Layout()),
+		Endpoints:      endpoints,
+		ModelsURL:      settings.ModelsURL(),
+		UsageURL:       settings.UsageURL(),
+		DeveloperRole:  settings.DeveloperRole,
+		RequestLog:     settings.RequestLogEnabled(),
+		Migration:      r.Migration(),
 		Debug:          settings.Debug,
 		Keys: func() []KeyState {
 			out := make([]KeyState, len(settings.Keys))

@@ -3,9 +3,9 @@ package plugin
 import (
 	"path/filepath"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/stats"
 )
 
 // statsFilePrefix names the per-face counter files next to shared.json. One

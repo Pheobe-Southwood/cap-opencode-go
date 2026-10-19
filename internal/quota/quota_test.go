@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
 )
 
 func boolPointer(value bool) *bool { return &value }
@@ -42,6 +42,8 @@ func TestFetchCoversDisabledKeysAndSkipsEmptySecrets(t *testing.T) {
 
 	settings := config.Default()
 	settings.BaseURL = server.URL
+	// The httptest base has no /v1 suffix, so pin the legacy /usage path.
+	settings.EndpointLayout = config.LayoutLegacy
 	settings.Keys = []config.Key{
 		{Name: "off", Key: "oc_sk_off_000000000000", Enabled: boolPointer(false)},
 		{Name: "on", Key: "oc_sk_on_111111111111", Enabled: boolPointer(true)},

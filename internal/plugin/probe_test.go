@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 func TestMainBuildDeclaresProbeRoute(t *testing.T) {
@@ -58,6 +58,8 @@ func TestProbeRouteDispatch(t *testing.T) {
 	runtime := New(rolesChat())
 	settings := config.Default()
 	settings.BaseURL = server.URL
+	// The mock answers the legacy paths; the route under test is layout-agnostic.
+	settings.EndpointLayout = config.LayoutLegacy
 	settings.Keys = []config.Key{{Name: "k1", Key: "secret"}}
 	runtime.applySettings(settings)
 

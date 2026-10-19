@@ -3,7 +3,7 @@ package models
 import (
 	"testing"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // The id-prefix rule is what routes a model OpenCode Go publishes after this

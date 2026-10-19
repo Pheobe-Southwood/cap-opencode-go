@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/models"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/models"
 )
 
 func nanoDollars(value float64) int64 { return int64(value*1e9 + 0.5) }

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/upstream"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/upstream"
 )
 
 func stubHostCall(t *testing.T, call func(method string, payload []byte) ([]byte, error)) {

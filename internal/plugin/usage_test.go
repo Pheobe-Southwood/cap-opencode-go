@@ -8,8 +8,8 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 func newStatsTestRuntime(t *testing.T, role roles.Name) *Runtime {
@@ -37,11 +37,11 @@ func usageAt() time.Time {
 
 func TestUsageProviderFilter(t *testing.T) {
 	accepted := []pluginapi.UsageRecord{
-		{Provider: "cap-opencode-go", Model: "glm-5.3"},
-		{Provider: "cap-opencode-go-messages", Model: "glm-5.3"},
+		{Provider: "cpa-opencodego", Model: "glm-5.3"},
+		{Provider: "cpa-opencodego-messages", Model: "glm-5.3"},
 		{Provider: "opencode-go-gemini", Model: "glm-5.3"},
-		{Source: "cap-opencode-go-responses", Model: "glm-5.3"},
-		{ExecutorType: "plugin:cap-opencode-go", Model: "glm-5.3"},
+		{Source: "cpa-opencodego-responses", Model: "glm-5.3"},
+		{ExecutorType: "plugin:cpa-opencodego", Model: "glm-5.3"},
 	}
 	for _, record := range accepted {
 		if !ownsUsageRecord(record) {
@@ -62,7 +62,7 @@ func TestUsageProviderFilter(t *testing.T) {
 func TestUsageRecordsOnlyOwnProvider(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go",
+		Provider: "cpa-opencodego",
 		Model:    "glm-5.3",
 		Detail:   pluginapi.UsageDetail{InputTokens: 10, OutputTokens: 2, TotalTokens: 12},
 	})
@@ -89,7 +89,7 @@ func TestUsageResolvesAliasAndPrices(t *testing.T) {
 	runtime.applySettings(settings)
 
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider:    "cap-opencode-go",
+		Provider:    "cpa-opencodego",
 		Model:       "DeepSeek-V4.1-Flash",
 		RequestedAt: usageAt(),
 		Stream:      true,
@@ -121,7 +121,7 @@ func TestUsageResolvesAliasAndPrices(t *testing.T) {
 func TestUsageMessagesCacheConvention(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider:    "cap-opencode-go-messages",
+		Provider:    "cpa-opencodego-messages",
 		Model:       "claude-haiku-5-5",
 		RequestedAt: usageAt(),
 		Detail: pluginapi.UsageDetail{
@@ -143,7 +143,7 @@ func TestUsageMessagesCacheConvention(t *testing.T) {
 func TestUsageGeminiAddsReasoningToOutputCost(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider:    "cap-opencode-go-gemini",
+		Provider:    "cpa-opencodego-gemini",
 		Model:       "gemini-4-argon-contributor",
 		RequestedAt: usageAt(),
 		Latency:     4 * time.Second,
@@ -163,11 +163,11 @@ func TestUsageGeminiAddsReasoningToOutputCost(t *testing.T) {
 func TestUsageFreeAndUnpricedModels(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "longcat-2.5-preview-free",
+		Provider: "cpa-opencodego", Model: "longcat-2.5-preview-free",
 		Detail: pluginapi.UsageDetail{InputTokens: 1_000},
 	})
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "omen-alpha",
+		Provider: "cpa-opencodego", Model: "omen-alpha",
 		Detail: pluginapi.UsageDetail{InputTokens: 1_000},
 	})
 	snapshot := runtime.statsStore().Snapshot(time.Time{})
@@ -187,11 +187,11 @@ func TestUsageFreeAndUnpricedModels(t *testing.T) {
 func TestUsageFallsBackToAliasAndResponseModel(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Alias: "deepseek-v4.1-flash",
+		Provider: "cpa-opencodego", Alias: "deepseek-v4.1-flash",
 		Detail: pluginapi.UsageDetail{InputTokens: 10},
 	})
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", ResponseModel: "glm-5.3",
+		Provider: "cpa-opencodego", ResponseModel: "glm-5.3",
 		Detail: pluginapi.UsageDetail{InputTokens: 10},
 	})
 	snapshot := runtime.statsStore().Snapshot(time.Time{})
@@ -206,7 +206,7 @@ func TestUsageFallsBackToAliasAndResponseModel(t *testing.T) {
 func TestUsageBareModelNameStripsThinkingSuffix(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "glm-5.3(high)",
+		Provider: "cpa-opencodego", Model: "glm-5.3(high)",
 		Detail: pluginapi.UsageDetail{InputTokens: 10},
 	})
 	if _, exists := runtime.statsStore().Snapshot(time.Time{}).Models["glm-5.3"]; !exists {

@@ -75,7 +75,7 @@ const document = {
 };
 const storage = () => ({ getItem() { return null; }, setItem() {}, removeItem() {} });
 const window = {
-  location: { pathname: '/v0/resource/plugins/cap-opencode-go/dashboard', hash: '', origin: 'http://127.0.0.1:8399' },
+  location: { pathname: '/v0/resource/plugins/cpa-opencodego/dashboard', hash: '', origin: 'http://127.0.0.1:8399' },
   history: { replaceState() {} },
   addEventListener() {},
   confirm() { return true; },

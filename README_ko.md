@@ -17,6 +17,9 @@
 
 ---
 
+> **v2.0.0**: 플러그인 id 와 저장소 이름이 `cpa-opencodego` 로 변경되었습니다. 요청 로그 탭과 OpenCode Go 의 새로운 패밀리별 엔드포인트를 추가했으며, 기존 `/v1` 엔드포인트도 계속 호환됩니다. 업그레이드 전에 [v2 업그레이드 가이드](docs/UPGRADE-v2.md) 를 확인하세요.
+
+
 ## 핵심 가치와 주요 특징
 
 OpenCode Go는 최신 고성능 AI 모델 37종(DeepSeek V4.1, Claude Haiku 5.5, Gemini 4 Argon, GPT 6 Luna, Grok 4.7, Qwen 3.8, Kimi K3 등)을 한곳에 모아 제공합니다. 그러나 업스트림 모델들이 4개의 서로 다른 프로토콜 엔드포인트로 나뉘어 있고, 모델마다 네트워크 프록시 요구 조건이 상이합니다.
@@ -70,6 +73,7 @@ OpenCode Go는 최신 고성능 AI 모델 37종(DeepSeek V4.1, Claude Haiku 5.5,
   - **평균 TTFT**: 요청 전송 시점부터 첫 유효 토큰 수신까지의 소요 시간.
 - **비용 및 한도 소진율**: 공식 요금표 스냅샷을 내장하여 Go / Go Plus 플랜 기준 모델별 월간 한도 소진율과 각 키별 잔여 금액을 정밀하게 표시합니다.
 - **업데이트 알림**: 30일 경과 시 또는 상위 모델 목록 변경 시 대시보드 상단에 부드러운 알림을 띄워 데이터 정합성을 유지합니다.
+- **요청 로그**: 새 탭에서 각 상류 시도의 시각, 입력/출력/합계 토큰, TTFT, 생성 TPS, 종단간 TPS, 상태와 오류를 한 줄씩 보여 줍니다. 실패 사유와 상류 `x-opencode-log-id` 도 확인할 수 있습니다.
 
 ---
 
@@ -90,10 +94,10 @@ OpenCode Go는 최신 고성능 AI 모델 37종(DeepSeek V4.1, Claude Haiku 5.5,
 ### 1단계: 플러그인 라이브러리 배치
 
 빌드된 4개의 `.so` 파일을 CPA 플러그인 디렉터리(일반적으로 `plugins/linux/amd64/`)에 복사합니다:
-- `cap-opencode-go-v1.12.0.so`
-- `cap-opencode-go-responses-v1.12.0.so`
-- `cap-opencode-go-messages-v1.12.0.so`
-- `cap-opencode-go-gemini-v1.12.0.so`
+- `cpa-opencodego-v2.0.0.so`
+- `cpa-opencodego-responses-v2.0.0.so`
+- `cpa-opencodego-messages-v2.0.0.so`
+- `cpa-opencodego-gemini-v2.0.0.so`
 
 ### 2단계: 호스트 설정 추가
 
@@ -104,17 +108,20 @@ plugins:
   enabled: true
   dir: "plugins"
   configs:
-    cap-opencode-go:
+    cpa-opencodego:
       enabled: true
-      base-url: "https://opencode.ai/inference/go/v1"
+      base-url: "https://opencode.ai/inference/go"
+      endpoint-layout: "auto"
+      developer-role: "rewrite"
+      request-log: true
       keys:
         - name: "primary-key"
           key: "oc_sk_your_api_key_here"
           priority: 10
           enabled: true
-    cap-opencode-go-responses: { enabled: true }
-    cap-opencode-go-messages:  { enabled: true }
-    cap-opencode-go-gemini:    { enabled: true }
+    cpa-opencodego-responses: { enabled: true }
+    cpa-opencodego-messages:  { enabled: true }
+    cpa-opencodego-gemini:    { enabled: true }
 ```
 
 ### 3단계: 관리 콘솔에서 바로 사용

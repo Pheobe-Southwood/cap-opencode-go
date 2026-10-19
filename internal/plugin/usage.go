@@ -7,10 +7,10 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/models"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/models"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/pricing"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/stats"
 )
 
 // handleUsage receives the host's usage events. The host already resolved the
@@ -58,7 +58,7 @@ func (r *Runtime) handleUsage(request []byte) []byte {
 
 // ownsUsageRecord accepts the labels the host and the token tracker use for
 // this plugin's four provider faces. The live host reports the plugin id
-// (cap-opencode-go*) rather than executor.identifier's provider key, so both
+// (cpa-opencodego*) rather than executor.identifier's provider key, so both
 // spellings, and the "plugin:" prefix some reports carry, are accepted.
 func ownsUsageRecord(record pluginapi.UsageRecord) bool {
 	for _, value := range []string{record.Provider, record.Source, record.ExecutorType} {

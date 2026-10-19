@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/models"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/models"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // Entry is one resolvable model id.

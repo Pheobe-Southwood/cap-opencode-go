@@ -17,6 +17,9 @@
 
 ---
 
+> **v2.0.0**: the plugin id and repository are now `cpa-opencodego`. This release adds the request-log tab and the new OpenCode Go per-family endpoints (the legacy `/v1` endpoints keep working). Read the [v2 upgrade guide](docs/UPGRADE-v2.md) before upgrading.
+
+
 ## Core Value & Key Highlights
 
 OpenCode Go hosts 37 leading AI models (DeepSeek V4.1, Claude Haiku 5.5, Gemini 4 Argon, GPT 6 Luna, Grok 4.7, Qwen 3.8, Kimi K3, and more). However, upstream models are distributed across 4 incompatible protocol endpoints, and different models demand strict routing policies.
@@ -70,6 +73,7 @@ This plugin delivers a unified, turnkey integration for CLIProxyAPI (CPA):
   - **Average TTFT**: Precise timing from upstream request dispatch to the first substantive token.
 - **Cost & Quota Projections**: Automatic valuation based on embedded official pricing sheets for Go and Go Plus tiers, detailing per-key quota utilization per model.
 - **Staleness Alerts**: Proactively prompts for price verification every 30 days or whenever upstream model catalogs change.
+- **Per-Request Log**: A new tab lists every upstream attempt with its time, input/output/total tokens, TTFT, generation TPS, end-to-end TPS, status and error. Failed requests and the upstream `x-opencode-log-id` are visible for troubleshooting.
 
 ---
 
@@ -90,10 +94,10 @@ This plugin delivers a unified, turnkey integration for CLIProxyAPI (CPA):
 ### Step 1: Deploy Plugin Libraries
 
 Copy the 4 compiled `.so` files to your CPA plugins folder (typically `plugins/linux/amd64/`):
-- `cap-opencode-go-v1.12.0.so`
-- `cap-opencode-go-responses-v1.12.0.so`
-- `cap-opencode-go-messages-v1.12.0.so`
-- `cap-opencode-go-gemini-v1.12.0.so`
+- `cpa-opencodego-v2.0.0.so`
+- `cpa-opencodego-responses-v2.0.0.so`
+- `cpa-opencodego-messages-v2.0.0.so`
+- `cpa-opencodego-gemini-v2.0.0.so`
 
 ### Step 2: Add Configuration
 
@@ -104,22 +108,25 @@ plugins:
   enabled: true
   dir: "plugins"
   configs:
-    cap-opencode-go:
+    cpa-opencodego:
       enabled: true
-      base-url: "https://opencode.ai/inference/go/v1"
+      base-url: "https://opencode.ai/inference/go"
+      endpoint-layout: "auto"
+      developer-role: "rewrite"
+      request-log: true
       keys:
         - name: "primary-key"
           key: "oc_sk_your_api_key_here"
           priority: 10
           enabled: true
-    cap-opencode-go-responses: { enabled: true }
-    cap-opencode-go-messages:  { enabled: true }
-    cap-opencode-go-gemini:    { enabled: true }
+    cpa-opencodego-responses: { enabled: true }
+    cpa-opencodego-messages:  { enabled: true }
+    cpa-opencodego-gemini:    { enabled: true }
 ```
 
 ### Step 3: Manage & Enjoy
 
-1. Launch or restart CLIProxyAPI.
+1. Launch CLIProxyAPI. For upgrades the replaced `.so` files and the config hot-reload in place, so no restart is needed.
 2. Open the CPA Management WebUI and navigate to **OpenCode Go** under the "Plugins" menu.
 3. Manage models, toggle custom proxies, and observe live quota and performance statistics!
 

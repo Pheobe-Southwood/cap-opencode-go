@@ -17,6 +17,9 @@
 
 ---
 
+> **v2.0.0** : l'id du plugin et le dépôt s'appellent désormais `cpa-opencodego`. Cette version ajoute l'onglet Journal des requêtes et les nouveaux points d'accès OpenCode Go par famille (les anciens points d'accès `/v1` restent compatibles). Lisez le [guide de mise à niveau v2](docs/UPGRADE-v2.md) avant de mettre à jour.
+
+
 ## Points Forts et Valeur Clé
 
 OpenCode Go réunit 37 modèles d'intelligence artificielle de premier plan (DeepSeek V4.1, Claude Haiku 5.5, Gemini 4 Argon, GPT 6 Luna, Grok 4.7, Qwen 3.8, Kimi K3, etc.). Cependant, ces modèles sont répartis sur 4 points de terminaison protocolaires hétérogènes et exigent des règles de routage réseau spécifiques.
@@ -70,6 +73,7 @@ Ce plugin apporte une intégration complète et immédiate à CLIProxyAPI (CPA) 
   - **TTFT Moyen** : Temps écoulé entre l'envoi de la requête à l'amont et la réception du premier jeton effectif.
 - **Suivi Budgétaire et Quotas** : Conversion automatique basée sur la grille tarifaire officielle pour les forfaits Go et Go Plus, affichant la consommation par clé pour chaque modèle.
 - **Rappels de Mise à Jour** : Une alerte discrète s'affiche tous les 30 jours ou lors de modifications du catalogue amont pour vérifier la conformité des barèmes.
+- **Journal des Requêtes** : Un nouvel onglet liste chaque tentative amont avec l'heure, les jetons d'entrée/sortie/total, le TTFT, le TPS de génération, le TPS de bout en bout, le statut et l'erreur. Les échecs et le `x-opencode-log-id` amont y sont consultables.
 
 ---
 
@@ -90,10 +94,10 @@ Ce plugin apporte une intégration complète et immédiate à CLIProxyAPI (CPA) 
 ### Étape 1 : Déploiement des Fichiers du Plugin
 
 Copiez les 4 fichiers `.so` compilés dans le dossier des plugins de CPA (généralement `plugins/linux/amd64/`) :
-- `cap-opencode-go-v1.12.0.so`
-- `cap-opencode-go-responses-v1.12.0.so`
-- `cap-opencode-go-messages-v1.12.0.so`
-- `cap-opencode-go-gemini-v1.12.0.so`
+- `cpa-opencodego-v2.0.0.so`
+- `cpa-opencodego-responses-v2.0.0.so`
+- `cpa-opencodego-messages-v2.0.0.so`
+- `cpa-opencodego-gemini-v2.0.0.so`
 
 ### Étape 2 : Ajout de la Configuration
 
@@ -104,17 +108,20 @@ plugins:
   enabled: true
   dir: "plugins"
   configs:
-    cap-opencode-go:
+    cpa-opencodego:
       enabled: true
-      base-url: "https://opencode.ai/inference/go/v1"
+      base-url: "https://opencode.ai/inference/go"
+      endpoint-layout: "auto"
+      developer-role: "rewrite"
+      request-log: true
       keys:
         - name: "primary-key"
           key: "oc_sk_your_api_key_here"
           priority: 10
           enabled: true
-    cap-opencode-go-responses: { enabled: true }
-    cap-opencode-go-messages:  { enabled: true }
-    cap-opencode-go-gemini:    { enabled: true }
+    cpa-opencodego-responses: { enabled: true }
+    cpa-opencodego-messages:  { enabled: true }
+    cpa-opencodego-gemini:    { enabled: true }
 ```
 
 ### Étape 3 : Utilisation Immédiate dans l'Interface

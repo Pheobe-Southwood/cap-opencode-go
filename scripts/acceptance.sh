@@ -72,7 +72,7 @@ fi
 
 # The plugin only answers for models the operator enabled, so pick one enabled
 # model per protocol family from the live state instead of assuming a fixed set.
-STATE_JSON="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/state" 2>/dev/null || echo '{}')"
+STATE_JSON="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cpa-opencodego/api/state" 2>/dev/null || echo '{}')"
 
 pick() {
   printf '%s' "${STATE_JSON}" | python3 -c '
@@ -191,10 +191,10 @@ for plugin in payload.get("plugins", []):
     python3 -c '
 import sys, json
 FACES = {
-    "cap-opencode-go": "OpenCode Go",
-    "cap-opencode-go-responses": "OpenCode Go · Responses",
-    "cap-opencode-go-messages": "OpenCode Go · Messages",
-    "cap-opencode-go-gemini": "OpenCode Go · Gemini",
+    "cpa-opencodego": "OpenCode Go",
+    "cpa-opencodego-responses": "OpenCode Go · Responses",
+    "cpa-opencodego-messages": "OpenCode Go · Messages",
+    "cpa-opencodego-gemini": "OpenCode Go · Gemini",
 }
 try:
     payload = json.load(sys.stdin)
@@ -221,8 +221,8 @@ if bad_name:
     print("names\tfail\t" + ", ".join(pid + "=" + str(entries[pid].get("metadata", {}).get("name")) for pid in bad_name))
 else:
     print("names\tok\t" + " / ".join(FACES[pid] for pid in sorted(FACES)))
-main_fields = len(entries["cap-opencode-go"].get("config_fields") or [])
-sibling_fields = sum(len(entries[pid].get("config_fields") or []) for pid in FACES if pid != "cap-opencode-go")
+main_fields = len(entries["cpa-opencodego"].get("config_fields") or [])
+sibling_fields = sum(len(entries[pid].get("config_fields") or []) for pid in FACES if pid != "cpa-opencodego")
 if main_fields and not sibling_fields:
     print("config\tok\tmain %d fields, siblings 0" % main_fields)
 else:
@@ -243,7 +243,14 @@ else:
 
 fi
 
-state="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/state" 2>/dev/null || true)"
+state="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cpa-opencodego/api/state" 2>/dev/null || true)"
+if printf '%s' "${state}" | grep -q '"endpoint_layout"'; then
+  printf '  PASS  %-46s %s layout\n' "protocol layout resource" "$(printf '%s' "${state}" | python3 -c 'import sys,json;print((json.load(sys.stdin).get("endpoint_layout") or "?"))' 2>/dev/null || echo '?')"
+  PASS=$((PASS + 1))
+else
+  printf '  FAIL  %-46s endpoint_layout missing\n' "protocol layout resource"
+  FAIL=$((FAIL + 1))
+fi
 if printf '%s' "${state}" | grep -q '"models"'; then
   printf '  PASS  %-46s\n' "dashboard state resource"
   PASS=$((PASS + 1))
@@ -252,7 +259,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-merged="$(timeout 120 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/models" 2>/dev/null || true)"
+merged="$(timeout 120 curl -s "${BASE}/v0/resource/plugins/cpa-opencodego/api/models" 2>/dev/null || true)"
 if printf '%s' "${merged}" | grep -q '"models"'; then
   upstream_count="$(printf '%s' "${merged}" | python3 -c 'import sys,json;print((json.load(sys.stdin).get("upstream") or {}).get("count",0))' 2>/dev/null || echo 0)"
   printf '  PASS  %-46s upstream %s models\n' "live model list resource" "${upstream_count}"
@@ -262,7 +269,24 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-quota="$(timeout 120 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/quota" 2>/dev/null || true)"
+requests="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cpa-opencodego/api/requests?limit=200" 2>/dev/null || true)"
+if printf '%s' "${requests}" | grep -q '"entries"'; then
+  entries_count="$(printf '%s' "${requests}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("entries") or []))' 2>/dev/null || echo 0)"
+  if printf '%s' "${requests}" | grep -q 'oc_sk_'; then
+    printf '  FAIL  %-46s payload leaked a key\n' "request log resource"
+    FAIL=$((FAIL + 1))
+  elif [ "${entries_count}" -gt 0 ]; then
+    printf '  PASS  %-46s %s rows\n' "request log resource" "${entries_count}"
+    PASS=$((PASS + 1))
+  else
+    printf '  WARN  %-46s enabled but empty (no request has run yet)\n' "request log resource"
+  fi
+else
+  printf '  FAIL  %-46s\n' "request log resource"
+  FAIL=$((FAIL + 1))
+fi
+
+quota="$(timeout 120 curl -s "${BASE}/v0/resource/plugins/cpa-opencodego/api/quota" 2>/dev/null || true)"
 if printf '%s' "${quota}" | grep -q '"windows"'; then
   printf '  PASS  %-46s\n' "quota resource"
   PASS=$((PASS + 1))
@@ -286,7 +310,7 @@ EXPECTED_FAMILIES=""
 [ -n "${GEMINI_MODEL}" ] && EXPECTED_FAMILIES="${EXPECTED_FAMILIES} gemini"
 [ -n "${MSG_MODEL}" ] && EXPECTED_FAMILIES="${EXPECTED_FAMILIES} messages"
 for _ in $(seq 1 25); do
-  timeout 30 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/stats?range=all" > "${STATS_FILE}" 2>/dev/null || true
+  timeout 30 curl -s "${BASE}/v0/resource/plugins/cpa-opencodego/api/stats?range=all" > "${STATS_FILE}" 2>/dev/null || true
   stats_detail="$(EXPECTED_FAMILIES="${EXPECTED_FAMILIES}" python3 - "${STATS_FILE}" <<'STATSPY' 2>/dev/null || true
 import json, os, sys
 try:
@@ -339,7 +363,7 @@ else
   printf '  PASS  %-46s\n' "stats payload hides secrets"
   PASS=$((PASS + 1))
 fi
-monthly="$(timeout 30 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/api/stats?range=month" 2>/dev/null || true)"
+monthly="$(timeout 30 curl -s "${BASE}/v0/resource/plugins/cpa-opencodego/api/stats?range=month" 2>/dev/null || true)"
 if printf '%s' "${monthly}" | grep -q '"since_source"'; then
   printf '  PASS  %-46s\n' "statistics monthly window"
   PASS=$((PASS + 1))
@@ -409,7 +433,7 @@ fi
 # below make sure the shipped page is the tabbed one (accounts first, password
 # dialog for writes) and that its credential-free read model carries every
 # setting the page can write.
-page="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cap-opencode-go/dashboard" 2>/dev/null || true)"
+page="$(timeout 60 curl -s "${BASE}/v0/resource/plugins/cpa-opencodego/dashboard" 2>/dev/null || true)"
 page_checks=(
   'data-tab="accounts"|账号管理 tab'
   'data-tab="stats"|统计 tab'
@@ -419,6 +443,15 @@ page_checks=(
   'id="statsAboutFold"|统计口径折叠'
   'id="statsPriceNotice"|价目核对提醒'
   'data-label="平均 TTFT"|TTFT 列'
+  'data-tab="requests"|请求日志 tab'
+  'id="pane-requests"|请求日志面板'
+  'id="requestTable"|请求日志表'
+  'id="requestsAuto"|请求日志自动刷新'
+  'data-label="生成 TPS"|生成 TPS 列'
+  'data-label="端到端 TPS"|端到端 TPS 列'
+  'id="cfgEndpointLayout"|端点布局设置'
+  'id="cfgDeveloperRole"|developer 角色设置'
+  'id="cfgRequestLog"|请求日志开关'
   'id="cfgPlan"|套餐设置'
   'id="pane-models"|模型 tab'
   'id="keyList"|Key 余量列表'

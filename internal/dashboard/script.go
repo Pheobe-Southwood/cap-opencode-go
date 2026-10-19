@@ -16,15 +16,16 @@ const pageScript = `
   var FAMILIES = ['chat','responses','messages','gemini'];
   var FAMILY_LABEL = {chat:'chat/completions', responses:'responses', messages:'messages', gemini:'gemini'};
   var PROXY_MODES = ['inherit','proxy','direct'];
-  var TABS = ['accounts','stats','models','status','settings'];
+  var TABS = ['accounts','stats','requests','models','status','settings'];
   var REPO_URL = '__REPO_URL__';           // injected from internal/brand
   var CRED_STORE = 'cli-proxy-auth';        // management centre credential store
   var CRED_LEGACY = 'managementKey';        // older management centre builds
-  var CRED_SESSION = 'cap-opencode-go:webui-key'; // typed password, this tab only
+  var CRED_SESSION = 'cpa-opencodego:webui-key'; // typed password, this tab only
   var TOP_LABELS = {
     'base-url':'Base URL', 'session-mode':'Session 模式', 'session':'Session 值', 'proxy-url':'插件代理 URL',
     'default-proxy':'默认代理模式', 'request-timeout-seconds':'请求超时',
-    'state-dir':'状态目录', 'debug':'调试日志', 'plan':'套餐'
+    'state-dir':'状态目录', 'debug':'调试日志', 'plan':'套餐',
+    'endpoint-layout':'端点布局', 'developer-role':'developer 角色', 'request-log':'请求日志'
   };
   var MODEL_LABELS = {enabled:'启用', family:'协议', proxy:'代理', aliases:'别名'};
 
@@ -319,6 +320,15 @@ const pageScript = `
   var statsBusy = false;
   var statsErrorText = '';
   var statsCalendarRetry = false;
+
+  // 请求日志 tab state. The filter lives in the page (not the URL) and the
+  // timer only runs while the tab is visible.
+  var requests = null;          // /api/requests read model
+  var requestsBusy = false;
+  var requestsErrorText = '';
+  var requestsRequest = 0;
+  var requestsTimer = null;
+  var requestsFilter = { family:'', key:'', model:'', failed:false, limit:200, auto:true };
   var expanded = {};
   var probes = {};
   var tab = 'accounts';
@@ -461,6 +471,13 @@ const pageScript = `
     if(name === 'status') renderStatus();
     if(name === 'models') renderModels();
     if(name === 'accounts') renderAccounts();
+    if(name === 'requests'){
+      if(!requests && !requestsBusy) loadRequests();
+      else renderRequests();
+      scheduleRequestsTimer();
+    } else {
+      stopRequestsTimer();
+    }
     if(name === 'stats'){
       initStatsFold();
       if(!stats && !statsBusy) loadUsageStats();
@@ -848,6 +865,11 @@ const pageScript = `
       ['版本', state.version],
       ['协议族', state.role],
       ['Base URL', state.base_url],
+      ['端点布局', state.endpoint_layout + (state.endpoint_layout === 'auto' ? '（自动）' : '')],
+      ['模型列表', state.models_url],
+      ['用量接口', state.usage_url],
+      ['developer 角色', state.developer_role],
+      ['请求日志', state.request_log ? '开启' : '关闭'],
       ['Session', state.session_mode + (state.session_mode === 'fixed' ? ' / ' + state.session : '')],
       ['默认代理', state.default_proxy],
       ['插件代理', state.proxy_url || '(未设置)'],
@@ -855,6 +877,7 @@ const pageScript = `
       ['状态文件', state.state_path],
       ['启动时间', fmtTime(state.started_at) + (uptime(state.started_at) ? '（已运行 ' + uptime(state.started_at) + '）' : '')]
     ];
+    if(state.migration) rows.push(['升级迁移', state.migration]);
     var extra = Object.keys(state.extra_headers || {});
     rows.push(['额外请求头', extra.length ? extra.join(', ') : '(无)']);
     el('statusGrid').innerHTML = rows.map(function(row){
@@ -897,13 +920,14 @@ const pageScript = `
       '<div class="hint">' + esc(face.protocol || face.role) + '</div>' +
       '<div class="kv"><span class="k">协议</span><span class="v"><code>' + esc(formats) + '</code></span></div>' +
       '<div class="kv"><span class="k">上游端点</span><span class="v"><code>' + esc(face.endpoint || '') + '</code></span></div>' +
+      (face.resolved_endpoint ? '<div class="kv"><span class="k">实际请求</span><span class="v"><code>' + esc(face.resolved_endpoint) + '</code></span></div>' : '') +
       '<div class="kv"><span class="k">插件 ID</span><span class="v"><code>' + esc(face.plugin_id) + '</code></span></div>' +
       '<div class="kv"><span class="k">provider</span><span class="v"><code>' + esc(face.provider) + '</code></span></div>' +
       '<div class="kv"><span class="k">承载模型</span><span class="v">' + count + ' 个</span></div>' +
       (chips ? '<div class="face-models">' + chips + '</div>' : '') +
       '<div class="hint face-note">' + (face.main
         ? '本面承载侧边栏页面与全部配置：Key、模型、设置都在这里改。'
-        : '无需配置：由 <code>cap-opencode-go</code> 统一维护，插件管理里只控制启用。') +
+        : '无需配置：由 <code>cpa-opencodego</code> 统一维护，插件管理里只控制启用。') +
       '</div>' +
     '</div>';
   }
@@ -919,8 +943,10 @@ const pageScript = `
       aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。v1.12 起插件不再向 CPA 投影认证文件，「配额管理 → Plugin」不再列出 OpenCode Go，余量请在本页查看。'),
       aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、整体 TPS、生成 TPS 与 TTFT。token、失败与请求总延迟来自宿主 usage 事件；整体 TPS 含首字，生成 TPS 只算插件测到的首内容到末内容，TTFT 由插件读流自测。v1.7 起可回放旧 Token Usage Tracker 中 opencode-go 的历史。'),
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),
+      aboutRow('请求日志', '「请求日志」逐条列出每次上游尝试：时间、输入/输出/合计 token、TTFT、生成 TPS 与端到端 TPS，以及状态与错误。数据由插件在转发时自测，和「统计」的宿主 usage 口径略有差异；可在设置里关闭，默认保留 2000 条 / 7 天。'),
+      aboutRow('协议', '插件同时支持旧版单根 /v1 端点和新版 /openai、/anthropic、/google 分族端点：base-url 以 /v1 结尾视为旧布局，以 Go 根结尾视为新布局，也可用 endpoint-layout 显式指定。只额外发送 x-opencode-session，User-Agent 跟随客户端透传。'),
       aboutRow('热重载', '替换插件文件同样热生效：把新版本 .so 放进 plugins/linux/amd64 后原地改一次 config.yaml 即可（不要用会替换 inode 的方式写文件）。'),
-      aboutRow('残留', '插件只在 CPA 目录下写 plugins/、data/cap-opencode-go/（shared.json、stats-&lt;role&gt;.json，可选 debug.log）；v1.12 起不再写任何认证文件，删除插件与配置块后无任何残留。'),
+      aboutRow('残留', '插件只在 CPA 目录下写 plugins/、data/cpa-opencodego/（shared.json、stats-&lt;role&gt;.json、requests-&lt;role&gt;.jsonl，可选 debug.log）；v1.12 起不再写任何认证文件，删除插件与配置块后无任何残留。'),
       aboutRow('仓库', '<a href="' + REPO_URL + '" target="_blank" rel="noreferrer noopener">' + esc(REPO_URL.replace('https://', '')) + '</a>')
     ].join('');
   }
@@ -937,6 +963,9 @@ const pageScript = `
       case 'request-timeout-seconds': return state.timeout_seconds || 900;
       case 'state-dir': return state.state_dir || '';
       case 'plan': return state.plan || 'go';
+      case 'endpoint-layout': return state.endpoint_layout || 'auto';
+      case 'developer-role': return state.developer_role || 'rewrite';
+      case 'request-log': return !!state.request_log;
       case 'debug': return !!state.debug;
       default: return undefined;
     }
@@ -956,8 +985,13 @@ const pageScript = `
     el('cfgTimeout').value = value('request-timeout-seconds');
     el('cfgStateDir').value = value('state-dir');
     el('cfgPlan').value = value('plan');
+    el('cfgEndpointLayout').value = value('endpoint-layout');
+    el('cfgDeveloperRole').value = value('developer-role');
+    el('cfgRequestLog').checked = !!value('request-log');
     el('cfgDebug').checked = !!value('debug');
     text(el('stateDirHint'), '实际状态文件：' + (state.state_path || '(未解析)'));
+    text(el('endpointHint'), '当前布局 ' + (state.endpoint_layout || 'auto') + ' · base-url ' + (state.base_url || '') +
+      ' · 模型列表 ' + (state.models_url || '') + ' · 用量 ' + (state.usage_url || ''));
   }
   function renderPending(){
     var lines = pendingLines();
@@ -1122,6 +1156,7 @@ const pageScript = `
     if(tab === 'status') renderStatus();
     if(tab === 'settings') renderSettings();
     if(tab === 'stats') renderUsageStats();
+    if(tab === 'requests') renderRequests();
     renderStats();
     renderPending();
   }
@@ -1513,6 +1548,237 @@ const pageScript = `
     if(tab === 'stats') loadUsageStats();
   }
 
+  // -------------------------------------------------------- requests pane
+  // The 请求日志 tab is fed by /api/requests, which merges the four protocol
+  // faces' JSONL files. It is read-only and never touches the configuration.
+  var requestsSearchTimer = null;
+  function stopRequestsTimer(){
+    if(requestsTimer){ clearTimeout(requestsTimer); requestsTimer = null; }
+  }
+  function scheduleRequestsTimer(){
+    stopRequestsTimer();
+    if(tab !== 'requests' || !requestsFilter.auto || document.hidden) return;
+    requestsTimer = setTimeout(function(){
+      loadRequests().then(scheduleRequestsTimer);
+    }, 5000);
+  }
+  function requestQueryString(){
+    var parts = ['limit=' + encodeURIComponent(requestsFilter.limit)];
+    if(requestsFilter.family) parts.push('family=' + encodeURIComponent(requestsFilter.family));
+    if(requestsFilter.key) parts.push('key=' + encodeURIComponent(requestsFilter.key));
+    if(requestsFilter.model) parts.push('model=' + encodeURIComponent(requestsFilter.model));
+    if(requestsFilter.failed) parts.push('failed=1');
+    return parts.join('&');
+  }
+  function loadRequests(force){
+    if(requestsBusy && !force) return Promise.resolve(requests);
+    var request = ++requestsRequest;
+    requestsBusy = true;
+    requestsErrorText = '';
+    renderRequests();
+    return fetch(BASES.resource + '/api/requests?' + requestQueryString())
+      .then(function(response){
+        if(!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function(payload){
+        if(request !== requestsRequest) return;
+        requests = payload || null;
+        requestsErrorText = '';
+      })
+      .catch(function(error){
+        if(request !== requestsRequest) return;
+        requestsErrorText = '读取请求日志失败：' + error.message;
+      })
+      .then(function(){
+        if(request !== requestsRequest) return;
+        requestsBusy = false;
+        renderRequests();
+      });
+  }
+  function requestKeyNames(){
+    var seen = {};
+    var names = [];
+    function add(name){
+      name = String(name == null ? '' : name).trim();
+      if(!name || seen[name]) return;
+      seen[name] = true;
+      names.push(name);
+    }
+    ((state && state.keys) || []).forEach(function(key){ add(key.name); });
+    ((quota && quota.keys) || []).forEach(function(entry){ add(entry.key_name); });
+    ((requests && requests.entries) || []).forEach(function(entry){ add(entry.key); });
+    names.sort();
+    return names;
+  }
+  function renderRequestsFilters(){
+    var family = el('requestsFamily');
+    if(family) family.value = requestsFilter.family;
+    var limit = el('requestsLimit');
+    if(limit) limit.value = String(requestsFilter.limit);
+    var failed = el('requestsFailed');
+    if(failed) failed.checked = requestsFilter.failed;
+    var auto = el('requestsAuto');
+    if(auto) auto.checked = requestsFilter.auto;
+    var model = el('requestsModel');
+    if(model && document.activeElement !== model) model.value = requestsFilter.model;
+    var select = el('requestsKey');
+    if(!select) return;
+    var html = '<option value="">全部 Key</option>';
+    requestKeyNames().forEach(function(name){
+      html += '<option value="' + esc(name) + '"' + (name === requestsFilter.key ? ' selected' : '') + '>' + esc(name) + '</option>';
+    });
+    select.innerHTML = html;
+    select.value = requestsFilter.key;
+  }
+  function renderRequestsMeta(){
+    var errorBox = el('requestsError');
+    if(requestsErrorText){ text(errorBox, requestsErrorText); errorBox.hidden = false; }
+    else { errorBox.hidden = true; }
+    var warnBox = el('requestsWarnings');
+    var warnings = (requests && requests.warnings) || [];
+    if(warnings.length){
+      warnBox.innerHTML = '<div class="notice-title"><strong>请求日志提示</strong></div>' +
+        warnings.map(function(message){ return '<div class="hint">' + esc(message) + '</div>'; }).join('');
+      warnBox.hidden = false;
+    } else { warnBox.hidden = true; }
+    var hint = el('requestsHint');
+    if(!requests) text(hint, requestsBusy ? '正在读取…' : '');
+    else if(!requests.enabled) text(hint, '已在设置中关闭');
+    else text(hint, '更新于 ' + (requests.generated_at ? fmtTime(requests.generated_at) : '—') +
+      ' · 保留 ' + (requests.retention_hours ? Math.round(requests.retention_hours / 24) : 7) + ' 天');
+  }
+  function renderRequestsSummary(){
+    var box = el('requestSummary');
+    if(!box) return;
+    var totals = (requests && requests.totals) || {};
+    var stats = [
+      ['请求', Number(totals.requests || 0).toLocaleString(), totals.failed ? totals.failed + ' 失败' : '全部成功'],
+      ['输入 token', formatTokens(totals.input_tokens), '本次筛选范围'],
+      ['输出 token', formatTokens(totals.output_tokens), '本次筛选范围'],
+      ['平均 TTFT', totals.ttft_samples ? formatTTFT(totals.avg_ttft_ms) : '—', (totals.ttft_samples || 0) + ' 个样本'],
+      ['平均生成 TPS', totals.gen_tps_samples ? formatTPS(totals.avg_gen_tps) : '—', (totals.gen_tps_samples || 0) + ' 个样本'],
+      ['平均端到端 TPS', totals.e2e_tps_samples ? formatTPS(totals.avg_e2e_tps) : '—', (totals.e2e_tps_samples || 0) + ' 个样本']
+    ];
+    box.innerHTML = stats.map(function(stat){
+      return '<div class="stat"><span class="k">' + esc(stat[0]) + '</span><span class="v">' + esc(stat[1]) + '</span>' +
+        (stat[2] ? '<span class="hint">' + esc(stat[2]) + '</span>' : '') + '</div>';
+    }).join('');
+  }
+  function requestStatusCell(entry){
+    var level = entry.failed ? 'err' : (entry.status >= 200 && entry.status < 300 ? 'ok' : '');
+    var label = entry.status ? String(entry.status) : (entry.error ? '失败' : '—');
+    var html = '<span class="pill ' + level + '">' + esc(label) + '</span>';
+    if(entry.error) html += '<span class="stats-sub err-text" title="' + esc(entry.error) + '">' + esc(shorten(entry.error, 40)) + '</span>';
+    if(entry.log_id) html += '<span class="stats-sub" title="OpenCode 日志 ID">' + esc(entry.log_id) + '</span>';
+    return html;
+  }
+  function requestRow(entry){
+    var aliases = (entry.client_ids || []).filter(function(id){ return id !== entry.model; });
+    var badges = '<span class="pill">' + esc(FAMILY_LABEL[entry.role] || entry.role) + '</span>';
+    badges += entry.stream ? '<span class="pill accent">流式</span>' : '<span class="pill">非流式</span>';
+    var modelCell = '<div class="stats-model-name">' + esc(entry.display_name || entry.model) + '</div>' +
+      '<div class="stats-model-id"><code>' + esc(entry.model) + '</code>' +
+      (aliases.length ? ' · 对外 ' + esc(aliases.join(', ')) : '') + '</div>' +
+      '<div class="stats-model-badges">' + badges + '</div>';
+    var timeCell = '<span class="stats-cell-main">' + esc(fmtTime(entry.at)) + '</span><span class="stats-sub">' + esc(relPast(entry.at)) + '</span>';
+    var session = entry.session ? '<span class="stats-sub">会话 ' + esc(entry.session) + '</span>' : '';
+    var input = '<span class="stats-cell-main">' + formatTokens(entry.input_tokens) + '</span>';
+    var output = '<span class="stats-cell-main">' + formatTokens(entry.output_tokens) + '</span>' +
+      (entry.reasoning_tokens ? '<span class="stats-sub">推理 ' + formatTokens(entry.reasoning_tokens) + '</span>' : '');
+    var total = '<span class="stats-cell-main">' + formatTokens(entry.total_tokens) + '</span>' +
+      ((entry.cache_read_tokens || entry.cache_creation_tokens)
+        ? '<span class="stats-sub">缓存 ' + formatTokens(entry.cache_read_tokens) + ' / ' + formatTokens(entry.cache_creation_tokens) + '</span>'
+        : '');
+    var ttft = entry.ttft_ms ? '<span class="stats-cell-main">' + formatTTFT(entry.ttft_ms) + '</span>' : '<span class="hint">—</span>';
+    var gen = entry.gen_tps ? '<span class="stats-cell-main">' + formatTPS(entry.gen_tps) + '</span><span class="stats-sub">' + formatTTFT(entry.generation_ms) + '</span>' : '<span class="hint">—</span>';
+    var e2e = entry.e2e_tps ? '<span class="stats-cell-main">' + formatTPS(entry.e2e_tps) + '</span><span class="stats-sub">总耗时 ' + formatTTFT(entry.total_ms) + '</span>' : '<span class="hint">—</span>';
+    return '<tr>' +
+      '<td data-label="时间">' + timeCell + session + '</td>' +
+      '<td class="stats-model-cell" data-label="模型">' + modelCell + '</td>' +
+      '<td data-label="Key">' + (entry.key ? esc(entry.key) : '<span class="hint">—</span>') + '</td>' +
+      '<td class="num" data-label="输入">' + input + '</td>' +
+      '<td class="num" data-label="输出">' + output + '</td>' +
+      '<td class="num" data-label="合计">' + total + '</td>' +
+      '<td class="num" data-label="TTFT">' + ttft + '</td>' +
+      '<td class="num" data-label="生成 TPS">' + gen + '</td>' +
+      '<td class="num" data-label="端到端 TPS">' + e2e + '</td>' +
+      '<td data-label="状态">' + requestStatusCell(entry) + '</td>' +
+    '</tr>';
+  }
+  function renderRequestsTable(){
+    var box = el('requestTable');
+    if(!box) return;
+    if(!requests){
+      box.innerHTML = '<div class="hint">' + (requestsBusy ? '正在读取请求日志…' : '还没有数据。发一次请求后点「刷新」。') + '</div>';
+      return;
+    }
+    if(!requests.enabled){
+      box.innerHTML = '<div class="empty-state">请求日志已在「设置 → 状态与调试」中关闭。打开后新请求会出现在这里。</div>';
+      return;
+    }
+    if(!requests.entries || !requests.entries.length){
+      box.innerHTML = '<div class="empty-state">没有符合条件的请求。调整筛选或发一次请求后刷新；每个协议面最多保留 2000 条 / 7 天。</div>';
+      return;
+    }
+    var headers = ['时间','模型','Key','输入','输出','合计','TTFT','生成 TPS','端到端 TPS','状态'];
+    var head = headers.map(function(label, index){
+      var numeric = index >= 3 && index <= 8;
+      return '<th' + (numeric ? ' class="num"' : '') + '>' + esc(label) + '</th>';
+    }).join('');
+    box.innerHTML = '<table class="responsive stats-table"><thead><tr>' + head + '</tr></thead><tbody>' +
+      requests.entries.map(requestRow).join('') + '</tbody></table>';
+  }
+  function renderRequests(){
+    if(!el('requestSummary')) return;
+    renderRequestsFilters();
+    renderRequestsMeta();
+    renderRequestsSummary();
+    renderRequestsTable();
+  }
+  function initRequestsPane(){
+    var family = el('requestsFamily');
+    if(family) family.addEventListener('change', function(){
+      requestsFilter.family = family.value || '';
+      loadRequests(true).then(scheduleRequestsTimer);
+    });
+    var key = el('requestsKey');
+    if(key) key.addEventListener('change', function(){
+      requestsFilter.key = key.value || '';
+      loadRequests(true).then(scheduleRequestsTimer);
+    });
+    var model = el('requestsModel');
+    if(model) model.addEventListener('input', function(){
+      requestsFilter.model = (model.value || '').trim();
+      if(requestsSearchTimer) clearTimeout(requestsSearchTimer);
+      requestsSearchTimer = setTimeout(function(){ loadRequests(true).then(scheduleRequestsTimer); }, 300);
+    });
+    var failed = el('requestsFailed');
+    if(failed) failed.addEventListener('change', function(){
+      requestsFilter.failed = !!failed.checked;
+      loadRequests(true).then(scheduleRequestsTimer);
+    });
+    var limit = el('requestsLimit');
+    if(limit) limit.addEventListener('change', function(){
+      var parsed = parseInt(limit.value, 10);
+      requestsFilter.limit = isNaN(parsed) ? 200 : parsed;
+      loadRequests(true).then(scheduleRequestsTimer);
+    });
+    var auto = el('requestsAuto');
+    if(auto) auto.addEventListener('change', function(){
+      requestsFilter.auto = !!auto.checked;
+      scheduleRequestsTimer();
+    });
+    var refresh = el('refreshRequests');
+    if(refresh) refresh.addEventListener('click', function(){
+      loadRequests(true).then(scheduleRequestsTimer);
+    });
+    document.addEventListener('visibilitychange', function(){
+      if(document.hidden){ stopRequestsTimer(); return; }
+      if(tab === 'requests') loadRequests().then(scheduleRequestsTimer);
+    });
+  }
+
   // ------------------------------------------------------------ key edits
   // Key names are the identity of a pool entry, so a rename has to be checked
   // against the names the configuration will end up with: the rename targets of
@@ -1778,11 +2044,12 @@ const pageScript = `
       })
       .then(function(){ renderModels(); });
   }
-  ['cfgBaseURL','cfgSession','cfgProxyURL','cfgStateDir','cfgSessionMode','cfgDefaultProxy','cfgTimeout','cfgPlan','cfgDebug'].forEach(function(id){
+  ['cfgBaseURL','cfgSession','cfgProxyURL','cfgStateDir','cfgSessionMode','cfgDefaultProxy','cfgTimeout','cfgPlan','cfgEndpointLayout','cfgDeveloperRole','cfgRequestLog','cfgDebug'].forEach(function(id){
     var field = {
       cfgBaseURL:'base-url', cfgSession:'session', cfgProxyURL:'proxy-url', cfgStateDir:'state-dir',
       cfgSessionMode:'session-mode', cfgDefaultProxy:'default-proxy', cfgTimeout:'request-timeout-seconds',
-      cfgPlan:'plan', cfgDebug:'debug'
+      cfgPlan:'plan', cfgEndpointLayout:'endpoint-layout', cfgDeveloperRole:'developer-role',
+      cfgRequestLog:'request-log', cfgDebug:'debug'
     }[id];
     var node = el(id);
     function record(){
@@ -1819,6 +2086,7 @@ const pageScript = `
     if(event.key !== CRED_STORE && event.key !== CRED_LEGACY) return;
     hostCredentialRejected = false;
   });
+  initRequestsPane();
   showTab(currentTabFromHash(), true);
   renderChrome();
   renderPending();

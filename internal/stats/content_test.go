@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 func TestIsContentChat(t *testing.T) {

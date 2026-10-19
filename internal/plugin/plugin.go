@@ -17,15 +17,16 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/catalog"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/paths"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/upstream"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/brand"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/catalog"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/paths"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/pricing"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/reqlog"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/stats"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/upstream"
 )
 
 // menuLabel is the sidebar entry shown under the 插件 group. Only the main
@@ -46,18 +47,24 @@ type Runtime struct {
 	debugMode    atomic.Bool
 	debugPath    string
 
-	mu          sync.Mutex
-	pluginID    string
-	configRaw   []byte
-	sharedPath  string
-	sharedStamp time.Time
-	lastError   string
-	startedAt   time.Time
+	mu            sync.Mutex
+	pluginID      string
+	configRaw     []byte
+	sharedPath    string
+	sharedStamp   time.Time
+	lastError     string
+	migrationNote string
+	startedAt     time.Time
 
 	// stats is lazily opened because sibling faces only need it when they
 	// finish their first stream.
 	statsMu sync.Mutex
 	stats   *stats.Store
+
+	// reqLog is lazily opened for the same reason as stats: only the face that
+	// executes a request writes one.
+	reqLogMu sync.Mutex
+	reqLog   *reqlog.Store
 
 	// modelList is the diff from the latest successful /models fetch against
 	// the embedded snapshot. /api/models refreshes it; /api/stats only reads
@@ -214,6 +221,7 @@ func (r *Runtime) handleRegister(method string, request []byte) []byte {
 			r.setLastError(errParse.Error())
 		} else {
 			r.setLastError("")
+			r.migrateLegacyState(settings)
 			if errWrite := config.WriteSharedState(sharedPath, config.SharedState{
 				Version:   r.Version(),
 				WrittenAt: time.Now().UTC(),
@@ -235,7 +243,7 @@ func (r *Runtime) handleRegister(method string, request []byte) []byte {
 			// Without a snapshot a parse failure is fatal for this instance.
 			return abi.Fail("invalid_config", errParse.Error(), http.StatusBadRequest)
 		} else {
-			r.setLastError("尚未读取到主插件发布的共享配置（cap-opencode-go）")
+			r.setLastError("尚未读取到主插件发布的共享配置（cpa-opencodego）")
 		}
 		r.mu.Lock()
 		r.sharedStamp = stampOf(sharedPath)
@@ -294,9 +302,9 @@ func (r *Runtime) handleShutdown() []byte {
 	return okEmpty()
 }
 
-// Shutdown flushes the statistics store when the host unloads the plugin. The
-// plugin owns no host-side files any more (the v1.8-v1.11 auth projection was
-// removed in v1.12), so this is purely a local flush.
+// Shutdown flushes the statistics store and closes the request log when the
+// host unloads the plugin. The plugin owns no host-side files any more (the
+// v1.8-v1.11 auth projection was removed in v1.12), so this is purely local.
 func (r *Runtime) Shutdown() {
 	r.statsMu.Lock()
 	store := r.stats
@@ -304,10 +312,17 @@ func (r *Runtime) Shutdown() {
 	if store != nil {
 		store.Shutdown()
 	}
+	r.reqLogMu.Lock()
+	reqLog := r.reqLog
+	r.reqLogMu.Unlock()
+	if reqLog != nil {
+		reqLog.Shutdown()
+	}
 }
 
 func (r *Runtime) applySettings(settings config.Settings) {
 	settings.HostProxyURL = r.hostProxyURL()
+	settings.BuildVersion = r.Version()
 	copied := settings
 	r.settings.Store(&copied)
 	r.resolver.Store(catalog.New(copied))

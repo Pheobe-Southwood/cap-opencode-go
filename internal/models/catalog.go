@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // Model is one catalogue entry.
@@ -98,6 +98,7 @@ func Known() []Model {
 
 // chatModels are the models served by POST {base}/chat/completions.
 var chatModels = []Model{
+	{ID: "beam-free", DisplayName: "Beam Free"},
 	{ID: "cat-jam-free", DisplayName: "CatJam (free)"},
 	{ID: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro"},
 	{ID: "deepseek-v4.1-flash", DisplayName: "DeepSeek V4.1 Flash"},

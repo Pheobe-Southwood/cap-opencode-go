@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -15,11 +17,12 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/upstream"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/reqlog"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/stats"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/upstream"
 )
 
 // executorStreamRequest mirrors the host's rpcExecutorRequest wrapper: the
@@ -103,25 +106,32 @@ func (r *Runtime) handleExecute(request []byte) []byte {
 	requested := bareModelName(executeRequest.Model)
 	cred := extractCredential(executeRequest.AuthID, executeRequest.StorageJSON, executeRequest.AuthMetadata, settings)
 
+	attempt := r.newAttempt(requested, r.Resolver().Upstream(requested), false, cred,
+		resolveSession(settings, executeRequest.Metadata))
 	call := upstream.Call{
 		Role:           r.role,
-		Model:          r.Resolver().Upstream(requested),
+		Model:          attempt.upstream,
 		RequestedModel: requested,
 		Stream:         executeRequest.Stream,
 		Body:           executeRequest.Payload,
-		Session:        resolveSession(settings, executeRequest.Metadata),
+		Session:        attempt.session,
+		UserAgent:      inboundUserAgent(executeRequest.Headers),
 		Credential:     cred,
 	}
 
+	started := time.Now()
 	result, errExecute := r.client.Execute(context.Background(), call)
 	if errExecute != nil {
+		r.recordAttempt(attempt, started, nil, reqlog.Usage{}, abi.Status(errExecute), errExecute.Error(), 0, 0)
 		return abi.FailFor(errExecute, "upstream_error")
 	}
 
+	usage := reqlog.ParseBody(r.role.Name, result.Body)
 	payload := result.Body
 	if r.role.Name == roles.Responses && strings.EqualFold(strings.TrimSpace(executeRequest.Format), "codex") {
 		payload = terminalEventPayload(payload)
 	}
+	r.recordAttempt(attempt, started, result.Headers, usage, result.StatusCode, "", 0, 0)
 
 	raw, errMarshal := abi.OK(pluginapi.ExecutorResponse{
 		Payload: payload,
@@ -146,13 +156,16 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 	requested := bareModelName(executeRequest.Model)
 	cred := extractCredential(executeRequest.AuthID, executeRequest.StorageJSON, executeRequest.AuthMetadata, settings)
 
+	attempt := r.newAttempt(requested, r.Resolver().Upstream(requested), true, cred,
+		resolveSession(settings, executeRequest.Metadata))
 	call := upstream.Call{
 		Role:           r.role,
-		Model:          r.Resolver().Upstream(requested),
+		Model:          attempt.upstream,
 		RequestedModel: requested,
 		Stream:         true,
 		Body:           executeRequest.Payload,
-		Session:        resolveSession(settings, executeRequest.Metadata),
+		Session:        attempt.session,
+		UserAgent:      inboundUserAgent(executeRequest.Headers),
 		Credential:     cred,
 	}
 
@@ -166,6 +179,7 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 	stream, errStream := r.client.Stream(context.Background(), call)
 	if errStream != nil {
 		r.trace("execute_stream upstream error", map[string]any{"model": call.Model, "error": errStream.Error()})
+		r.recordAttempt(attempt, started, nil, reqlog.Usage{}, abi.Status(errStream), errStream.Error(), 0, 0)
 		return abi.FailFor(errStream, "upstream_error")
 	}
 	r.trace("execute_stream upstream ok", map[string]any{"model": call.Model, "status": stream.StatusCode})
@@ -176,15 +190,18 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 		// The host keeps the downstream stream open while we emit asynchronously,
 		// which preserves time to first token instead of buffering every chunk.
 		go r.pumpStream(stream, streamID, streamTiming{
-			model:   statsModelID(r, requested, call.Model),
-			key:     cred.Name,
+			model:   attempt.model,
+			key:     attempt.key,
 			started: started,
+			attempt: attempt,
 		})
 	} else {
 		// Without a stream id there is nowhere to push chunks, so fall back to
 		// reading the upstream response to completion.
 		payload, _ := io.ReadAll(stream.Body)
 		_ = stream.Body.Close()
+		r.recordAttempt(attempt, started, stream.Headers, reqlog.ParseBody(r.role.Name, payload),
+			stream.StatusCode, "", 0, 0)
 		raw, errMarshal := abi.OK(map[string]any{
 			"headers": headers,
 			"chunks":  []pluginapi.ExecutorStreamChunk{{Payload: payload}},
@@ -209,6 +226,21 @@ type streamTiming struct {
 	model   string
 	key     string
 	started time.Time
+	// attempt carries the request-log metadata; tests may leave it zero, in
+	// which case the log row is derived from model/key.
+	attempt requestAttempt
+}
+
+// requestAttempt is the per-request metadata shared by the non-stream and
+// stream paths.
+type requestAttempt struct {
+	role      roles.Name
+	requested string
+	upstream  string
+	model     string
+	key       string
+	session   string
+	stream    bool
 }
 
 // statsModelID maps the client-facing model id to the id the usage handler
@@ -231,6 +263,7 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 
 	payloadStyle := r.role.SSEStyle() == roles.SSEPayload
 	reader := bufio.NewReaderSize(stream.Body, 64*1024)
+	accumulator := reqlog.NewAccumulator(r.role.Name)
 	closeMessage := ""
 	emitted := 0
 	streamError := false
@@ -251,6 +284,7 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 					}
 					lastContent = now
 				}
+				accumulator.Observe(chunk)
 				if errEmit := emitStreamChunk(streamID, chunk); errEmit != nil {
 					closeMessage = errEmit.Error()
 					break
@@ -266,6 +300,23 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 		}
 	}
 	ttft, generation := streamTimingValues(timing.started, firstContent, lastContent)
+	attempt := timing.attempt
+	if attempt.model == "" {
+		attempt = requestAttempt{
+			role:      r.role.Name,
+			requested: timing.model,
+			upstream:  timing.model,
+			model:     timing.model,
+			key:       timing.key,
+			stream:    true,
+		}
+	}
+	errorText := closeMessage
+	if errorText == "" && streamError {
+		errorText = "upstream stream error frame"
+	}
+	r.recordAttempt(attempt, timing.started, stream.Headers, accumulator.Usage(),
+		stream.StatusCode, errorText, ttft, generation)
 	r.trace("stream finished", map[string]any{
 		"role":       string(r.role.Name),
 		"stream_id":  streamID,
@@ -461,4 +512,109 @@ func (r *Runtime) trace(message string, fields map[string]any) {
 	}
 	defer func() { _ = file.Close() }()
 	_, _ = file.WriteString(line + "\n")
+}
+
+// newAttempt builds the request-log metadata shared by both execution paths.
+// An empty credential name falls back to the highest-priority configured key so
+// the log still says which account served the request.
+func (r *Runtime) newAttempt(requested, upstreamModel string, stream bool, cred config.Key, session string) requestAttempt {
+	key := strings.TrimSpace(cred.Name)
+	if key == "" {
+		key = r.primaryKeyName()
+	}
+	return requestAttempt{
+		role:      r.role.Name,
+		requested: requested,
+		upstream:  upstreamModel,
+		model:     statsModelID(r, requested, upstreamModel),
+		key:       key,
+		session:   session,
+		stream:    stream,
+	}
+}
+
+// recordAttempt appends one row to the request log. It is best effort: a log
+// failure is surfaced on the dashboard and never fails the request.
+func (r *Runtime) recordAttempt(attempt requestAttempt, started time.Time, headers http.Header, usage reqlog.Usage, status int, errorText string, ttft, generation time.Duration) {
+	store := r.reqLogStore()
+	if store == nil {
+		return
+	}
+	if attempt.role == "" {
+		attempt.role = r.role.Name
+	}
+	store.Append(reqlog.Entry{
+		At:            started,
+		Role:          string(attempt.role),
+		Model:         attempt.model,
+		Requested:     attempt.requested,
+		UpstreamModel: attempt.upstream,
+		Key:           attempt.key,
+		Stream:        attempt.stream,
+		Status:        status,
+		Error:         errorText,
+		LogID:         headerValue(headers, "x-opencode-log-id"),
+		Session:       shortHash(attempt.session),
+		TTFTms:        milliseconds(ttft),
+		Generationms:  milliseconds(generation),
+		Totalms:       milliseconds(time.Since(started)),
+		Input:         usage.Input,
+		Output:        usage.Output,
+		Reasoning:     usage.Reasoning,
+		CacheRead:     usage.CacheRead,
+		CacheCreation: usage.CacheCreation,
+		TotalTokens:   usage.Total,
+		TokensSeen:    usage.Seen,
+	})
+}
+
+// primaryKeyName is the configured key the upstream client would pick when the
+// host did not name one: highest priority, first configured on a tie.
+func (r *Runtime) primaryKeyName() string {
+	best := ""
+	bestPriority := 0
+	for _, key := range r.Settings().EnabledKeys() {
+		if best == "" || key.Priority > bestPriority {
+			best = key.Name
+			bestPriority = key.Priority
+		}
+	}
+	return best
+}
+
+// inboundUserAgent returns the client's User-Agent so the plugin can pass it to
+// the upstream unchanged. The plugin never invents one; CPA's passthrough is
+// the only source.
+func inboundUserAgent(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	return strings.TrimSpace(headers.Get("User-Agent"))
+}
+
+// headerValue reads one response header with a nil-safe helper.
+func headerValue(headers http.Header, name string) string {
+	if headers == nil {
+		return ""
+	}
+	return strings.TrimSpace(headers.Get(name))
+}
+
+// shortHash keeps a stable per-conversation marker without storing the raw
+// x-opencode-session value.
+func shortHash(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", sum[:4])
+}
+
+// milliseconds renders a duration as fractional milliseconds.
+func milliseconds(duration time.Duration) float64 {
+	if duration <= 0 {
+		return 0
+	}
+	return float64(duration.Microseconds()) / 1000
 }

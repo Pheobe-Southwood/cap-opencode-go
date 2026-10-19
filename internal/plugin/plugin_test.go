@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/brand"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 func rolesChat() roles.Role { return roles.ByName("chat") }
@@ -196,8 +196,8 @@ func TestRegistrationCarriesOneProductBranding(t *testing.T) {
 		// Only the main face carries the configuration: the siblings read the
 		// snapshot it publishes and have nothing of their own to configure.
 		if role.Name == roles.Chat {
-			if len(decoded.Metadata.ConfigFields) != 13 {
-				t.Errorf("main face declares %d config fields, want the documented 13", len(decoded.Metadata.ConfigFields))
+			if len(decoded.Metadata.ConfigFields) != 17 {
+				t.Errorf("main face declares %d config fields, want the documented 17", len(decoded.Metadata.ConfigFields))
 			}
 		} else if len(decoded.Metadata.ConfigFields) != 0 {
 			t.Errorf("%s: sibling faces must not advertise config fields: %v", role.Name, decoded.Metadata.ConfigFields)

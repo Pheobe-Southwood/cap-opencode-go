@@ -12,7 +12,9 @@ ROOT="${CPA_ROOT:-/root/cliproxyapi}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
 TARGET_DIR="${ROOT}/plugins/${GOOS}/${GOARCH}"
-STATE_DIR="${ROOT}/data/cap-opencode-go"
+STATE_DIR="${ROOT}/data/cpa-opencodego"
+# v1 used this directory; it is removed too so an uninstall leaves nothing.
+LEGACY_STATE_DIR="${ROOT}/data/cap-opencode-go"
 # The host auth directory defaults to ~/.cli-proxy-api; auth-dir in config.yaml
 # wins when it is set, so both are checked.
 AUTH_DIRS=(
@@ -22,6 +24,11 @@ AUTH_DIRS=(
 )
 
 PLUGINS=(
+  "cpa-opencodego"
+  "cpa-opencodego-responses"
+  "cpa-opencodego-messages"
+  "cpa-opencodego-gemini"
+  # v1 ids, removed so an upgrade/uninstall cannot leave a second provider.
   "cap-opencode-go"
   "cap-opencode-go-responses"
   "cap-opencode-go-messages"
@@ -37,10 +44,12 @@ for plugin in "${PLUGINS[@]}"; do
 done
 shopt -u nullglob
 
-if [ -d "${STATE_DIR}" ]; then
-  rm -rf "${STATE_DIR}"
-  echo "removed ${STATE_DIR}"
-fi
+for dir in "${STATE_DIR}" "${LEGACY_STATE_DIR}"; do
+  if [ -d "${dir}" ]; then
+    rm -rf "${dir}"
+    echo "removed ${dir}"
+  fi
+done
 
 # Only files that carry the plugin marker are removed: an operator's own auth
 # files, and auth files of any other provider, stay untouched.
@@ -64,7 +73,7 @@ for name in sorted(os.listdir(directory)):
         continue
     if not isinstance(payload, dict):
         continue
-    if str(payload.get("managed_by", "")).strip() != "cap-opencode-go":
+    if str(payload.get("managed_by", "")).strip() != "cpa-opencodego":
         continue
     try:
         os.remove(path)
@@ -82,6 +91,12 @@ cat <<EOF
 
 Now delete the matching entries from ${ROOT}/config.yaml and restart CLIProxyAPI:
 
+  plugins.configs.cpa-opencodego
+  plugins.configs.cpa-opencodego-responses
+  plugins.configs.cpa-opencodego-messages
+  plugins.configs.cpa-opencodego-gemini
+
+(v1 names, if the upgrade was never applied:)
   plugins.configs.cap-opencode-go
   plugins.configs.cap-opencode-go-responses
   plugins.configs.cap-opencode-go-messages

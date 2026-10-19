@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 func TestForceStreamFlag(t *testing.T) {

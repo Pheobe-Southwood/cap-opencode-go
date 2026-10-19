@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/models"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/models"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 func TestParseDefaults(t *testing.T) {
@@ -222,7 +222,7 @@ func TestStatePathHonoursOverride(t *testing.T) {
 		t.Errorf("StatePath = %q", got)
 	}
 	defaults := Default()
-	if got := defaults.StateRoot("/srv/cpa"); got != "/srv/cpa/data/cap-opencode-go" {
+	if got := defaults.StateRoot("/srv/cpa"); got != "/srv/cpa/data/cpa-opencodego" {
 		t.Errorf("StateRoot = %q", got)
 	}
 }

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // probeRequest is one captured upstream request.
@@ -57,6 +57,9 @@ func probeServer(t *testing.T, refuse map[string]int) (*httptest.Server, func() 
 func probeClient(baseURL string) *Client {
 	settings := config.Default()
 	settings.BaseURL = baseURL
+	// An httptest server URL has no /v1 suffix, so auto would pick the
+	// per-family layout; these assertions describe the legacy resource paths.
+	settings.EndpointLayout = config.LayoutLegacy
 	settings.Keys = []config.Key{{Name: "k1", Key: "test-key", Priority: 1}}
 	return New(settings)
 }

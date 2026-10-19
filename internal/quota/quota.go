@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
 )
 
 // Window is one usage limit window.
@@ -100,7 +100,7 @@ func Fetch(ctx context.Context, settings config.Settings) []Snapshot {
 // fetchKey queries the usage endpoint for one credential. Fetch fans out over
 // the configured keys through this helper.
 func fetchKey(ctx context.Context, settings config.Settings, credential config.Key) ([]Window, error) {
-	endpoint := settings.BaseURL + "/usage"
+	endpoint := settings.UsageURL()
 	request, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if errRequest != nil {
 		return nil, errRequest

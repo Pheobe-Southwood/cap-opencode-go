@@ -4,16 +4,16 @@
 # single upstream wire format so that CLIProxyAPI performs every client-protocol
 # translation and the plugin only forwards bytes.
 
-MODULE      := github.com/cpa-opencodego/cap-opencode-go
-VERSION     ?= 1.0.0
+MODULE      := github.com/Pheobe-Southwood/cpa-opencodego
+VERSION     ?= 2.0.0
 GO          ?= go
 DIST        := dist
 GOFLAGS_EXTRA ?=
 ROLES       := chat responses messages gemini
-SUFFIX_chat      := cap-opencode-go
-SUFFIX_responses := cap-opencode-go-responses
-SUFFIX_messages  := cap-opencode-go-messages
-SUFFIX_gemini    := cap-opencode-go-gemini
+SUFFIX_chat      := cpa-opencodego
+SUFFIX_responses := cpa-opencodego-responses
+SUFFIX_messages  := cpa-opencodego-messages
+SUFFIX_gemini    := cpa-opencodego-gemini
 
 TARGETS := $(foreach role,$(ROLES),$(DIST)/$(SUFFIX_$(role))-v$(VERSION).so)
 
@@ -28,10 +28,10 @@ $(DIST):
 
 $(DIST)/%-v$(VERSION).so: $(DIST)
 	@role=$$(case "$*" in \
-		cap-opencode-go) echo chat ;; \
-		cap-opencode-go-responses) echo responses ;; \
-		cap-opencode-go-messages) echo messages ;; \
-		cap-opencode-go-gemini) echo gemini ;; \
+		cpa-opencodego) echo chat ;; \
+		cpa-opencodego-responses) echo responses ;; \
+		cpa-opencodego-messages) echo messages ;; \
+		cpa-opencodego-gemini) echo gemini ;; \
 		*) echo chat ;; esac); \
 	echo "building $$role -> $@"; \
 	CGO_ENABLED=1 $(GO) build -buildmode=c-shared -trimpath $(GOFLAGS_EXTRA) \

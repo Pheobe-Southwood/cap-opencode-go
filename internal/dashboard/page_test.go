@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/brand"
 )
 
 func page(t *testing.T) string {
 	t.Helper()
-	return string(Page("cap-opencode-go", "chat"))
+	return string(Page("cpa-opencodego", "chat"))
 }
 
 func TestPageSubstitutesPlaceholders(t *testing.T) {
@@ -25,7 +25,7 @@ func TestPageSubstitutesPlaceholders(t *testing.T) {
 			t.Errorf("placeholder %s was not substituted", placeholder)
 		}
 	}
-	if !strings.Contains(document, `var PLUGIN_ID = "cap-opencode-go"`) {
+	if !strings.Contains(document, `var PLUGIN_ID = "cpa-opencodego"`) {
 		t.Error("plugin id missing from the document")
 	}
 	if !strings.Contains(document, `var ROLE = "chat"`) {
@@ -69,7 +69,7 @@ func TestPageManagesFourProtocolFaces(t *testing.T) {
 		"四个 .so 必须同版本安装",
 		"function renderFace(face){",
 		"face.main ? '配置入口' : '零配置'",
-		"'无需配置：由 <code>cap-opencode-go</code> 统一维护，插件管理里只控制启用。'",
+		"'无需配置：由 <code>cpa-opencodego</code> 统一维护，插件管理里只控制启用。'",
 		"'本面承载侧边栏页面与全部配置：Key、模型、设置都在这里改。'",
 		"face.protocol",
 		"face.endpoint",
@@ -94,13 +94,13 @@ func TestPageManagesFourProtocolFaces(t *testing.T) {
 func TestPageTabsStartOnAccounts(t *testing.T) {
 	document := page(t)
 	for _, want := range []string{
-		`data-tab="accounts"`, `data-tab="stats"`, `data-tab="models"`, `data-tab="status"`, `data-tab="settings"`,
-		`id="pane-accounts"`, `id="pane-stats"`, `id="pane-models"`, `id="pane-status"`, `id="pane-settings"`,
+		`data-tab="accounts"`, `data-tab="stats"`, `data-tab="requests"`, `data-tab="models"`, `data-tab="status"`, `data-tab="settings"`,
+		`id="pane-accounts"`, `id="pane-stats"`, `id="pane-requests"`, `id="pane-models"`, `id="pane-status"`, `id="pane-settings"`,
 		`role="tablist"`, `role="tabpanel"`,
 		// Accounts is the only pane that starts visible.
 		`class="pane active" id="pane-accounts"`,
 		`id="pane-models" role="tabpanel" aria-labelledby="tab-models" hidden`,
-		"var TABS = ['accounts','stats','models','status','settings'];",
+		"var TABS = ['accounts','stats','requests','models','status','settings'];",
 		"var tab = 'accounts';",
 		"return TABS.indexOf(name) >= 0 ? name : 'accounts';",
 	} {
@@ -110,6 +110,63 @@ func TestPageTabsStartOnAccounts(t *testing.T) {
 	}
 	// Each tab carries a dot that the chrome renderer lights up per pane.
 	for _, want := range []string{`id="tab-accounts"`, `class="dot"`, "function showTab(name, keepScroll)"} {
+		if !strings.Contains(document, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+}
+
+// The 请求日志 tab shows one row per upstream attempt, with the TPS/TTFT
+// numbers the plugin measures itself, and states what it does not store.
+func TestPageHasRequestLogTab(t *testing.T) {
+	document := page(t)
+	for _, want := range []string{
+		`<h2>逐条请求</h2>`,
+		`id="requestTable"`,
+		`id="requestSummary"`,
+		`id="requestsFamily"`,
+		`id="requestsKey"`,
+		`id="requestsModel"`,
+		`id="requestsFailed"`,
+		`id="requestsAuto"`,
+		`id="refreshRequests"`,
+		`id="requestsFootnote"`,
+		`data-label="生成 TPS"`,
+		`data-label="端到端 TPS"`,
+		`data-label="TTFT"`,
+		"/api/requests?",
+		"生成 TPS</strong>",
+		"端到端 TPS</strong>",
+		"不记录提示词、响应正文、Key 或原始会话 ID",
+		"x-opencode-log-id",
+		"function renderRequests(",
+		"function loadRequests(",
+		"function requestRow(",
+		"scheduleRequestsTimer",
+	} {
+		if !strings.Contains(document, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+}
+
+// The protocol settings are editable from the page so a v1 deployment can be
+// moved to the per-family endpoints without touching config.yaml by hand.
+func TestPageExposesProtocolSettings(t *testing.T) {
+	document := page(t)
+	for _, want := range []string{
+		`<h2>协议与兼容</h2>`,
+		`id="cfgEndpointLayout"`,
+		`id="cfgDeveloperRole"`,
+		`id="cfgRequestLog"`,
+		`id="endpointHint"`,
+		`'endpoint-layout':'端点布局'`,
+		`cfgEndpointLayout:'endpoint-layout'`,
+		`cfgDeveloperRole:'developer-role'`,
+		`state.endpoint_layout`,
+		`state.models_url`,
+		`state.usage_url`,
+	} {
 		if !strings.Contains(document, want) {
 			t.Errorf("the page is missing %q", want)
 		}

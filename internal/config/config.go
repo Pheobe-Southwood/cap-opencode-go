@@ -14,9 +14,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/models"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/models"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/pricing"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // parseProxyURL validates a proxy URL. "direct" and "none" mean "no proxy".
@@ -58,12 +58,34 @@ const (
 	DefaultSession        = "$CPA-SESSION-ID"
 	DefaultProxyMode      = ProxyInherit
 	DefaultTimeoutSeconds = 900
-	DefaultStateDirName   = "cap-opencode-go"
-	SharedStateFileName   = "shared.json"
+	DefaultStateDirName   = "cpa-opencodego"
+	// LegacyStateDirName is the v1 state directory. The main face copies its
+	// counters into the new directory once, at register, so an upgrade keeps the
+	// statistics history without the operator doing anything.
+	LegacyStateDirName  = "cap-opencode-go"
+	SharedStateFileName = "shared.json"
 	// DefaultPlan is used by the 统计 tab until the operator picks a plan. The
 	// upstream /usage endpoint reports percentages, not the subscription tier,
 	// so the tier has to be configured rather than guessed.
 	DefaultPlan = string(pricing.PlanGo)
+)
+
+// Endpoint layout values. Auto is the default: a base URL that ends in /v1 (or
+// /v1beta) keeps the v1.x single-base behaviour, anything else uses the
+// per-family layout the OpenCode Go migration introduced.
+const (
+	LayoutAuto   = "auto"
+	LayoutLegacy = "legacy"
+	LayoutFamily = "family"
+)
+
+// Developer role handling for OpenAI-shaped bodies. OpenCode Go's new router
+// rejects the Chat Completions "developer" role on some gateway nodes even
+// though it is a legal OpenAI role, so the default rewrites it to "system";
+// "keep" leaves the request byte-for-byte as the host translated it.
+const (
+	DeveloperRoleRewrite = "rewrite"
+	DeveloperRoleKeep    = "keep"
 )
 
 // Key is one upstream credential.
@@ -121,7 +143,17 @@ type Settings struct {
 	StateDir              string            `yaml:"state-dir" json:"state-dir"`
 	// Plan is the OpenCode Go subscription tier used by the statistics tab to
 	// turn a model's list-price spend into a percentage of its monthly limit.
-	Plan          string                  `yaml:"plan" json:"plan"`
+	Plan string `yaml:"plan" json:"plan"`
+	// EndpointLayout selects auto, legacy, or family URL assembly.
+	EndpointLayout string `yaml:"endpoint-layout" json:"endpoint-layout"`
+	// BaseURLs optionally pins one API root per protocol family. A pinned value
+	// is used verbatim (the family's resource path is appended to it).
+	BaseURLs map[string]string `yaml:"base-urls" json:"base-urls,omitempty"`
+	// DeveloperRole is rewrite (default) or keep; it only affects OpenAI-shaped
+	// chat/responses bodies.
+	DeveloperRole string `yaml:"developer-role" json:"developer-role"`
+	// RequestLog enables the 请求日志 tab's per-request log. Nil means enabled.
+	RequestLog    *bool                   `yaml:"request-log" json:"request-log,omitempty"`
 	Debug         bool                    `yaml:"debug" json:"debug"`
 	Keys          []Key                   `yaml:"keys" json:"keys,omitempty"`
 	Models        map[string]ModelSetting `yaml:"models" json:"models,omitempty"`
@@ -129,6 +161,9 @@ type Settings struct {
 	// HostProxyURL is filled from the host config summary and is never read
 	// from YAML.
 	HostProxyURL string `yaml:"-" json:"host-proxy-url,omitempty"`
+	// BuildVersion is stamped by the runtime for diagnostics and is never read
+	// from YAML or shared between builds.
+	BuildVersion string `yaml:"-" json:"-"`
 }
 
 // Default returns the built-in defaults.
@@ -140,6 +175,8 @@ func Default() Settings {
 		DefaultProxy:          DefaultProxyMode,
 		RequestTimeoutSeconds: DefaultTimeoutSeconds,
 		Plan:                  DefaultPlan,
+		EndpointLayout:        LayoutAuto,
+		DeveloperRole:         DeveloperRoleRewrite,
 	}
 }
 
@@ -201,6 +238,9 @@ func (s *Settings) normalize() {
 		s.ModelsDefault.Proxy = normalizeProxy(s.ModelsDefault.Proxy)
 	}
 	s.Plan = string(pricing.NormalizePlan(s.Plan))
+	s.EndpointLayout = normalizeLayout(s.EndpointLayout)
+	s.DeveloperRole = normalizeDeveloperRole(s.DeveloperRole)
+	s.BaseURLs = normalizeBaseURLs(s.BaseURLs)
 	s.ProxyURL = strings.TrimSpace(s.ProxyURL)
 	if s.ExtraHeaders == nil {
 		s.ExtraHeaders = map[string]string{}
@@ -257,10 +297,163 @@ func normalizeProxy(value string) string {
 	}
 }
 
+// normalizeLayout lowercases the layout and falls back to auto for a typo, so
+// an unknown value cannot silently pin the wrong URL shape.
+func normalizeLayout(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case LayoutLegacy, LayoutFamily:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return LayoutAuto
+	}
+}
+
+// normalizeDeveloperRole lowercases the developer-role mode and defaults to the
+// compatibility rewrite.
+func normalizeDeveloperRole(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case DeveloperRoleKeep:
+		return DeveloperRoleKeep
+	default:
+		return DeveloperRoleRewrite
+	}
+}
+
+// normalizeBaseURLs keeps only the four known family keys with a non-empty
+// value, so a mistyped key cannot look like an override that never applies.
+func normalizeBaseURLs(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for rawKey, rawValue := range values {
+		key := strings.ToLower(strings.TrimSpace(rawKey))
+		if !roles.Name(key).Valid() {
+			continue
+		}
+		value := strings.TrimRight(strings.TrimSpace(rawValue), "/")
+		if value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// validateHTTPURL rejects a base URL the plugin could not call.
+func validateHTTPURL(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, errParse := url.Parse(trimmed)
+	if errParse != nil {
+		return fmt.Errorf("%q is not a valid URL: %w", trimmed, errParse)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("%q must use http or https", trimmed)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("%q is missing a host", trimmed)
+	}
+	return nil
+}
+
+// Layout resolves the endpoint layout: explicit wins, otherwise a base URL that
+// ends in /v1 (or /v1beta) keeps the v1.x single-base shape and anything else
+// uses the per-family shape the OpenCode Go migration introduced.
+func (s Settings) Layout() roles.Layout {
+	switch strings.ToLower(strings.TrimSpace(s.EndpointLayout)) {
+	case LayoutLegacy:
+		return roles.LayoutLegacy
+	case LayoutFamily:
+		return roles.LayoutFamily
+	}
+	base := strings.ToLower(strings.TrimRight(strings.TrimSpace(s.BaseURL), "/"))
+	if base == "" {
+		base = strings.ToLower(roles.DefaultBaseURL)
+	}
+	if strings.HasSuffix(base, "/v1") || strings.HasSuffix(base, "/v1beta") {
+		return roles.LayoutLegacy
+	}
+	return roles.LayoutFamily
+}
+
+// baseRoot is the configured base URL without a trailing slash.
+func (s Settings) baseRoot() string {
+	base := strings.TrimRight(strings.TrimSpace(s.BaseURL), "/")
+	if base == "" {
+		return roles.DefaultBaseURL
+	}
+	return base
+}
+
+// EndpointURL assembles the upstream URL for one request. A per-family
+// override is an API root, so only the role's resource path is appended to it.
+func (s Settings) EndpointURL(role roles.Role, model string, stream bool) string {
+	if override := strings.TrimSpace(s.BaseURLs[string(role.Name)]); override != "" {
+		return strings.TrimRight(override, "/") + role.BuildPath(model, stream)
+	}
+	return s.baseRoot() + role.BuildPathFor(s.Layout(), model, stream)
+}
+
+// ModelsURL is the model-list endpoint for the resolved layout. It always lives
+// on the base URL, never on a per-family override.
+func (s Settings) ModelsURL() string {
+	if s.Layout() == roles.LayoutFamily {
+		return s.baseRoot() + "/v1/models"
+	}
+	return s.baseRoot() + "/models"
+}
+
+// UsageURL is the usage endpoint for the resolved layout.
+func (s Settings) UsageURL() string {
+	if s.Layout() == roles.LayoutFamily {
+		return s.baseRoot() + "/v1/usage"
+	}
+	return s.baseRoot() + "/usage"
+}
+
+// DeveloperRoleRewrite reports whether developer messages are rewritten to
+// system for OpenAI-shaped bodies.
+func (s Settings) DeveloperRoleRewrite() bool {
+	return normalizeDeveloperRole(s.DeveloperRole) == DeveloperRoleRewrite
+}
+
+// RequestLogEnabled reports whether the per-request log is written. An unset
+// value means enabled.
+func (s Settings) RequestLogEnabled() bool {
+	if s.RequestLog == nil {
+		return true
+	}
+	return *s.RequestLog
+}
+
+// LegacyStatePath is where v1.x kept the shared snapshot.
+func (s Settings) LegacyStatePath(root string) string {
+	return filepath.Join(root, "data", LegacyStateDirName, SharedStateFileName)
+}
+
+// LegacyStateRoot is the v1.x state directory.
+func (s Settings) LegacyStateRoot(root string) string {
+	return filepath.Join(root, "data", LegacyStateDirName)
+}
+
 // Validate reports configuration problems that would make the plugin useless.
 func (s Settings) Validate() error {
 	if _, errParse := parseProxyURL(s.ProxyURL); errParse != nil {
 		return errParse
+	}
+	if errBase := validateHTTPURL(s.BaseURL); errBase != nil {
+		return fmt.Errorf("base-url: %w", errBase)
+	}
+	for family, value := range s.BaseURLs {
+		if errBase := validateHTTPURL(value); errBase != nil {
+			return fmt.Errorf("base-urls.%s: %w", family, errBase)
+		}
 	}
 	seenNames := make(map[string]struct{}, len(s.Keys))
 	for _, key := range s.Keys {

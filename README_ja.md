@@ -17,6 +17,9 @@
 
 ---
 
+> **v2.0.0**：プラグイン id とリポジトリ名を `cpa-opencodego` に変更しました。リクエストログタブと OpenCode Go の新しいファミリー別エンドポイントに対応し、旧 `/v1` エンドポイントも引き続き利用できます。アップグレード前に [v2 アップグレードガイド](docs/UPGRADE-v2.md) をご覧ください。
+
+
 ## 主な特徴と提供価値
 
 OpenCode Go には最新鋭の LLM（DeepSeek V4.1、Claude Haiku 5.5、Gemini 4 Argon、GPT 6 Luna、Grok 4.7、Qwen 3.8、Kimi K3 など）37 種が集約されています。しかし、モデルごとに 4 つの異なるエンドポイントに分散しており、モデルごとのプロキシ要件も異なります。
@@ -70,6 +73,7 @@ OpenCode Go には最新鋭の LLM（DeepSeek V4.1、Claude Haiku 5.5、Gemini 4
   - **平均 TTFT**：リクエスト送信から最初の有効トークンを受信するまでの所要時間。
 - **コスト・限度額の進捗表示**：内蔵の公式価格表に基づき、Go / Go Plus プランの月間枠消費状況をモデルごとに自動計算。キーごとの残額も一目で分かります。
 - **更新リマインダー**：30 日経過時または上流モデル一覧に変更があった際、画面上部で更新確認を促します。
+- **リクエストログ**：新しいタブで、各上流試行の時刻・入力/出力/合計トークン・TTFT・生成 TPS・エンドツーエンド TPS・状態・エラーを一覧表示します。失敗理由と上流の `x-opencode-log-id` も確認できます。
 
 ---
 
@@ -90,10 +94,10 @@ OpenCode Go には最新鋭の LLM（DeepSeek V4.1、Claude Haiku 5.5、Gemini 4
 ### ステップ 1：プラグインライブラリの配置
 
 ビルド済みの 4 つの `.so` ファイルを CPA のプラグインフォルダ（通常 `plugins/linux/amd64/`）に配置します：
-- `cap-opencode-go-v1.12.0.so`
-- `cap-opencode-go-responses-v1.12.0.so`
-- `cap-opencode-go-messages-v1.12.0.so`
-- `cap-opencode-go-gemini-v1.12.0.so`
+- `cpa-opencodego-v2.0.0.so`
+- `cpa-opencodego-responses-v2.0.0.so`
+- `cpa-opencodego-messages-v2.0.0.so`
+- `cpa-opencodego-gemini-v2.0.0.so`
 
 ### ステップ 2：設定ファイルの追記
 
@@ -104,17 +108,20 @@ plugins:
   enabled: true
   dir: "plugins"
   configs:
-    cap-opencode-go:
+    cpa-opencodego:
       enabled: true
-      base-url: "https://opencode.ai/inference/go/v1"
+      base-url: "https://opencode.ai/inference/go"
+      endpoint-layout: "auto"
+      developer-role: "rewrite"
+      request-log: true
       keys:
         - name: "primary-key"
           key: "oc_sk_your_api_key_here"
           priority: 10
           enabled: true
-    cap-opencode-go-responses: { enabled: true }
-    cap-opencode-go-messages:  { enabled: true }
-    cap-opencode-go-gemini:    { enabled: true }
+    cpa-opencodego-responses: { enabled: true }
+    cpa-opencodego-messages:  { enabled: true }
+    cpa-opencodego-gemini:    { enabled: true }
 ```
 
 ### ステップ 3：Web UI から管理開始

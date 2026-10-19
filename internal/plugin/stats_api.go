@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/catalog"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/catalog"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/pricing"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/stats"
 )
 
 // StatsCounts is the token/cost/timing part of one /api/stats row. The same

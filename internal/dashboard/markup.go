@@ -50,6 +50,7 @@ const pageMarkup = `
   <nav class="tabs" id="tabBar" role="tablist" aria-label="页面分区">
     <button class="tab" type="button" role="tab" id="tab-accounts" data-tab="accounts" aria-controls="pane-accounts" aria-selected="true">账号管理<span class="dot" hidden></span></button>
     <button class="tab" type="button" role="tab" id="tab-stats" data-tab="stats" aria-controls="pane-stats" aria-selected="false">统计<span class="dot" hidden></span></button>
+    <button class="tab" type="button" role="tab" id="tab-requests" data-tab="requests" aria-controls="pane-requests" aria-selected="false">请求日志<span class="dot" hidden></span></button>
     <button class="tab" type="button" role="tab" id="tab-models" data-tab="models" aria-controls="pane-models" aria-selected="false">模型<span class="dot" hidden></span></button>
     <button class="tab" type="button" role="tab" id="tab-status" data-tab="status" aria-controls="pane-status" aria-selected="false">状态<span class="dot" hidden></span></button>
     <button class="tab" type="button" role="tab" id="tab-settings" data-tab="settings" aria-controls="pane-settings" aria-selected="false">设置<span class="dot" hidden></span></button>
@@ -168,6 +169,59 @@ const pageMarkup = `
       </details>
     </section>
 
+
+    <!-- -------------------------------------------------- 请求日志 -->
+    <section class="pane" id="pane-requests" role="tabpanel" aria-labelledby="tab-requests" hidden>
+      <div id="requestsError" class="notice err" hidden></div>
+      <div id="requestsWarnings" class="notice" hidden></div>
+
+      <div class="stat-strip" id="requestSummary"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>逐条请求</h2>
+          <div class="toolbar-group">
+            <span class="hint" id="requestsHint"></span>
+            <select id="requestsFamily" aria-label="协议面筛选">
+              <option value="">全部协议</option>
+              <option value="chat">chat/completions</option>
+              <option value="responses">responses</option>
+              <option value="messages">messages</option>
+              <option value="gemini">gemini</option>
+            </select>
+            <select id="requestsKey" aria-label="Key 筛选"><option value="">全部 Key</option></select>
+            <label class="search field"><input type="search" id="requestsModel" placeholder="精确搜索模型 / 别名…" autocomplete="off" spellcheck="false"></label>
+            <label class="switch"><input type="checkbox" id="requestsFailed"> <span class="hint">仅失败</span></label>
+            <select id="requestsLimit" aria-label="条数">
+              <option value="100">最近 100 条</option>
+              <option value="200" selected>最近 200 条</option>
+              <option value="500">最近 500 条</option>
+              <option value="1000">最近 1000 条</option>
+            </select>
+            <label class="switch"><input type="checkbox" id="requestsAuto" checked> <span class="hint">自动刷新</span></label>
+            <button id="refreshRequests" class="small" type="button">刷新</button>
+          </div>
+        </div>
+        <div class="stats-table-wrap" id="requestTable"></div>
+        <div class="hint" id="requestsFootnote">时间、TTFT 与两个 TPS 由插件在转发时实测；token 从上游响应帧解析。「统计」页仍以宿主 usage 事件为准，两者口径略有差异。不记录提示词、响应正文、Key 或原始会话 ID。</div>
+      </div>
+
+      <details class="card fold-card" id="requestsAboutFold">
+        <summary>口径与隐私</summary>
+        <ul class="stats-notes">
+          <li><strong>生成 TPS</strong>：上游报告的 output token ÷「首个内容帧 → 最后一个内容帧」时长，不含首字，接近纯解码速度。</li>
+          <li><strong>端到端 TPS</strong>：同一批 output token ÷ 本次请求总耗时（含建连、排队、首字与全部解码）。</li>
+          <li><strong>TTFT</strong>：插件发出上游请求到第一个文字/思考/工具参数内容帧的时间；非流式请求与失败请求没有 TTFT。</li>
+          <li><strong>Token</strong>：主列是输入 / 输出 / 合计；缓存读写、推理 token 在次级行显示。Gemini 的有效输出含 reasoning。</li>
+          <li><strong>失败请求</strong>：仍记录状态码与错误摘要（截断），不计算 TPS；流内错误帧也会标红。</li>
+          <li><strong>日志 ID</strong>：上游返回的 <code>x-opencode-log-id</code>，反馈问题时可直接提供给 OpenCode。</li>
+          <li><strong>保留期</strong>：每个协议面最多 2000 条、7 天，超出后自动裁剪；每个面写自己的 <code>requests-&lt;role&gt;.jsonl</code>。</li>
+          <li><strong>隐私</strong>：文件里只有模型 id、计数、耗时、状态与错误摘要，会话只存 8 位哈希，不含任何正文或密钥。</li>
+          <li><strong>关闭</strong>：在「设置 → 状态与调试」关闭「记录请求日志」后，新请求不再写入。</li>
+        </ul>
+      </details>
+    </section>
+
     <!-- ---------------------------------------------------- 模型 -->
     <section class="pane" id="pane-models" role="tabpanel" aria-labelledby="tab-models" hidden>
       <div class="stat-strip" id="modelStats"></div>
@@ -236,7 +290,7 @@ const pageMarkup = `
         </div>
         <div class="sibling-grid" id="siblingGrid"></div>
         <div class="hint" style="margin-top:8px" id="faceHint">
-          OpenCode Go 由一个主插件加三个协议面插件组成：每个 .so 只声明一种上游协议，CLIProxyAPI 才能把任意客户端协议翻译成它 —— 所以「插件管理」里会出现四行，其中只有 <code>cap-opencode-go</code> 需要配置。四个 .so 必须同版本安装；禁用或缺失任一面，该协议族的模型就无法路由。
+          OpenCode Go 由一个主插件加三个协议面插件组成：每个 .so 只声明一种上游协议，CLIProxyAPI 才能把任意客户端协议翻译成它 —— 所以「插件管理」里会出现四行，其中只有 <code>cpa-opencodego</code> 需要配置。四个 .so 必须同版本安装；禁用或缺失任一面，该协议族的模型就无法路由。
         </div>
       </div>
 
@@ -257,6 +311,26 @@ const pageMarkup = `
         <div class="grid">
           <label class="kv"><span class="k">Base URL</span><input type="text" id="cfgBaseURL" spellcheck="false"></label>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>协议与兼容</h2></div>
+        <div class="grid">
+          <label class="kv"><span class="k">端点布局</span>
+            <select id="cfgEndpointLayout">
+              <option value="auto">auto（按 base-url 自动判断）</option>
+              <option value="legacy">legacy（旧 /v1 单根）</option>
+              <option value="family">family（新 /openai、/anthropic、/google）</option>
+            </select>
+          </label>
+          <label class="kv"><span class="k">developer 角色</span>
+            <select id="cfgDeveloperRole">
+              <option value="rewrite">rewrite（兼容 OpenCode Go 新路由，改写为 system）</option>
+              <option value="keep">keep（原样透传）</option>
+            </select>
+          </label>
+        </div>
+        <div class="hint" id="endpointHint" style="margin-top:8px"></div>
       </div>
 
       <div class="card">
@@ -292,6 +366,7 @@ const pageMarkup = `
         <div class="grid">
           <label class="kv"><span class="k">状态目录（留空=自动）</span><input type="text" id="cfgStateDir" spellcheck="false"></label>
           <label class="switch" style="align-self:end"><input type="checkbox" id="cfgDebug"> <span class="hint">写调试日志</span></label>
+          <label class="switch" style="align-self:end"><input type="checkbox" id="cfgRequestLog"> <span class="hint">记录请求日志</span></label>
         </div>
         <div class="hint" style="margin-top:8px" id="stateDirHint"></div>
       </div>

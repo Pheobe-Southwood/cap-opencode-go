@@ -21,10 +21,10 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	modelinfo "github.com/cpa-opencodego/cap-opencode-go/internal/models"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
+	modelinfo "github.com/Pheobe-Southwood/cpa-opencodego/internal/models"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/pricing"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/stats"
 )
 
 const (
@@ -100,7 +100,7 @@ type importRecord struct {
 func main() {
 	var opt options
 	flag.StringVar(&opt.trackerPath, "tracker", "/root/cliproxyapi/data/token-usage-tracker.db", "path to token-usage-tracker.db")
-	flag.StringVar(&opt.statsDir, "stats-dir", "/root/cliproxyapi/data/cap-opencode-go", "plugin stats directory")
+	flag.StringVar(&opt.statsDir, "stats-dir", "/root/cliproxyapi/data/cpa-opencodego", "plugin stats directory")
 	flag.StringVar(&opt.settingsPath, "settings", "", "shared.json path (default <stats-dir>/shared.json)")
 	flag.StringVar(&opt.beforeRaw, "before", "", "import records strictly before this RFC3339 time (default: earliest existing stats sample)")
 	flag.BoolVar(&opt.apply, "apply", false, "write the imported counters (default is a dry run)")
@@ -391,8 +391,17 @@ func printModelSummary(models map[string]modelSummary) {
 
 func isOpenCodeProvider(provider string) bool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	return provider == "openai-compatible-opencode go" || provider == "cap-opencode-go" ||
-		strings.HasPrefix(provider, "cap-opencode-go-")
+	if provider == "openai-compatible-opencode go" {
+		return true
+	}
+	// Both the v2 plugin id and the v1 id are accepted so a tracker database
+	// written by an older install still replays after the rename.
+	for _, prefix := range []string{"cpa-opencodego", "cap-opencode-go"} {
+		if provider == prefix || strings.HasPrefix(provider, prefix+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 func familyFor(provider, model string, families map[string]string) roles.Name {

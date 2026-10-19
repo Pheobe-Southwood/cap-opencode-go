@@ -1,4 +1,4 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v1.12.0 热重载补充）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v2.0.0 热重载补充）
 
 > v1.7.1（含 1.7.0 的统计口径修正与历史回放；1.7.1 只修两处页脚注/空状态文案）
 > 在生产实例 127.0.0.1:8317 重启到 1.7.1：四个面均加载 `-v1.7.1.so`，`plan=go`，PID `3651300`；
@@ -38,6 +38,61 @@
 > 四个面 `active_version=1.12.0`（gemini 首次安装被 `head -6` 截断，15:14 补装后重载），
 > 生产公开验收 **37 passed, 0 failed**（messages 无启用模型跳过 1 项；删除了 5 项账号/配额检查），
 > 隔离实例（messages 启用、auth 目录为空）**45 passed, 0 failed**。详见下面第一节。
+
+---
+
+## v2.0.0 更名 cpa-opencodego + 请求日志 + 新协议对齐（生产热重载，未重启）
+
+> **2026-10-19 03:55 UTC 生产热重载到 2.0.0**：`MainPID=179655`、config inode
+> `10621868` 均不变，**没有重启进程**。旧 `cap-opencode-go*` 四个面被 unload，
+> 新 `cpa-opencodego*` 四个面以 `active_version=2.0.0` 注册；旧插件资源路由返回 404。
+> 生产公开验收 **48 passed, 0 failed**（messages 没有启用模型，1 项 SKIP）。
+
+### 1. 交付与变更
+- 插件 id / `.so` / GitHub 仓库 / module 统一改为 `cpa-opencodego`；provider key 保持
+  `opencode-go*`，模型 id 与别名不变，DSH 侧无需改动。
+- 状态目录从 `data/cap-opencode-go` 迁移到 `data/cpa-opencodego`，旧目录保留；
+  生产统计历史连续（迁移后 `/api/stats` 仍为 12 个模型 / 12,222 次请求）。
+- 新增「请求日志」Tab 与 `/api/requests`；四族各自写 `requests-<role>.jsonl`。
+- 协议对齐：支持 `{go}/openai/v1`、`{go}/anthropic/v1`、`{go}/google/v1beta`
+  新端点；旧 `/inference/go/v1` 与 `/zen/go/v1` 继续兼容（生产当前即 legacy 布局）。
+- `developer` 角色在 OpenAI 形状请求发送前归一化为 `system`；UA 从入站请求透传，
+  插件不合成 UA，只自行发送 `x-opencode-session`。
+
+### 2. 构建与静态检查
+- `go test ./...` 全绿；`go vet ./...` 无问题；`gofmt -l` 为空。
+- `make build VERSION=2.0.0` 产出四个 `dist/cpa-opencodego*-v2.0.0.so`（各 8.3 MB）。
+- `bash -n scripts/{install,uninstall,acceptance,migrate-v1}.sh` 通过。
+
+### 3. 隔离实例（8399，独立 config/auth/data）
+- 以生产配置副本 + 迁移脚本演练升级：四个 `cpa-opencodego*` 注册成功，旧 id 不加载。
+- **legacy 布局**（base-url 保持 `.../inference/go/v1`）：chat / responses / messages /
+  gemini 四族各一次真实请求全部 **200**。
+- 原地把 base-url 改为 `https://opencode.ai/inference/go` 触发热重载：`/api/state` 返回
+  `endpoint_layout=family`，`endpoints` 为四族新 URL；四族再次全部 **200**。
+- `/api/requests` 合并四族文件：非流式记录 token、总耗时与端到端 TPS；流式 chat 记录
+  **TTFT 1539.8 ms、生成 TPS 215.1、端到端 TPS 19.33**，并带上游
+  `x-opencode-log-id`；`?family=messages` 过滤正确；统计页不受影响。
+
+### 4. 生产热重载与真实请求
+- `scripts/install.sh 2.0.0` 删除旧 `.so` 并安装四个新库；`scripts/migrate-v1.sh --apply`
+  改名四个配置块、备份 `config.yaml`、复制状态文件；原地写配置触发 fsnotify 热重载。
+- `main.log`：`plugin unloaded ... cap-opencode-go*` → `plugin loaded ... cpa-opencodego* version=2.0.0`。
+- 真实请求（含 `role=developer`）非流式 **200**，`/api/requests` 记录 41/16 tokens、
+  端到端 TPS 8.62、上游日志 ID；流式 **200**，TTFT 1355.8 ms、生成 TPS 198.05、
+  端到端 TPS 36.09。
+- 页面标记全部存在：「请求日志」Tab、请求表、生成/端到端 TPS 列、端点布局、
+  developer 角色、请求日志开关；`node --check` 通过。
+- 公开验收 **48 passed, 0 failed**；请求日志资源 13 行；统计资源
+  `matched=6594 requests=12222 tokens=1251934606 ttft=10775 tps=11652`。
+
+### 5. 已知边界
+- messages 族在生产配置中没有启用模型，因此公开验收的 messages 检查 SKIP；
+  隔离实例已单独覆盖 messages 200。
+- 请求日志是插件自测口径，和「统计」的宿主 usage 口径可能略有差异；
+  两者都展示各自样本数，避免误读。
+- 旧 `cap-opencode-go*` 配置块与状态目录仍保留在磁盘，回滚见
+  [docs/UPGRADE-v2.md](UPGRADE-v2.md) 与 [docs/rollback.md](rollback.md)。
 
 ---
 
@@ -85,10 +140,10 @@
   `MainPID=4128447`、`ActiveEnterTimestamp=10:02:25 UTC`、config inode `10621868` 全部不变；
 - `main.log`：`15:06:48` 热重载 chat / responses / messages 到 `active_version=1.12.0`；
   gemini 的 `.so` 因安装命令被 `head -6` 截断而没装上，15:14 补装后再次热重载
-  （`15:14:37 … cap-opencode-go-gemini active_version=1.12.0 retired_version=1.11.0`）；
+  （`15:14:37 … cpa-opencodego-gemini active_version=1.12.0 retired_version=1.11.0`）；
   最终 `/proc/4128447/maps` 里四个 `-v1.12.0.so` 全部加载；
 - 热重载后删除遗留的 `~/.cli-proxy-api/opencode-go-user-example-com.json`（先确认
-  `managed_by: cap-opencode-go`），auth 目录不再有 opencode-go 文件；
+  `managed_by: cpa-opencodego`），auth 目录不再有 opencode-go 文件；
 - 生产公开验收 **37 passed, 0 failed**（messages 无启用模型跳过 1 项），四族照常工作；
   由于环境里的管理密钥是哈希值，管理 API 检查仍跳过，能力变化由隔离实例的同一份二进制验证。
 
@@ -144,7 +199,7 @@ $ go test ./...                # 全绿
 启动后 auth 目录: opencode-go-user-example-com.json 一个（0600，managed_by，note 新文案）
 state: version=1.11.0 accounts.files={"user@example.com":"opencode-go-user-example-com.json"}
 credentials: 1 条 provider=opencode-go / supports_quota=true / quota_provider=opencode-go /
-             quota_plugin_id=cap-opencode-go / auth_index 有值
+             quota_plugin_id=cpa-opencodego / auth_index 有值
 quota fetch: five_hour 0.93 / weekly 0.34 / monthly 0.52（真实上游 /usage，Go 套餐）
 ```
 
@@ -206,10 +261,10 @@ $ go test ./...         # 全绿（internal/dashboard、internal/accounts、inte
 
 ### 3. 隔离实例端到端（v8.0.27 同版本二进制，端口 8399）
 
-1.9.0 阶段：`GET/PUT /v8/management/config/plugins/configs/cap-opencode-go` 把 `main` 改成 `primary`，
+1.9.0 阶段：`GET/PUT /v8/management/config/plugins/configs/cpa-opencodego` 把 `main` 改成 `primary`，
 返回 `{"config-version":8,"status":"ok"}`；auth 目录只剩 `opencode-go-primary.json`（`name=primary`、
 `managed_by`、0600），`/v8/management/credentials` 仍是 `provider=opencode-go` / `supports_quota` /
-`quota_provider` / `quota_plugin_id=cap-opencode-go`。页面 `data-key-rename` / `id="keyNameHint"` /
+`quota_provider` / `quota_plugin_id=cpa-opencodego`。页面 `data-key-rename` / `id="keyNameHint"` /
 `node --check` 均通过。
 
 但同一实例的 `/api/models` 仍返回 `keys=["main"]`（`/api/quota` 已是 `primary`），暴露出池快照
@@ -218,8 +273,8 @@ $ go test ./...         # 全绿（internal/dashboard、internal/accounts、inte
 ```
 models: version=1.9.1 keys=["primary"] accounts={"primary":"opencode-go-primary.json"}
 quota:  keys=["primary"] accounts={"primary":"opencode-go-primary.json"}
-auth:   only opencode-go-primary.json (name=primary, managed_by=cap-opencode-go, 0600)
-cred:   opencode-go-primary.json / quota_provider=opencode-go / quota_plugin_id=cap-opencode-go
+auth:   only opencode-go-primary.json (name=primary, managed_by=cpa-opencodego, 0600)
+cred:   opencode-go-primary.json / quota_provider=opencode-go / quota_plugin_id=cpa-opencodego
 ```
 
 ### 4. 生产热重载与验收（127.0.0.1:8317）
@@ -249,7 +304,7 @@ cred:   opencode-go-primary.json / quota_provider=opencode-go / quota_plugin_id=
 ### 1. 故障与定位
 
 - 现象：侧边栏点 OpenCode Go 后页面打不开、Tab 与按钮全部无效。
-- 服务端一切正常：`GET /v0/resource/plugins/cap-opencode-go/dashboard` 200（`Cache-Control: no-store`），
+- 服务端一切正常：`GET /v0/resource/plugins/cpa-opencodego/dashboard` 200（`Cache-Control: no-store`），
   `/api/state`、`/api/quota`、`/api/models`、`/api/stats` 均 200 且响应在 2 秒内。
 - 日志显示 06:33 三次加载 dashboard 之后**没有任何 `/api/*` 请求**——说明页面内联脚本没有执行。
 - 把线上页面的 `<script>` 抽出来跑 `node --check`：
@@ -293,7 +348,7 @@ SyntaxError: Invalid or unexpected token
 - 06:03:18 UTC 备份 1.7.8 的四个 `.so` 与 `config.yaml` 到
   `/root/cliproxyapi/backup-1.8.0-pre-20261017T060318Z`。
 - `CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.8.0` 只新增
-  `cap-opencode-go{,-responses,-messages,-gemini}-v1.8.0.so`，不覆盖在用文件。
+  `cpa-opencodego{,-responses,-messages,-gemini}-v1.8.0.so`，不覆盖在用文件。
 - 原地追加一行注释触发 fsnotify：inode `10653636` 前后不变；
   `MainPID=3651300`、`ActiveEnterTimestamp=2026-10-17 03:07:04 UTC` 未变（没有重启）。
 - 日志：四个面 `plugin hot reloaded … active_version=1.8.0 retired_version=1.7.8`，
@@ -303,8 +358,8 @@ SyntaxError: Invalid or unexpected token
 
 - `/root/.cli-proxy-api/opencode-go-main.json` 生成，`-rw-------`（0600），内容
   `type=opencode-go`、`name=main`、`api_key=oc_sk_cd1a…`、`disabled=false`、
-  `managed_by=cap-opencode-go`。
-- `/v0/resource/plugins/cap-opencode-go/api/state`：
+  `managed_by=cpa-opencodego`。
+- `/v0/resource/plugins/cpa-opencodego/api/state`：
   `version=1.8.0`、`accounts.enabled=true`、`accounts.auth_dir=/root/.cli-proxy-api`、
   `accounts.files={"main":"opencode-go-main.json"}`、`error` 为空。
   注意生产 `config.yaml` 没有顶层 `auth-dir`（只有 `oauth.auth-dir`），宿主下发的
@@ -318,12 +373,12 @@ SyntaxError: Invalid or unexpected token
 实例：`/tmp/cpa-quota-test`（独立端口 8399、独立 auth-dir、假上游 `/usage`、自设管理密钥），
 `/usage` 返回 rolling 32% / weekly 60% / monthly 45%。
 
-- `GET /v8/management/plugins`：`cap-opencode-go` 的 `supports_quota=true`、
+- `GET /v8/management/plugins`：`cpa-opencodego` 的 `supports_quota=true`、
   `quota_provider=opencode-go`、`supports_oauth=false`；三个从属面均为 false（只主面声明）。
 - `GET /v8/management/credentials`：`provider=opencode-go`、`supports_quota=true`、
-  `quota_provider=opencode-go`、`quota_plugin_id=cap-opencode-go`、`auth_index` 有值。
+  `quota_provider=opencode-go`、`quota_plugin_id=cpa-opencodego`、`auth_index` 有值。
   （`/v0/management/auth-files` 也返回同一份条目，但 v0 不带 `quota_plugin_id`，面板走 v8。）
-- `POST /v8/management/plugins/cap-opencode-go/quota {"auth_index":…}` 返回 1 个 group +
+- `POST /v8/management/plugins/cpa-opencodego/quota {"auth_index":…}` 返回 1 个 group +
   3 个 bucket：`five_hour` 0.68、`weekly` 0.4、`monthly` 0.55（= 1 - percent/100，已去掉浮点噪声），
   `resetTime` 与 `description` 正确，`subscription.plan=Go`。升级到 Go Plus 时显示 `Go Plus`。
 - 热替换（1.8.1 → 1.8.2，同 ID 换 `.so` 路径）：旧实例收到 `plugin.quiesce`，
@@ -373,7 +428,7 @@ served models: chat=Beam responses=gpt-6-luna gemini=gemini-4-argon messages=non
 
 - 03:46 UTC 热重载到 **1.7.8**；1.7.7 是加入模型变更提醒的中间版本，1.7.8 修正了横幅里
   「与 2026-10-17 快照 不一致」多出的空格。最终四个面均在 `/proc/3651300/maps` 中：
-  `cap-opencode-go{,-responses,-messages,-gemini}-v1.7.8.so`，主面 `/api/state` 返回 `version=1.7.8`。
+  `cpa-opencodego{,-responses,-messages,-gemini}-v1.7.8.so`，主面 `/api/state` 返回 `version=1.7.8`。
 - `config.yaml` 继续用**原地追加注释**触发 fsnotify：inode `10653636` 前后不变，没有重启 CPA；
   PID `3651300`、服务启动时间 `03:07:04 UTC` 均未变。
 - 部署前备份了 1.7.7 四个 `.so` 与 config 到
@@ -508,7 +563,7 @@ imported 5628 records into stats-chat.json (marker: replay-tracker-import.json)
 - 截止时间取现有 stats 的最早一条 `2026-10-17T02:21:08Z`，避免和 v1.6 已统计的 420 条重复。
   回放后 5,628 + 420 = 6,048 条；导入的 366,045,455 + 原有 53,850,587 = 419,896,042 tokens，
   与 `stats-chat.json` 的总量逐项相等，说明没有重复计数。
-- 5628 条中 4531 条有真实 TTFT；其余（旧 `cap-opencode-go*` 记录 `ttft_ns=0`）只回放
+- 5628 条中 4531 条有真实 TTFT；其余（旧 `cpa-opencodego*` 记录 `ttft_ns=0`）只回放
   token/费用/总延迟，不伪造 TTFT。
 - 导入后 `stats-chat.json` 为 0600、137,084 bytes；`grep oc_sk_` / `grep api_key` 均无输出。
 - 1.7.0 启动日志显示四个面均为 `version=1.7.0`；因为只修两处页面脚注，随后以
@@ -564,10 +619,10 @@ PASS  statistics resource  ready | matched=444 requests=6072 tokens=420099867
 
 ```
 $ CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.6.1
-installed …/cap-opencode-go-v1.6.1.so
-installed …/cap-opencode-go-responses-v1.6.1.so
-installed …/cap-opencode-go-messages-v1.6.1.so
-installed …/cap-opencode-go-gemini-v1.6.1.so
+installed …/cpa-opencodego-v1.6.1.so
+installed …/cpa-opencodego-responses-v1.6.1.so
+installed …/cpa-opencodego-messages-v1.6.1.so
+installed …/cpa-opencodego-gemini-v1.6.1.so
 
 $ # 原地追加一行注释触发 fsnotify（保持 inode 10653636）
 $ # 新增文件而不是覆盖已 dlopen 的 1.5.0
@@ -580,7 +635,7 @@ $ # 新增文件而不是覆盖已 dlopen 的 1.5.0
 | 四个面同版本 | ✅ | 插件目录同时存在四个 `-v1.6.1.so`；热重载日志按版本选中 |
 | 生产页面 = 仓库源码 | ✅ | 生产 `GET /dashboard` 与 `go test` 生成的 `dashboard.Page()` 字节一致（各 120 194 bytes，`cmp` 退出 0） |
 | 配置只多注释 | ✅ | `config.yaml` inode 10653636 不变；只追加 `# (v1.6.0 …)` / `# (v1.6.1 …)` 注释 |
-| 统计落盘 | ✅ | `data/cap-opencode-go/` 新增 `stats-chat.json`、`stats-gemini.json`、`stats-responses.json`（0600）；`shared.json` 仍在 |
+| 统计落盘 | ✅ | `data/cpa-opencodego/` 新增 `stats-chat.json`、`stats-gemini.json`、`stats-responses.json`（0600）；`shared.json` 仍在 |
 | 统计文件无 Key | ✅ | `grep -l oc_sk_ stats-*.json` 无输出 |
 | 公开验收 | ✅ | **32 passed, 0 failed** |
 
@@ -593,7 +648,7 @@ $ # 新增文件而不是覆盖已 dlopen 的 1.5.0
 落盘周期后：
 
 ```
-$ curl -s http://127.0.0.1:8317/v0/resource/plugins/cap-opencode-go/api/stats?range=all
+$ curl -s http://127.0.0.1:8317/v0/resource/plugins/cpa-opencodego/api/stats?range=all
 usage_records  = {"received": 5, "matched": 5}
 totals         = requests=5 tokens=827110 cost_usd=0.003360414
                  ttft_samples=4 tps_samples=4 avg_tps=389.87 avg_ttft_ms=3088.3
@@ -679,7 +734,7 @@ gemini reasoning、流式 timing、`/api/stats` 合并与月百分比、管理�
 
 ### 6. 回滚对照
 
-统计只新增 `data/cap-opencode-go/stats-<role>.json`（0600，无 Key）。删除 1.6.1 的四个 `.so`
+统计只新增 `data/cpa-opencodego/stats-<role>.json`（0600，无 Key）。删除 1.6.1 的四个 `.so`
 并原地改一次 config.yaml 即回退到 1.5.0；1.5.0 不认识 `plan` 字段，也不会读这些文件，
 `scripts/uninstall.sh` 会连同数据目录一起删除。回滚清单详见 [rollback.md](rollback.md)。
 
@@ -696,7 +751,7 @@ gemini reasoning、流式 timing、`/api/stats` 合并与月百分比、管理�
 ```
 # 装新版本（新增版本号文件，绝不覆盖已 dlopen 的 .so；旧版本留着随时可回滚）
 $ CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.5.0
-installed /root/cliproxyapi/plugins/linux/amd64/cap-opencode-go-v1.5.0.so
+installed /root/cliproxyapi/plugins/linux/amd64/cpa-opencodego-v1.5.0.so
 installed …-responses-v1.5.0.so   installed …-messages-v1.5.0.so   installed …-gemini-v1.5.0.so
 
 # 原地补两行注释（保持 inode），fsnotify → ApplyConfig → 按版本号选中最新的 .so
@@ -711,10 +766,10 @@ $ ls -i config.yaml
 | 热重载到 1.5.0 | ✅ | `/api/state` → `version=1.5.0`（改前 `1.4.1`），37 个模型 id 与 Key 池 `[('main', True)]` 不变 |
 | 进程未重启 | ✅ | PID `3194299` 全程不变（`systemctl status` 仍显示 05:21:58 启动、ELAPSED 连续增长），管理页面会话未中断 |
 | 四个面都真的换了 | ✅ | 热重载后立刻跑验收：chat / responses / gemini 三个协议族的直连与跨协议调用全部 200（messages 族因操作者关闭了全部 messages 模型而 SKIP，与 v1.4.1 相同）。热重载不重打 `pluginhost: plugin registered` 日志，所以这里以「各族请求真的通」为准 |
-| 生产页面 = 仓库源码 | ✅ | 用 `go run` 生成 `dashboard.Page("cap-opencode-go","chat")` 与生产 `GET /v0/resource/plugins/cap-opencode-go/dashboard` **字节一致**（各 96 460 bytes，`diff` 退出码 0） |
+| 生产页面 = 仓库源码 | ✅ | 用 `go run` 生成 `dashboard.Page("cpa-opencodego","chat")` 与生产 `GET /v0/resource/plugins/cpa-opencodego/dashboard` **字节一致**（各 96 460 bytes，`diff` 退出码 0） |
 | 品牌已在生产页面生效 | ✅ | 生产 HTML 含 `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,…">`、`class="brand-mark"`（3 处）与「协议面」卡片标记 |
 | 配置只被注释动过 | ✅ | sha256 `e4b5c63c…` → `28a8cf3f…`，inode 未变；新增内容就是 2 行 `# (v1.5.0: …)` 注释 |
-| 无残留 | ✅ | `data/cap-opencode-go/` 仍然只有 `shared.json`；插件目录 21 个 `.so`（v1.2.0 / v1.3.0 / v1.4.0 / v1.4.1 / v1.5.0 四份 + 用量插件） |
+| 无残留 | ✅ | `data/cpa-opencodego/` 仍然只有 `shared.json`；插件目录 21 个 `.so`（v1.2.0 / v1.3.0 / v1.4.0 / v1.4.1 / v1.5.0 四份 + 用量插件） |
 | 官方验收脚本 | ✅ | **22 passed, 0 failed** |
 
 ```
@@ -755,8 +810,8 @@ served models: chat=DeepSeek-V4.1-Flash responses=gpt-6-luna gemini=gemini-4-arg
   PASS  gemini generateContent / streamGenerateContent · gemini model via chat client
   PASS  messages non-stream / stream
   PASS  /v1/models catalogue                           16 models
-  PASS  sidebar menu entry                             OpenCode Go /v0/resource/plugins/cap-opencode-go/dashboard
-  PASS  plugin faces                                   cap-opencode-go(-gemini|-messages|-responses)
+  PASS  sidebar menu entry                             OpenCode Go /v0/resource/plugins/cpa-opencodego/dashboard
+  PASS  plugin faces                                   cpa-opencodego(-gemini|-messages|-responses)
   PASS  plugin icon                                    same data:icon on all four rows
   PASS  plugin names                                   OpenCode Go / · Gemini / · Messages / · Responses
   PASS  plugin config                                  main 14 fields, siblings 0
@@ -827,7 +882,7 @@ served models: chat=DeepSeek-V4.1-Flash responses=gpt-6-luna gemini=gemini-4-arg
 ```
 # 装新版本（旧版本文件留着，随时可回滚）
 $ CPA_ROOT=/root/cliproxyapi bash scripts/install.sh 1.4.1
-installed /root/cliproxyapi/plugins/linux/amd64/cap-opencode-go-v1.4.1.so
+installed /root/cliproxyapi/plugins/linux/amd64/cpa-opencodego-v1.4.1.so
 installed …-responses-v1.4.1.so   installed …-messages-v1.4.1.so   installed …-gemini-v1.4.1.so
 
 # 原地补一行注释（保持 inode），fsnotify → ApplyConfig → 按版本号选中最新的 .so
@@ -841,7 +896,7 @@ $ ls -i config.yaml
 |---|---|---|
 | 热重载到 1.4.1 | ✅ | `/api/state` → `version=1.4.1`（改前 `1.3.0`），37 个模型 id 不变，Key 池不变；生产实际部署顺序是先 1.4.0、随后为带上竞态修复再热重载到 1.4.1，两次都是同一个进程 |
 | 进程未重启 | ✅ | PID `3194299` 全程不变（`ELAPSED` 从 2h07m 连续增长），管理页面会话没有中断 |
-| 页面换成 Tab 版 | ✅ | `GET /v0/resource/plugins/cap-opencode-go/dashboard` 含 `data-tab="accounts"`、`id="keyList"`、`id="credModal"`，且**不再含**「只读模式」字样 |
+| 页面换成 Tab 版 | ✅ | `GET /v0/resource/plugins/cpa-opencodego/dashboard` 含 `data-tab="accounts"`、`id="keyList"`、`id="credModal"`，且**不再含**「只读模式」字样 |
 | 只读接口带上可编辑字段 | ✅ | `/api/state` 新增 `timeout_seconds` / `key_cooldown_seconds` / `max_retries` / `debug` / `state_dir` |
 | 额度接口覆盖全部 Key | ✅ | `/api/quota` → `[('main', True, ['5 小时','本周','本月'])]`，并新增 `enabled` 字段 |
 | 官方验收脚本 | ✅ | **22 passed, 0 failed**（messages 协议族因操作者关闭了全部 messages 模型而 SKIP） |
@@ -945,7 +1000,7 @@ PID 3194299  STARTED Fri Oct 16 05:21:57 2026  ELAPSED 12:32   # 整个替换过
 | 改写在执行层发生 | ✅ | 隔离实例 `debug: true` 的 trace：`requested=gemini-4-argon` / `upstream=gemini-4-argon-contributor` |
 | 仪表盘一行一个真实模型 | ✅ | `/api/state`：`version=1.3.0`，37 行；`{id: gemini-4-argon-contributor, client_ids: [gemini-4-argon], aliased: true}`，无独立别名行 |
 | 官方验收脚本 | ✅ | `gemini=gemini-4-argon`（脚本改为取 `client_ids[0]`）；**15 passed, 0 failed** |
-| 零残留不变 | ✅ | 未新增任何落盘物：仍只有 `data/cap-opencode-go/shared.json`（+ 可选 `debug.log`），别名只存在宿主拥有的 config.yaml 里 |
+| 零残留不变 | ✅ | 未新增任何落盘物：仍只有 `data/cpa-opencodego/shared.json`（+ 可选 `debug.log`），别名只存在宿主拥有的 config.yaml 里 |
 
 ```
 $ CPA_BASE=http://127.0.0.1:8317 CPA_CLIENT_KEY=sk-… bash scripts/acceptance.sh
@@ -972,7 +1027,7 @@ served models: chat=deepseek-v4-pro responses=gpt-6-luna gemini=gemini-4-argon m
 == 15 passed, 0 failed ==
 ```
 
-回滚路径（同样不用重启）：删除插件目录里的 `cap-opencode-go*-v1.3.0.so`，再原地补一行注释 →
+回滚路径（同样不用重启）：删除插件目录里的 `cpa-opencodego*-v1.3.0.so`，再原地补一行注释 →
 热重载回 v1.2.0。v1.2.0 的 `.so` 一直留在原地就是为了这个。
 
 ---
@@ -1062,7 +1117,7 @@ $ CPA_BASE=http://127.0.0.1:8399 CPA_CLIENT_KEY=sk-… CPA_MGMT_KEY=… bash scr
   PASS  chat model via claude client                   200
   PASS  chat model via responses client                200
   PASS  /v1/models catalogue                           37 models
-  PASS  sidebar menu entry                             OpenCode Go /v0/resource/plugins/cap-opencode-go/dashboard
+  PASS  sidebar menu entry                             OpenCode Go /v0/resource/plugins/cpa-opencodego/dashboard
   PASS  dashboard state resource
   PASS  quota resource
 
@@ -1077,19 +1132,19 @@ $ CPA_BASE=http://127.0.0.1:8399 CPA_CLIENT_KEY=sk-… CPA_MGMT_KEY=… bash scr
 | A2 | responses 家族可用 | ✅ | `gpt-6-luna` / `grok-4.7` 经 `/v1/responses` 非流式 + 流式均 200 |
 | A3 | Gemini4 可用 | ✅ | `gemini-4-argon-contributor` 非流式返回 `"modelVersion":"gemini-4-argon-contributor"`，流式 SSE 正常 |
 | A4 | 其它客户端协议可用 | ✅ | chat 模型经 `/v1/messages`、`/v1/responses`；responses 模型经 `/v1/chat/completions`；argon 经 `/v1/chat/completions` 全部 200 |
-| A5 | 侧边栏入口 | ✅ | `GET /v8/management/plugins` 返回 `menus:[{menu:"OpenCode Go", path:"/v0/resource/plugins/cap-opencode-go/dashboard"}]`；`/dashboard` 返回 26 KB HTML（`text/html; charset=utf-8`，带 CSP） |
+| A5 | 侧边栏入口 | ✅ | `GET /v8/management/plugins` 返回 `menus:[{menu:"OpenCode Go", path:"/v0/resource/plugins/cpa-opencodego/dashboard"}]`；`/dashboard` 返回 26 KB HTML（`text/html; charset=utf-8`，带 CSP） |
 | A6 | 每模型代理开关真实生效 | ✅ | `gpt-6-luna` 设 `direct` → **403 `unsupported_country_region_territory`**；改 `proxy` → **200**。开关经由管理 API 热重载生效 |
 | A7 | 额度显示 | ✅ | `GET /api/quota` 返回 `[("5 小时",0%),("本周",6%),("本月",18%)]` 及各自 `resets_at` |
 | A8 | 多 Key | ✅ | Key 池放入一个无效 Key + 一个有效 Key，连续 3 次请求全部 200；坏 Key 记录 401 并进入冷却，好 Key 计数 7 次成功 |
-| A9 | 完全可回滚 | ✅ | 删除 4 个 `.so` + 4 个配置块 + 数据目录并重启后：`/v1/models` 为 0、插件列表为空、dashboard 404、`data/cap-opencode-go` 不存在、auth 目录 0 文件 |
+| A9 | 完全可回滚 | ✅ | 删除 4 个 `.so` + 4 个配置块 + 数据目录并重启后：`/v1/models` 为 0、插件列表为空、dashboard 404、`data/cpa-opencodego` 不存在、auth 目录 0 文件 |
 
 ## 附加验证
 
 - **插件加载**：4 个实例全部 `plugin loaded` + `plugin registered`，无告警。
-- **协议格式声明**：`cap-opencode-go` 声明 `["openai"]`，`-responses` 声明 `["codex","openai-response"]`，
+- **协议格式声明**：`cpa-opencodego` 声明 `["openai"]`，`-responses` 声明 `["codex","openai-response"]`，
   `-messages` 声明 `["claude"]`，`-gemini` 声明 `["gemini"]`。
 - **模型归属**：`/v1/models` 37 项全部 `owned_by = "opencode"`。
-- **配置持久化**：仪表盘写入路径（`PUT /v8/management/config/plugins/configs/cap-opencode-go`）返回
+- **配置持久化**：仪表盘写入路径（`PUT /v8/management/config/plugins/configs/cpa-opencodego`）返回
   `{"config-version":8,"status":"ok"}`，宿主重写 config.yaml 时完整保留了插件自定义字段。
 - **单元测试**：`go test ./...` 全绿；`go vet ./...` 无输出。
 

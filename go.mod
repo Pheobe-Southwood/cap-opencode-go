@@ -1,4 +1,4 @@
-module github.com/cpa-opencodego/cap-opencode-go
+module github.com/Pheobe-Southwood/cpa-opencodego
 
 go 1.26.0
 

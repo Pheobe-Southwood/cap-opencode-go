@@ -73,9 +73,9 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/plugin"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/plugin"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
 // role and version are stamped with -ldflags at build time.

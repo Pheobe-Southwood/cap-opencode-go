@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/abi"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
 )
 
 // modelsCacheTTL bounds how often the dashboard may query the upstream list.
@@ -75,7 +75,7 @@ func (c *Client) fetchModels(ctx context.Context, settings config.Settings) ([]s
 
 	var lastErr error
 	for _, credential := range candidates {
-		endpoint := settings.BaseURL + "/models"
+		endpoint := settings.ModelsURL()
 		request, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if errRequest != nil {
 			return nil, errRequest

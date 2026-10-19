@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/brand"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/brand"
 )
 
 // Name identifies a build-time role.
@@ -56,15 +56,15 @@ type Role struct {
 
 // All lists every role in build order.
 var All = []Role{
-	{Name: Chat, Provider: "opencode-go", PluginSuffix: "cap-opencode-go", Formats: []string{"openai"}, Endpoint: "chat/completions", Label: brand.Name, Protocol: "OpenAI Chat Completions"},
+	{Name: Chat, Provider: "opencode-go", PluginSuffix: "cpa-opencodego", Formats: []string{"openai"}, Endpoint: "chat/completions", Label: brand.Name, Protocol: "OpenAI Chat Completions"},
 	// The responses family declares both OpenAI-Responses formats. A client that
 	// already speaks openai-response is served by byte passthrough; any other
 	// client protocol is translated into codex. Declaring only codex is not
 	// viable: the host drops plugin stream frames that the codex->openai-response
 	// translator returns unchanged, so a passthrough plugin would emit nothing.
-	{Name: Responses, Provider: "opencode-go-responses", PluginSuffix: "cap-opencode-go-responses", Formats: []string{"codex", "openai-response"}, Endpoint: "responses", Label: brand.Name + " · Responses", Protocol: "OpenAI Responses（Codex）"},
-	{Name: Messages, Provider: "opencode-go-messages", PluginSuffix: "cap-opencode-go-messages", Formats: []string{"claude"}, Endpoint: "messages", Label: brand.Name + " · Messages", Protocol: "Anthropic Messages"},
-	{Name: Gemini, Provider: "opencode-go-gemini", PluginSuffix: "cap-opencode-go-gemini", Formats: []string{"gemini"}, Endpoint: "models/{model}:generateContent", GeminiPath: true, Label: brand.Name + " · Gemini", Protocol: "Google GenAI"},
+	{Name: Responses, Provider: "opencode-go-responses", PluginSuffix: "cpa-opencodego-responses", Formats: []string{"codex", "openai-response"}, Endpoint: "responses", Label: brand.Name + " · Responses", Protocol: "OpenAI Responses（Codex）"},
+	{Name: Messages, Provider: "opencode-go-messages", PluginSuffix: "cpa-opencodego-messages", Formats: []string{"claude"}, Endpoint: "messages", Label: brand.Name + " · Messages", Protocol: "Anthropic Messages"},
+	{Name: Gemini, Provider: "opencode-go-gemini", PluginSuffix: "cpa-opencodego-gemini", Formats: []string{"gemini"}, Endpoint: "models/{model}:generateContent", GeminiPath: true, Label: brand.Name + " · Gemini", Protocol: "Google GenAI"},
 }
 
 // ByName resolves a role by its build-time key, defaulting to Chat.
@@ -92,11 +92,34 @@ func (n Name) Valid() bool {
 
 // MainPluginID is the plugin id that owns the shared configuration and the
 // management page. The host derives plugin ids from the .so file name.
-const MainPluginID = "cap-opencode-go"
+const MainPluginID = "cpa-opencodego"
 
-// DefaultBaseURL is the OpenCode Go base URL documented at
-// https://opencode.ai/docs/go/. https://opencode.ai/zen/go/v1 is equivalent.
-const DefaultBaseURL = "https://opencode.ai/inference/go/v1"
+// Layout selects how the upstream URLs are assembled.
+//
+// OpenCode Go migrated its hosted inference from one shared /v1 base to one
+// base per protocol family (openai / anthropic / google). The old paths remain
+// available as aliases, so a deployment may use either layout; the configured
+// base URL decides which one is used unless the operator pins it.
+type Layout string
+
+const (
+	// LayoutLegacy appends the protocol resource path directly to base-url,
+	// e.g. https://opencode.ai/inference/go/v1/chat/completions. Every v1.x
+	// configuration keeps this behaviour.
+	LayoutLegacy Layout = "legacy"
+	// LayoutFamily inserts the protocol family prefix, e.g.
+	// https://opencode.ai/inference/go/openai/v1/chat/completions.
+	LayoutFamily Layout = "family"
+)
+
+// DefaultBaseURL is the OpenCode Go inference root documented at
+// https://opencode.ai/docs/go/. It is the root of the per-family layout, so the
+// plugin appends /openai/v1, /anthropic/v1 or /google/v1beta to it.
+const DefaultBaseURL = "https://opencode.ai/inference/go"
+
+// LegacyBaseURL is the single-base form used by v1.x. It is kept for
+// documentation and for configurations that never set base-url.
+const LegacyBaseURL = "https://opencode.ai/inference/go/v1"
 
 // SSEStyle describes the stream chunk shape a role must hand back to the host.
 type SSEStyle int
@@ -120,6 +143,32 @@ func (r Role) SSEStyle() SSEStyle {
 	default:
 		return SSEFramed
 	}
+}
+
+// FamilyPrefix is the path segment the per-family layout inserts before the
+// protocol resource path. The OpenCode Go migration serves every family under
+// /inference/go/<family>/v1 (the google family uses /v1beta).
+func (r Role) FamilyPrefix() string {
+	switch r.Name {
+	case Responses:
+		return "/openai/v1"
+	case Messages:
+		return "/anthropic/v1"
+	case Gemini:
+		return "/google/v1beta"
+	default:
+		return "/openai/v1"
+	}
+}
+
+// BuildPathFor assembles the path appended to the configured base URL for a
+// layout. An explicit per-family base URL is itself an API root, so callers add
+// BuildPath to it and never this prefix.
+func (r Role) BuildPathFor(layout Layout, model string, stream bool) string {
+	if layout == LayoutFamily {
+		return r.FamilyPrefix() + r.BuildPath(model, stream)
+	}
+	return r.BuildPath(model, stream)
 }
 
 // BuildPath returns the upstream path (relative to the base URL) for a model.

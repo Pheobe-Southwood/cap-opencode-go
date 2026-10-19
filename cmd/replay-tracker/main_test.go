@@ -11,17 +11,17 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/stats"
 )
 
 func TestOpenCodeProviderFilter(t *testing.T) {
 	for _, provider := range []string{
 		"openai-compatible-opencode go",
-		"cap-opencode-go",
-		"cap-opencode-go-gemini",
-		"cap-opencode-go-responses",
-		"cap-opencode-go-messages",
+		"cpa-opencodego",
+		"cpa-opencodego-gemini",
+		"cpa-opencodego-responses",
+		"cpa-opencodego-messages",
 	} {
 		if !isOpenCodeProvider(provider) {
 			t.Errorf("%q must be imported", provider)
@@ -78,7 +78,7 @@ func TestTrackerRecordCarriesPairedTPSAndTiming(t *testing.T) {
 func TestTrackerRecordGeminiReasoningIsTPSOutput(t *testing.T) {
 	record, ok := trackerRecord(trackerRequest{
 		Time:            time.Date(2026, 10, 5, 5, 30, 0, 0, time.UTC),
-		Provider:        "cap-opencode-go-gemini",
+		Provider:        "cpa-opencodego-gemini",
 		Model:           "gemini-4-argon-contributor",
 		OutputTokens:    20,
 		ReasoningTokens: 30,

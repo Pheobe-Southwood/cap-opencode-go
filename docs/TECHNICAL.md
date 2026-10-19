@@ -1,6 +1,6 @@
 # CLIProxyAPI OpenCode Go 插件 — 技术路线与实现文档
 
-本文档收录 `cap-opencode-go` 插件的架构原理、协议转换机制、技术构建流程、全量配置参数参考与已知技术细节。日常使用与功能特性请参阅 [README.md](../README.md)。
+本文档收录 `cpa-opencodego` 插件的架构原理、协议转换机制、技术构建流程、全量配置参数参考与已知技术细节。日常使用与功能特性请参阅 [README.md](../README.md)。
 
 ---
 
@@ -10,12 +10,15 @@ CLIProxyAPI (CPA) 的插件执行器（Executor）基于**声明式协议格式*
 
 OpenCode Go 的 37 个模型分布在 4 个完全不同的上游端点上：
 
-| 上游端点 | 协议格式 | 涵盖模型示例 |
+| 上游端点（新分族布局） | 旧单根布局（v1，继续兼容） | 协议格式 |
 |---|---|---|
-| `POST {base}/chat/completions` | `openai` | GLM / Kimi / MiMo / DeepSeek / Qwen / LongCat / Space Bunny / Step5 / MiniMax / Omen 等 |
-| `POST {base}/responses` | `codex` + `openai-response` | Grok 4.7 / 4.6、GPT 6 Luna、GPT 5.6 Luna、Muse Spark |
-| `POST {base}/messages` | `claude` | Claude Haiku 5.5 |
-| `POST {base}/models/{id}:generateContent` | `gemini` | Gemini 4 Argon Contributor |
+| `POST {go}/openai/v1/chat/completions` | `POST {base}/chat/completions` | `openai` |
+| `POST {go}/openai/v1/responses` | `POST {base}/responses` | `codex` + `openai-response` |
+| `POST {go}/anthropic/v1/messages` | `POST {base}/messages` | `claude` |
+| `POST {go}/google/v1beta/models/{id}:generateContent` | `POST {base}/models/{id}:generateContent` | `gemini` |
+| `GET {go}/v1/models`、`GET {go}/v1/usage` | `GET {base}/models`、`GET {base}/usage` | 列表 / 额度 |
+
+`{go}` 默认是 `https://opencode.ai/inference/go`；`{base}` 是旧值如 `https://opencode.ai/inference/go/v1` 或 `https://opencode.ai/zen/go/v1`。布局由 `endpoint-layout`（默认 `auto`，按 base-url 是否以 `/v1` 结尾判断）决定，可用 `base-urls` 逐族覆盖。
 
 由于格式声明是 Provider 级别的，而具体模型所需的协议是模型级别的，单个 Provider 实例无法在不手写全套转换器的情况下承载多种上游协议。
 
@@ -23,14 +26,14 @@ OpenCode Go 的 37 个模型分布在 4 个完全不同的上游端点上：
 
 | 插件 ID | Provider Key | 声明格式 | 对应上游端点 |
 |---|---|---|---|
-| `cap-opencode-go` | `opencode-go` | `["openai"]` | `/chat/completions` |
-| `cap-opencode-go-responses` | `opencode-go-responses` | `["codex","openai-response"]` | `/responses` |
-| `cap-opencode-go-messages` | `opencode-go-messages` | `["claude"]` | `/messages` |
-| `cap-opencode-go-gemini` | `opencode-go-gemini` | `["gemini"]` | `models/{id}:generateContent` |
+| `cpa-opencodego` | `opencode-go` | `["openai"]` | `/chat/completions` |
+| `cpa-opencodego-responses` | `opencode-go-responses` | `["codex","openai-response"]` | `/responses` |
+| `cpa-opencodego-messages` | `opencode-go-messages` | `["claude"]` | `/messages` |
+| `cpa-opencodego-gemini` | `opencode-go-gemini` | `["gemini"]` | `models/{id}:generateContent` |
 
 ### 统一控制与配置流
 
-- **主实例（`cap-opencode-go`）**：唯一挂载 `management_api` 与侧边栏菜单的面，也是唯一的配置入口。它把解析后的配置写入 `<CPA 根>/data/cap-opencode-go/shared.json`。
+- **主实例（`cpa-opencodego`）**：唯一挂载 `management_api` 与侧边栏菜单的面，也是唯一的配置入口。它把解析后的配置写入 `<CPA 根>/data/cpa-opencodego/shared.json`。
 - **从属实例**：其余 3 个从属面以只读模式监听 `shared.json` 的 mtime 变化进行惰性加载。从属面在宿主配置中仅需 `enabled: true`，不暴露重复冗余的配置字段。
 - **模型路由抢占**：4 个面均注册各自的 `model_router`，按模型名单精准认领。由于设置了专属路由，可以稳定接管同名模型请求。
 
@@ -47,7 +50,7 @@ OpenCode Go 的 37 个模型分布在 4 个完全不同的上游端点上：
 
 ## 2. 统计监控与延迟口径实现
 
-主面 `cap-opencode-go` 声明了 `usage_plugin` 能力，接收宿主在请求完成后投递的 Usage 事件。Token 消耗、缓存命中有无、失败状态与总延迟均由宿主统一解析。
+主面 `cpa-opencodego` 声明了 `usage_plugin` 能力，接收宿主在请求完成后投递的 Usage 事件。Token 消耗、缓存命中有无、失败状态与总延迟均由宿主统一解析。
 
 由于宿主对异步流桥接不提供内部 TTFT（`ttft_ns=0`），4 个协议面各自在读取上游 SSE 数据流时自行测量首个内容帧的时间戳，写入 `<状态目录>/stats-<role>.json`。主面的 `/api/stats` 接口自动汇聚 4 个协议面的耗时与用量。
 
@@ -57,6 +60,15 @@ OpenCode Go 的 37 个模型分布在 4 个完全不同的上游端点上：
 - **生成 TPS**：插件实测有效 output tokens ÷（最后一个内容帧时间 - 首个内容帧时间），不包含 TTFT，贴近纯解码速率。
 - **TTFT**：向上游发起请求到接收到首个真实有效内容帧的时间差。空流、错误帧或提前中断不计入样本。
 - **刊例价与额度**：内置官方价目快照折算，支持根据 `plan`（`go` / `go-plus`）自动计算各模型当月额度消耗百分比。
+
+### 请求日志（v2.0）
+
+`/api/requests` 合并四个协议面各自的 `requests-<role>.jsonl`，返回逐条记录：时间、模型、协议面、Key、输入/输出/合计 token（含缓存与推理明细）、TTFT、生成 TPS、端到端 TPS、状态、错误摘要、上游 `x-opencode-log-id` 与 8 位会话哈希。
+
+- **数据来源**：executor 在转发时自行埋点并解析上游响应帧的 usage（chat 的 `usage`、messages 的 `message_start`/`message_delta`、responses 的 `response.completed`、gemini 的 `usageMetadata`），不依赖宿主 usage 事件，也不需要请求 id 关联。
+- **口径**：生成 TPS = 有效输出 ÷（首内容帧 → 末内容帧）；端到端 TPS = 有效输出 ÷ 总耗时；TTFT 只统计有内容且正常结束的流；失败请求不计算 TPS。
+- **保留**：每面最多 2000 条 / 7 天，文件超过 4 MiB 自动压缩；可在设置里关闭。
+- **隐私**：不记录提示词、响应正文、Key 密文或原始会话 ID。
 
 ---
 
@@ -75,7 +87,7 @@ export PATH=/opt/go/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 
 # 编译 4 个协议面 .so
-make build VERSION=1.12.0
+make build VERSION=2.0.0
 
 # 执行单元测试与代码检查
 make test
@@ -83,25 +95,28 @@ make vet
 ```
 
 编译产出位于 `dist/` 目录：
-- `dist/cap-opencode-go-v1.12.0.so`
-- `dist/cap-opencode-go-responses-v1.12.0.so`
-- `dist/cap-opencode-go-messages-v1.12.0.so`
-- `dist/cap-opencode-go-gemini-v1.12.0.so`
+- `dist/cpa-opencodego-v2.0.0.so`
+- `dist/cpa-opencodego-responses-v2.0.0.so`
+- `dist/cpa-opencodego-messages-v2.0.0.so`
+- `dist/cpa-opencodego-gemini-v2.0.0.so`
 
 ---
 
 ## 4. 全量配置参数参考
 
-所有核心配置集中在宿主 `config.yaml` 的 `plugins.configs.cap-opencode-go` 节点下：
+所有核心配置集中在宿主 `config.yaml` 的 `plugins.configs.cpa-opencodego` 节点下：
 
 ```yaml
 plugins:
   enabled: true
   dir: "plugins"
   configs:
-    cap-opencode-go:
+    cpa-opencodego:
       enabled: true
-      base-url: "https://opencode.ai/inference/go/v1"
+      base-url: "https://opencode.ai/inference/go"
+      endpoint-layout: "auto"
+      developer-role: "rewrite"
+      request-log: true
       session-mode: "auto"
       session: "$CPA-SESSION-ID"
       default-proxy: "inherit"
@@ -127,16 +142,20 @@ plugins:
           enabled: true
           proxy: "direct"
           aliases: ["gemini-4-argon"]
-    cap-opencode-go-responses: { enabled: true }
-    cap-opencode-go-messages:  { enabled: true }
-    cap-opencode-go-gemini:    { enabled: true }
+    cpa-opencodego-responses: { enabled: true }
+    cpa-opencodego-messages:  { enabled: true }
+    cpa-opencodego-gemini:    { enabled: true }
 ```
 
 ### 字段说明表
 
 | 字段 | 类型 | 默认值 | 作用与说明 |
 |---|---|---|---|
-| `base-url` | string | `https://opencode.ai/inference/go/v1` | 上游接口 Base URL，亦可使用 `https://opencode.ai/zen/go/v1` |
+| `base-url` | string | `https://opencode.ai/inference/go` | Go 根（新分族布局）；旧值 `.../inference/go/v1`、`.../zen/go/v1` 仍兼容并按 legacy 布局请求 |
+| `endpoint-layout` | enum | `auto` | `auto` 按 base-url 判断、`legacy` 旧单根、`family` 新分族 |
+| `base-urls` | map | `{}` | 逐族 API 根覆盖：`{chat, responses, messages, gemini}`，设置的族不再追加前缀 |
+| `developer-role` | enum | `rewrite` | OpenAI 形状请求的 `developer` → `system` 兼容改写；`keep` 关闭 |
+| `request-log` | bool | `true` | 是否写逐条请求日志（每面 2000 条 / 7 天） |
 | `keys` | array | `[]` | 多账号 Key 列表，包含 `name`、`key`、`priority`、`enabled` |
 | `models` | map | `{}` | 逐模型个性化配置（启用状态、代理策略、别名、协议面覆盖） |
 | `models-default` | object | `{}` | 未显式声明模型的默认基线行为 |
@@ -146,7 +165,7 @@ plugins:
 | `session` | string | `"$CPA-SESSION-ID"` | 当 `session-mode=fixed` 时作为 `x-opencode-session` 报头值 |
 | `request-timeout-seconds` | int | `900` | 上游单次请求最大超时时长（秒） |
 | `plan` | enum | `go` | 订阅套餐类型：`go`（$10/月）或 `go-plus`（$40/月），决定月额度参考线 |
-| `state-dir` | string | `<root>/data/cap-opencode-go` | 插件本地数据目录，存放 `shared.json` 与各协议面统计文件 |
+| `state-dir` | string | `<root>/data/cpa-opencodego` | 插件本地数据目录，存放 `shared.json`、各协议面统计文件与 `requests-<role>.jsonl`；首次启动会把 v1 目录的统计复制过来 |
 | `debug` | bool | `false` | 是否开启调试模式，开启后输出详细追踪至 `<state-dir>/debug.log` |
 
 ### 代理生效链
@@ -172,7 +191,7 @@ plugins:
    ```bash
    bash scripts/uninstall.sh
    ```
-2. 从 `config.yaml` 的 `plugins.configs` 列表中移除 `cap-opencode-go` 及其三个从属协议面配置块。
+2. 从 `config.yaml` 的 `plugins.configs` 列表中移除 `cpa-opencodego` 及其三个从属协议面配置块。
 3. 重启 CPA 宿主即可彻底恢复纯净状态。
 
 ---
@@ -186,10 +205,10 @@ plugins:
 systemctl stop cliproxyapi
 
 # 编译并执行回放
-make VERSION=1.12.0 replay
-./dist/replay-tracker-v1.12.0 \
+make VERSION=2.0.0 replay
+./dist/replay-tracker-v2.0.0 \
   -tracker /root/cliproxyapi/data/token-usage-tracker.db \
-  -stats-dir /root/cliproxyapi/data/cap-opencode-go -apply
+  -stats-dir /root/cliproxyapi/data/cpa-opencodego -apply
 
 # 恢复服务
 systemctl start cliproxyapi

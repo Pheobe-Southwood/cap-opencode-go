@@ -10,10 +10,10 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
-	"github.com/cpa-opencodego/cap-opencode-go/internal/config"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/pricing"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/roles"
-	"github.com/cpa-opencodego/cap-opencode-go/internal/stats"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/pricing"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/stats"
 )
 
 func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
@@ -28,7 +28,7 @@ func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
 
 	at := time.Now().UTC().Add(-2 * time.Minute)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider:    "cap-opencode-go",
+		Provider:    "cpa-opencodego",
 		Model:       "DeepSeek-V4.1-Flash",
 		RequestedAt: at,
 		Stream:      true,
@@ -43,7 +43,7 @@ func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
 	})
 
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider:    "cap-opencode-go-messages",
+		Provider:    "cpa-opencodego-messages",
 		Model:       "claude-haiku-5-5",
 		RequestedAt: at,
 		Stream:      true,
@@ -64,11 +64,11 @@ func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
 	sibling.Shutdown()
 
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "longcat-2.5-preview-free",
+		Provider: "cpa-opencodego", Model: "longcat-2.5-preview-free",
 		Detail: pluginapi.UsageDetail{InputTokens: 1_000},
 	})
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "omen-alpha",
+		Provider: "cpa-opencodego", Model: "omen-alpha",
 		Detail: pluginapi.UsageDetail{InputTokens: 1_000},
 	})
 
@@ -190,7 +190,7 @@ func TestStatsPayloadMergesFacesAndComputesAverages(t *testing.T) {
 func TestStatsPayloadTPSUsesPairedLatency(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "glm-5.3",
+		Provider: "cpa-opencodego", Model: "glm-5.3",
 		RequestedAt: time.Now().UTC(),
 		Latency:     2 * time.Second,
 		Detail:      pluginapi.UsageDetail{InputTokens: 100, OutputTokens: 100, TotalTokens: 200},
@@ -207,7 +207,7 @@ func TestStatsPayloadTPSUsesPairedLatency(t *testing.T) {
 	// A stream without latency/timing must not be folded into the TPS
 	// numerator or denominator; TTFT is independent and requires content.
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "glm-5.3",
+		Provider: "cpa-opencodego", Model: "glm-5.3",
 		RequestedAt: time.Now().UTC(), Stream: true,
 		Detail: pluginapi.UsageDetail{OutputTokens: 999, TotalTokens: 999},
 	})
@@ -222,7 +222,7 @@ func TestStatsPayloadReportsGenerationTPS(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	at := time.Now().UTC().Add(-time.Minute)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "glm-5.3",
+		Provider: "cpa-opencodego", Model: "glm-5.3",
 		RequestedAt: at, Stream: true, Latency: 5 * time.Second,
 		Detail: pluginapi.UsageDetail{OutputTokens: 1_000, TotalTokens: 1_000},
 	})
@@ -245,7 +245,7 @@ func TestStatsPayloadReportsGenerationTPS(t *testing.T) {
 	// Without a generation timing sample there is no decode rate, even though
 	// the request still contributes to the paired overall TPS.
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "glm-5.3",
+		Provider: "cpa-opencodego", Model: "glm-5.3",
 		RequestedAt: at, Stream: true, Latency: 5 * time.Second,
 		Detail: pluginapi.UsageDetail{OutputTokens: 1_000, TotalTokens: 1_000},
 	})
@@ -259,7 +259,7 @@ func TestStatsPayloadReportsGenerationTPS(t *testing.T) {
 func TestStatsPayloadCalendarFallback(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "glm-5.3",
+		Provider: "cpa-opencodego", Model: "glm-5.3",
 		RequestedAt: time.Now().UTC(), Detail: pluginapi.UsageDetail{InputTokens: 100},
 	})
 	payload := runtime.statsPayload(url.Values{"range": {"month"}})
@@ -299,12 +299,12 @@ func TestStatsPayloadSiblingReadErrorIsAWarning(t *testing.T) {
 func TestManagementStatsRoute(t *testing.T) {
 	runtime := newStatsTestRuntime(t, roles.Chat)
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider: "cap-opencode-go", Model: "glm-5.3",
+		Provider: "cpa-opencodego", Model: "glm-5.3",
 		Detail: pluginapi.UsageDetail{InputTokens: 100, TotalTokens: 100},
 	})
 	body, errMarshal := json.Marshal(pluginapi.ManagementRequest{
 		Method: "GET",
-		Path:   "/v0/resource/plugins/cap-opencode-go/api/stats",
+		Path:   "/v0/resource/plugins/cpa-opencodego/api/stats",
 		Query:  url.Values{"range": {"all"}},
 	})
 	if errMarshal != nil {
@@ -372,7 +372,7 @@ func TestStatsPayloadKeyFilteringAndPerKeyRemaining(t *testing.T) {
 	at := time.Now().UTC().Add(-time.Minute)
 	// Request from primary-key on glm-5.3
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider:    "cap-opencode-go",
+		Provider:    "cpa-opencodego",
 		Model:       "glm-5.3",
 		AuthID:      "opencode-go-primary-key.json",
 		RequestedAt: at,
@@ -384,7 +384,7 @@ func TestStatsPayloadKeyFilteringAndPerKeyRemaining(t *testing.T) {
 	})
 	// Request from secondary-key on glm-5.3
 	sendUsage(t, runtime, pluginapi.UsageRecord{
-		Provider:    "cap-opencode-go",
+		Provider:    "cpa-opencodego",
 		Model:       "glm-5.3",
 		AuthID:      "opencode-go-secondary-key.json",
 		RequestedAt: at,
