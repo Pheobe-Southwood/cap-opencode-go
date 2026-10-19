@@ -123,28 +123,48 @@ func TestUserAgentPassthroughAndEndpoint(t *testing.T) {
 	}
 
 	mu.Lock()
-	defer mu.Unlock()
-	if len(seen) != 2 {
-		t.Fatalf("upstream calls = %d, want 2", len(seen))
+	initialSeen := append([]capturedRequest(nil), seen...)
+	mu.Unlock()
+
+	if len(initialSeen) != 2 {
+		t.Fatalf("upstream calls = %d, want 2", len(initialSeen))
 	}
-	if seen[0].Path != "/openai/v1/chat/completions" {
-		t.Errorf("chat path = %q", seen[0].Path)
+	if initialSeen[0].Path != "/openai/v1/chat/completions" {
+		t.Errorf("chat path = %q", initialSeen[0].Path)
 	}
-	if seen[1].Path != "/openai/v1/responses" {
-		t.Errorf("responses path = %q", seen[1].Path)
+	if initialSeen[1].Path != "/openai/v1/responses" {
+		t.Errorf("responses path = %q", initialSeen[1].Path)
 	}
-	if got := seen[0].Headers.Get("User-Agent"); got != "my-coding-agent/1.0" {
+	if got := initialSeen[0].Headers.Get("User-Agent"); got != "my-coding-agent/1.0" {
 		t.Errorf("User-Agent = %q, want the inbound value", got)
 	}
-	if got := seen[1].Headers.Get("User-Agent"); !strings.HasPrefix(got, "Go-http-client/") {
+	if got := initialSeen[1].Headers.Get("User-Agent"); !strings.HasPrefix(got, "Go-http-client/") {
 		t.Errorf("without an inbound UA the plugin must not synthesise one, got %q", got)
 	}
-	if got := seen[0].Headers.Get("x-opencode-session"); got != "session-1" {
+	if got := initialSeen[0].Headers.Get("x-opencode-session"); got != "session-1" {
 		t.Errorf("x-opencode-session = %q", got)
 	}
-	// The compatibility rewrite runs before the bytes leave the plugin.
-	if !strings.Contains(string(seen[0].Body), `"role":"system"`) || strings.Contains(string(seen[0].Body), `"role":"developer"`) {
-		t.Errorf("developer role was not rewritten on the wire: %s", seen[0].Body)
+	// Under default retry-only mode, developer role is preserved on the wire on attempt 1.
+	if !strings.Contains(string(initialSeen[0].Body), `"role":"developer"`) || strings.Contains(string(initialSeen[0].Body), `"role":"system"`) {
+		t.Errorf("developer role must be preserved on the wire in retry-only default: %s", initialSeen[0].Body)
+	}
+	// With developer-role: rewrite, the role is rewritten proactively.
+	settingsRewrite := settings
+	settingsRewrite.DeveloperRole = config.DeveloperRoleRewrite
+	clientRewrite := New(settingsRewrite)
+	if _, err := clientRewrite.Execute(t.Context(), Call{
+		Role:  roles.ByName("chat"),
+		Model: "deepseek-v4.1-flash",
+		Body:  []byte(`{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"sys"}]}`),
+	}); err != nil {
+		t.Fatalf("Execute with rewrite failed: %v", err)
+	}
+
+	mu.Lock()
+	last := seen[len(seen)-1]
+	mu.Unlock()
+	if !strings.Contains(string(last.Body), `"role":"system"`) || strings.Contains(string(last.Body), `"role":"developer"`) {
+		t.Errorf("developer role must be rewritten with mode=rewrite: %s", last.Body)
 	}
 }
 
@@ -308,5 +328,266 @@ func TestExecuteDoesNotRetryOtherBadRequests(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("upstream calls = %d, want 1 (no retry)", calls)
+	}
+}
+
+func TestIsDeveloperRoleRejection(t *testing.T) {
+	cases := []struct {
+		body []byte
+		want bool
+	}{
+		{[]byte(`{"error":{"message":"chat message role ` + "`developer`" + ` is not supported by the router gRPC frontend"}}`), true},
+		{[]byte(`{"error":{"message":"role developer is not supported"}}`), true},
+		{[]byte(`{"error":{"message":"The reasoning_content in the thinking mode must be passed back"}}`), false},
+		{[]byte(`{"error":{"message":"developer role is great"}}`), false},
+		{[]byte(`{"error":{"message":"model not supported"}}`), false},
+	}
+	for _, tc := range cases {
+		if got := isDeveloperRoleRejection(tc.body); got != tc.want {
+			t.Errorf("isDeveloperRoleRejection(%s) = %v, want %v", tc.body, got, tc.want)
+		}
+	}
+}
+
+func TestExecuteDeveloperRoleRetryOnlyLadder(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []capturedRequest
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		raw, _ := io.ReadAll(request.Body)
+		mu.Lock()
+		seen = append(seen, capturedRequest{Path: request.URL.Path, Body: raw})
+		calls := len(seen)
+		mu.Unlock()
+
+		if calls == 1 {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":{"message":"chat message role ` + "`developer`" + ` is not supported by the router gRPC frontend"}}`))
+			return
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"id":"ok","choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	settings := config.Default()
+	settings.BaseURL = server.URL
+	settings.EndpointLayout = config.LayoutFamily
+	settings.Keys = []config.Key{{Name: "k1", Key: "test-key"}}
+	client := New(settings)
+
+	result, err := client.Execute(t.Context(), Call{
+		Role:  roles.ByName("chat"),
+		Model: "deepseek-v4.1-flash",
+		Body:  []byte(`{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"sys"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", result.StatusCode)
+	}
+	if len(result.Repairs) != 1 || result.Repairs[0] != "developer-role" {
+		t.Errorf("repairs = %v, want [developer-role]", result.Repairs)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 2 {
+		t.Fatalf("upstream calls = %d, want 2", len(seen))
+	}
+	if !strings.Contains(string(seen[0].Body), `"role":"developer"`) {
+		t.Errorf("attempt 1 must preserve developer role: %s", seen[0].Body)
+	}
+	if !strings.Contains(string(seen[1].Body), `"role":"system"`) || strings.Contains(string(seen[1].Body), `"role":"developer"`) {
+		t.Errorf("attempt 2 must rewrite developer to system: %s", seen[1].Body)
+	}
+}
+
+func TestExecuteBothDeveloperAndReasoningLadder(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []capturedRequest
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		raw, _ := io.ReadAll(request.Body)
+		mu.Lock()
+		seen = append(seen, capturedRequest{Path: request.URL.Path, Body: raw})
+		calls := len(seen)
+		mu.Unlock()
+
+		if calls == 1 {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":{"message":"chat message role ` + "`developer`" + ` is not supported by the router gRPC frontend"}}`))
+			return
+		}
+		if calls == 2 {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":{"message":"The reasoning_content in the thinking mode must be passed back to the API."}}`))
+			return
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"id":"ok","choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	settings := config.Default()
+	settings.BaseURL = server.URL
+	settings.EndpointLayout = config.LayoutFamily
+	settings.Keys = []config.Key{{Name: "k1", Key: "test-key"}}
+	client := New(settings)
+
+	result, err := client.Execute(t.Context(), Call{
+		Role:    roles.ByName("chat"),
+		Model:   "deepseek-v4.1-flash",
+		Session: "sess-ladder",
+		Body:    []byte(`{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"sys"},{"role":"assistant","content":"hi"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", result.StatusCode)
+	}
+	if len(result.Repairs) != 2 || result.Repairs[0] != "developer-role" || result.Repairs[1] != "reasoning-replay" {
+		t.Errorf("repairs = %v, want [developer-role reasoning-replay]", result.Repairs)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 3 {
+		t.Fatalf("upstream calls = %d, want 3", len(seen))
+	}
+	// Attempt 1: has developer, no placeholder
+	if !strings.Contains(string(seen[0].Body), `"role":"developer"`) || strings.Contains(string(seen[0].Body), "reasoning_content") {
+		t.Errorf("attempt 1: %s", seen[0].Body)
+	}
+	// Attempt 2: system, no placeholder
+	if !strings.Contains(string(seen[1].Body), `"role":"system"`) || strings.Contains(string(seen[1].Body), "reasoning_content") {
+		t.Errorf("attempt 2: %s", seen[1].Body)
+	}
+	// Attempt 3: system AND placeholder
+	if !strings.Contains(string(seen[2].Body), `"role":"system"`) || !strings.Contains(string(seen[2].Body), "reasoning_content") {
+		t.Errorf("attempt 3: %s", seen[2].Body)
+	}
+}
+
+func TestExecuteSessionStickyReasoning(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []capturedRequest
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		raw, _ := io.ReadAll(request.Body)
+		mu.Lock()
+		seen = append(seen, capturedRequest{Path: request.URL.Path, Body: raw})
+		calls := len(seen)
+		mu.Unlock()
+
+		if calls == 1 {
+			// First call ever gets rejected for missing reasoning
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":{"message":"The reasoning_content in the thinking mode must be passed back to the API."}}`))
+			return
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"id":"ok","choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	settings := config.Default()
+	settings.BaseURL = server.URL
+	settings.EndpointLayout = config.LayoutFamily
+	settings.Keys = []config.Key{{Name: "k1", Key: "test-key"}}
+	client := New(settings)
+
+	// Turn 1 on sess-sticky: triggers 400 rejection and repairs
+	res1, err1 := client.Execute(t.Context(), Call{
+		Role:    roles.ByName("chat"),
+		Model:   "deepseek-v4.1-flash",
+		Session: "sess-sticky",
+		Body:    []byte(`{"model":"deepseek-v4.1-flash","reasoning_effort":"max","messages":[{"role":"assistant","content":"turn1"}]}`),
+	})
+	if err1 != nil || res1.StatusCode != http.StatusOK {
+		t.Fatalf("Turn 1 failed: %v", err1)
+	}
+
+	mu.Lock()
+	turn1Calls := len(seen)
+	mu.Unlock()
+	if turn1Calls != 2 {
+		t.Fatalf("turn 1 calls = %d, want 2 (initial + repair)", turn1Calls)
+	}
+
+	// Turn 2 on SAME session: should proactively pre-fill reasoning_content, so only 1 upstream call!
+	res2, err2 := client.Execute(t.Context(), Call{
+		Role:    roles.ByName("chat"),
+		Model:   "deepseek-v4.1-flash",
+		Session: "sess-sticky",
+		Body:    []byte(`{"model":"deepseek-v4.1-flash","reasoning_effort":"max","messages":[{"role":"assistant","content":"turn2"}]}`),
+	})
+	if err2 != nil || res2.StatusCode != http.StatusOK {
+		t.Fatalf("Turn 2 failed: %v", err2)
+	}
+
+	mu.Lock()
+	turn2Calls := len(seen) - turn1Calls
+	attempt3Body := string(seen[2].Body)
+	mu.Unlock()
+
+	if turn2Calls != 1 {
+		t.Fatalf("turn 2 calls = %d, want 1 (sticky pre-filled, no retry needed)", turn2Calls)
+	}
+	if !strings.Contains(attempt3Body, config.DefaultReasoningPlaceholder) {
+		t.Errorf("turn 2 first attempt body must contain placeholder due to sticky memory: %s", attempt3Body)
+	}
+
+	// Turn 3 on a DIFFERENT session: must NOT be sticky on attempt 1
+	res3, err3 := client.Execute(t.Context(), Call{
+		Role:    roles.ByName("chat"),
+		Model:   "deepseek-v4.1-flash",
+		Session: "sess-different",
+		Body:    []byte(`{"model":"deepseek-v4.1-flash","reasoning_effort":"max","messages":[{"role":"assistant","content":"turn3"}]}`),
+	})
+	if err3 != nil || res3.StatusCode != http.StatusOK {
+		t.Fatalf("Turn 3 failed: %v", err3)
+	}
+
+	mu.Lock()
+	attempt4Body := string(seen[3].Body)
+	mu.Unlock()
+
+	if strings.Contains(attempt4Body, config.DefaultReasoningPlaceholder) {
+		t.Errorf("different session must not inherit sticky reasoning on attempt 1: %s", attempt4Body)
+	}
+}
+
+func TestExecuteKeepAndOffDoNotRetry(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls++
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = writer.Write([]byte(`{"error":{"message":"chat message role ` + "`developer`" + ` is not supported"}}`))
+	}))
+	defer server.Close()
+
+	settings := config.Default()
+	settings.BaseURL = server.URL
+	settings.DeveloperRole = config.DeveloperRoleKeep
+	settings.ReasoningReplay = config.ReasoningReplayOff
+	settings.Keys = []config.Key{{Name: "k1", Key: "test-key"}}
+	client := New(settings)
+
+	_, err := client.Execute(t.Context(), Call{
+		Role:  roles.ByName("chat"),
+		Model: "deepseek-v4.1-flash",
+		Body:  []byte(`{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"hi"}]}`),
+	})
+	if err == nil {
+		t.Fatalf("must return error when keep mode receives 400")
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1 (no retry when developer-role=keep)", calls)
 	}
 }

@@ -8,11 +8,18 @@ v2.0.0 是一次大版本升级，包含三件事：
 
 模型 id、别名、代理策略、DSH 调用方式都不变；插件仍然只自行发送 `x-opencode-session` 一个请求头，`User-Agent` 跟随 CPA 透传。
 
-> **v2.0.1 热修复（已在生产中热部署）**：修复 DeepSeek 思考模型长任务偶发的
-> `The reasoning_content in the thinking mode must be passed back to the API`。默认
-> `reasoning-replay: "auto"` 会为缺少 `reasoning_content` 的历史 assistant 消息补占位文本，
-> 并对该 400 自动重试一次。升级只需替换四个 `.so` 并原地改写一次 `config.yaml`（补上
-> `reasoning-replay: "auto"` 可选，默认即 auto），**不需要重启 CPA**。其余步骤与 v2.0.0 相同。
+> **v2.0.2（默认 retry-only 懒修复 + 会话 sticky + 流截断诊断）**：
+> 把 `developer-role` 和 `reasoning-replay` 均改为默认 `retry-only`。原始请求保持 100% 原样透传；
+> 仅当上游节点返回对应的 400 报错时，才自动改写并重试一次；`reasoning-replay` 修复成功后自动记忆
+> 该会话（sticky 2 小时），后续请求提前补齐，兼顾前缀缓存命中率与零延迟惩罚。
+> 请求日志新增 `repairs`、`finish`（`stop|length|tool_calls|eof|error`）和 `incomplete` 字段，
+> 并对中途断流显式标记「截断」。
+> 升级只需编译安装四个 `.so` 并原地改写一次 `config.yaml`（把 `developer-role` / `reasoning-replay`
+> 设为 `retry-only`），**不需要重启 CPA**。
+
+> **v2.0.1 热修复（已归入 v2.0.2）**：修复 DeepSeek 思考模型长任务偶发的
+> `The reasoning_content in the thinking mode must be passed back to the API`。
+> v2.0.2 已升级为按需懒修复 + 会话 sticky 记忆。
 
 ---
 
@@ -95,7 +102,8 @@ CPA_BASE=http://127.0.0.1:8317 CPA_CLIENT_KEY=sk-... CPA_MGMT_KEY=... bash scrip
 | `base-url` | `https://opencode.ai/inference/go` | 新分族布局的 Go 根；以 `/v1` 结尾的旧值仍走旧布局 |
 | `endpoint-layout` | `auto` | `auto` / `legacy` / `family` |
 | `base-urls` | `{}` | 逐族 API 根覆盖：`chat` / `responses` / `messages` / `gemini` |
-| `developer-role` | `rewrite` | 把 OpenAI 形状请求里的 `developer` 改写为 `system`；`keep` 关闭 |
+| `developer-role` | `retry-only` | `retry-only`（默认，命中 400 改写并重试）/ `rewrite`（主动改写）/ `keep`（原样透传） |
+| `reasoning-replay` | `retry-only` | `retry-only`（默认，命中 400 补齐并重试，sticky 记忆会话）/ `auto` / `always` / `off` |
 | `request-log` | `true` | 请求日志开关 |
 
 说明：

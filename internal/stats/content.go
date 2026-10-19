@@ -187,3 +187,78 @@ func nonEmptyJSON(raw json.RawMessage) bool {
 		return true
 	}
 }
+
+// StreamFinish extracts the finish reason/status from an upstream stream chunk.
+// It reports the kind string (e.g. "stop", "length", "tool_calls", "content_filter")
+// and whether a terminal finish marker was recognized.
+func StreamFinish(role roles.Role, line []byte) (string, bool) {
+	payload := streamJSONPayload(line)
+	if len(payload) == 0 {
+		return "", false
+	}
+	switch role.Name {
+	case roles.Chat:
+		var frame struct {
+			Choices []struct {
+				FinishReason *string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(payload, &frame); err == nil {
+			for _, c := range frame.Choices {
+				if c.FinishReason != nil && strings.TrimSpace(*c.FinishReason) != "" {
+					return strings.TrimSpace(*c.FinishReason), true
+				}
+			}
+		}
+	case roles.Responses:
+		var frame struct {
+			Type     string `json:"type"`
+			Response struct {
+				Status string `json:"status"`
+			} `json:"response"`
+		}
+		if err := json.Unmarshal(payload, &frame); err == nil {
+			if frame.Type == "response.completed" {
+				return "completed", true
+			}
+			if frame.Type == "response.incomplete" {
+				return "incomplete", true
+			}
+			if frame.Type == "response.failed" {
+				return "failed", true
+			}
+			if frame.Response.Status != "" {
+				return frame.Response.Status, true
+			}
+		}
+	case roles.Messages:
+		var frame struct {
+			Type  string `json:"type"`
+			Delta struct {
+				StopReason *string `json:"stop_reason"`
+			} `json:"delta"`
+		}
+		if err := json.Unmarshal(payload, &frame); err == nil {
+			if frame.Delta.StopReason != nil && strings.TrimSpace(*frame.Delta.StopReason) != "" {
+				return strings.TrimSpace(*frame.Delta.StopReason), true
+			}
+			if frame.Type == "message_stop" {
+				return "stop", true
+			}
+		}
+	case roles.Gemini:
+		var frame struct {
+			Candidates []struct {
+				FinishReason string `json:"finishReason"`
+			} `json:"candidates"`
+		}
+		if err := json.Unmarshal(payload, &frame); err == nil {
+			for _, c := range frame.Candidates {
+				if strings.TrimSpace(c.FinishReason) != "" {
+					return strings.TrimSpace(c.FinishReason), true
+				}
+			}
+		}
+	}
+	return "", false
+}

@@ -452,6 +452,7 @@ page_checks=(
   'id="cfgEndpointLayout"|端点布局设置'
   'id="cfgDeveloperRole"|developer 角色设置'
   'id="cfgReasoningReplay"|reasoning 回放设置'
+  'value="retry-only"|retry-only 选项'
   'id="cfgRequestLog"|请求日志开关'
   'id="cfgPlan"|套餐设置'
   'id="pane-models"|模型 tab'

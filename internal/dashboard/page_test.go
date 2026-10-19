@@ -143,6 +143,8 @@ func TestPageHasRequestLogTab(t *testing.T) {
 		"function loadRequests(",
 		"function requestRow(",
 		"scheduleRequestsTimer",
+		"entry.incomplete",
+		"entry.repairs",
 	} {
 		if !strings.Contains(document, want) {
 			t.Errorf("the page is missing %q", want)
@@ -159,6 +161,7 @@ func TestPageExposesProtocolSettings(t *testing.T) {
 		`id="cfgEndpointLayout"`,
 		`id="cfgDeveloperRole"`,
 		`id="cfgReasoningReplay"`,
+		`value="retry-only"`,
 		`cfgReasoningReplay:'reasoning-replay'`,
 		`id="cfgRequestLog"`,
 		`id="endpointHint"`,

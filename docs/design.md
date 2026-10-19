@@ -373,7 +373,7 @@ assistant 消息（含带 `tool_calls` 的消息）回传 `reasoning_content`，
 
 处理分两层，都在插件侧、都不触碰模型与 DSH 契约：
 
-- **结构补齐**：`reasoning-replay` 默认 `auto`，仅对思考请求生效。插件为缺少
+- **结构补齐**：`reasoning-replay` 提供占位符补齐机制。插件为缺少
   `reasoning_content` 的 assistant 消息写入 `[reasoning unavailable]` 占位符，已有值保留，
   空串替换。只重编码受影响的 `messages[]`，其他顶层字段逐字节保留。
 - **单次重试**：命中该 400 时用同一份字节重试一次，覆盖“校验节点抖动”的情况；其他 400 不重试。
@@ -381,6 +381,32 @@ assistant 消息（含带 `tool_calls` 的消息）回传 `reasoning_content`，
 为什么是占位符而不是缓存回放：回放旧 CoT 会让长会话模型模仿旧的工具调用标记，导致
 `tool_calls == 0`；校验本身只要求字段存在，不要求内容与上一轮一致。代价是补齐后的请求不再与
 客户端原始字节完全一致（本来 `developer` 归一化也已重编码），但不改变 token 计量与模型选择。
+
+## 7.13 默认 retry-only 懒修复与会话 Sticky 记忆（v2.0.2）
+
+在 v2.0.2 中，针对上述两类 400（`developer` 角色不受支持、`reasoning_content` 必须回传）
+调整为分而治之的**反应式懒修复（retry-only）+ 会话 Sticky 记忆**：
+
+- **分而治之**：
+  - `developer` 角色 400 是节点特征（非会话特征），属于快速轻量的校验失败。默认 `retry-only`
+    透传原始请求；收到对应 400 后才转为 `system` 重试一次，不开启会话持久改写。
+  - `reasoning_content` 400 既取决于网关节点，也取决于会话历史（客户端丢弃了早期思维链）。
+    若纯透传每一轮都先等 400 再重试，大 context 节点下首包延迟（TTFT）惩罚显著且极度消耗
+    Prompt Cache。
+- **Session-Sticky 自愈机制**：
+  - 首次请求默认 100% 原始透传；
+  - 首次收到 reasoning 400 报错后，填补占位符并重试；
+  - 重试成功后，在 Client 内存中记录该 `x-opencode-session` 为已识别思考会话（TTL 2 小时，
+    容量上限 4096 条，支持活跃自动刷新，插入时清理过期项）；
+  - 该会话后续的所有请求在发送前自动套用补齐逻辑，使后续 turns 保持稳定的字节前缀，
+    彻底消除每轮多一次往返的延迟惩罚，保全 Prompt Cache 命中率。
+- **修复阶梯防御**：
+  - 单次调用执行有限尝试循环（上限 3 次）：首包原始发送 → 命中 developer 400 修复重试 →
+    若再命中 reasoning 400 继续修复重试 → 成功。每种修复最多执行一次，杜绝无限重试循环。
+- **流截断（Stream Truncation）诊断**：
+  - 新增 `StreamFinish` 识别帧尾 finish_reason；
+  - 在 `reqlog.Entry` 与 `/api/requests` 中增加 `repairs`、`finish`（`stop|length|tool_calls|eof|error`）
+    与 `incomplete` 字段，并在 Web 控制台标记「截断」，清晰区分正常结束与上游中途断流。
 
 ## 8. 版本兼容
 

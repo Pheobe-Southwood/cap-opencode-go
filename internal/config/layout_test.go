@@ -129,8 +129,11 @@ func TestNewProtocolDefaults(t *testing.T) {
 	if settings.Layout() != roles.LayoutFamily {
 		t.Errorf("default layout = %q, want family", settings.Layout())
 	}
-	if !settings.DeveloperRoleRewrite() {
-		t.Error("developer-role must default to rewrite")
+	if settings.DeveloperRoleMode() != DeveloperRoleRetryOnly {
+		t.Errorf("developer-role must default to retry-only, got %q", settings.DeveloperRoleMode())
+	}
+	if settings.DeveloperRoleRewrite() {
+		t.Error("developer-role: retry-only must not proactively rewrite")
 	}
 	if !settings.RequestLogEnabled() {
 		t.Error("request-log must default to enabled")
@@ -140,12 +143,19 @@ func TestNewProtocolDefaults(t *testing.T) {
 	if settings.RequestLogEnabled() {
 		t.Error("an explicit false must disable the request log")
 	}
+	rewrite := parseSettings(t, "developer-role: rewrite")
+	if !rewrite.DeveloperRoleRewrite() {
+		t.Error("developer-role: rewrite must proactively rewrite")
+	}
 	keep := parseSettings(t, "developer-role: keep")
 	if keep.DeveloperRoleRewrite() {
 		t.Error("developer-role: keep must not rewrite")
 	}
-	if settings.ReasoningReplayMode() != ReasoningReplayAuto {
-		t.Errorf("reasoning-replay default = %q, want auto", settings.ReasoningReplayMode())
+	if settings.ReasoningReplayMode() != ReasoningReplayRetryOnly {
+		t.Errorf("reasoning-replay default = %q, want retry-only", settings.ReasoningReplayMode())
+	}
+	if got := parseSettings(t, "reasoning-replay: auto"); got.ReasoningReplayMode() != ReasoningReplayAuto {
+		t.Errorf("reasoning-replay: auto parsed as %q", got.ReasoningReplayMode())
 	}
 	if got := parseSettings(t, "reasoning-replay: always"); got.ReasoningReplayMode() != ReasoningReplayAlways {
 		t.Errorf("reasoning-replay: always parsed as %q", got.ReasoningReplayMode())
@@ -153,8 +163,8 @@ func TestNewProtocolDefaults(t *testing.T) {
 	if got := parseSettings(t, "reasoning-replay: off"); got.ReasoningReplayMode() != ReasoningReplayOff {
 		t.Errorf("reasoning-replay: off parsed as %q", got.ReasoningReplayMode())
 	}
-	if got := parseSettings(t, "reasoning-replay: nonsense"); got.ReasoningReplayMode() != ReasoningReplayAuto {
-		t.Errorf("a typo must fall back to auto, got %q", got.ReasoningReplayMode())
+	if got := parseSettings(t, "reasoning-replay: nonsense"); got.ReasoningReplayMode() != ReasoningReplayRetryOnly {
+		t.Errorf("a typo must fall back to retry-only, got %q", got.ReasoningReplayMode())
 	}
 	// Empty base-url keeps the new default root rather than an empty endpoint.
 	empty := Settings{}

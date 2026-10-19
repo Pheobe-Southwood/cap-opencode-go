@@ -111,3 +111,31 @@ func TestIsContentRejectsHugeFrames(t *testing.T) {
 		t.Error("an oversized frame must not be parsed")
 	}
 }
+
+func TestStreamFinish(t *testing.T) {
+	cases := []struct {
+		role     string
+		line     string
+		wantKind string
+		wantOK   bool
+	}{
+		{"chat", `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`, "stop", true},
+		{"chat", `data: {"choices":[{"delta":{},"finish_reason":"length"}]}`, "length", true},
+		{"chat", `data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}`, "", false},
+		{"chat", `data: {"choices":[{"delta":{"content":"Hi"}]}`, "", false},
+		{"responses", `data: {"type":"response.completed"}`, "completed", true},
+		{"responses", `data: {"type":"response.incomplete"}`, "incomplete", true},
+		{"responses", `data: {"type":"response.output_text.delta","delta":"Hi"}`, "", false},
+		{"messages", `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`, "end_turn", true},
+		{"messages", `data: {"type":"message_stop"}`, "stop", true},
+		{"messages", `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}`, "", false},
+		{"gemini", `data: {"candidates":[{"content":{"parts":[{"text":"Hi"}]},"finishReason":"STOP"}]}`, "STOP", true},
+		{"gemini", `data: {"candidates":[{"content":{"parts":[{"text":"Hi"}]}}]}`, "", false},
+	}
+	for _, tc := range cases {
+		kind, ok := StreamFinish(roles.ByName(tc.role), []byte(tc.line))
+		if ok != tc.wantOK || kind != tc.wantKind {
+			t.Errorf("StreamFinish(%s, %q) = (%q, %v), want (%q, %v)", tc.role, tc.line, kind, ok, tc.wantKind, tc.wantOK)
+		}
+	}
+}

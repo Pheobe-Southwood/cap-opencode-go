@@ -967,8 +967,8 @@ const pageScript = `
       case 'state-dir': return state.state_dir || '';
       case 'plan': return state.plan || 'go';
       case 'endpoint-layout': return state.endpoint_layout || 'auto';
-      case 'developer-role': return state.developer_role || 'rewrite';
-      case 'reasoning-replay': return state.reasoning_replay || 'auto';
+      case 'developer-role': return state.developer_role || 'retry-only';
+      case 'reasoning-replay': return state.reasoning_replay || 'retry-only';
       case 'request-log': return !!state.request_log;
       case 'debug': return !!state.debug;
       default: return undefined;
@@ -1674,6 +1674,8 @@ const pageScript = `
     var level = entry.failed ? 'err' : (entry.status >= 200 && entry.status < 300 ? 'ok' : '');
     var label = entry.status ? String(entry.status) : (entry.error ? '失败' : '—');
     var html = '<span class="pill ' + level + '">' + esc(label) + '</span>';
+    if(entry.incomplete) html += '<span class="pill warn" title="上游流式在返回 finish_reason 前意外结束">截断</span>';
+    if(entry.repairs && entry.repairs.length) html += '<span class="pill accent" title="触发兼容修复: ' + esc(entry.repairs.join(', ')) + '">修复</span>';
     if(entry.error) html += '<span class="stats-sub err-text" title="' + esc(entry.error) + '">' + esc(shorten(entry.error, 40)) + '</span>';
     if(entry.log_id) html += '<span class="stats-sub" title="OpenCode 日志 ID">' + esc(entry.log_id) + '</span>';
     return html;

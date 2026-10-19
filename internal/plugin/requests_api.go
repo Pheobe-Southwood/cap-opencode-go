@@ -43,16 +43,19 @@ type RequestEntry struct {
 	Generationms float64 `json:"generation_ms,omitempty"`
 	Totalms      float64 `json:"total_ms"`
 
-	InputTokens         int64   `json:"input_tokens"`
-	OutputTokens        int64   `json:"output_tokens"`
-	ReasoningTokens     int64   `json:"reasoning_tokens"`
-	CacheReadTokens     int64   `json:"cache_read_tokens"`
-	CacheCreationTokens int64   `json:"cache_creation_tokens"`
-	TotalTokens         int64   `json:"total_tokens"`
-	TokensSeen          bool    `json:"tokens_seen"`
-	GenTPS              float64 `json:"gen_tps"`
-	E2ETPS              float64 `json:"e2e_tps"`
-	CostUSD             float64 `json:"cost_usd,omitempty"`
+	InputTokens         int64    `json:"input_tokens"`
+	OutputTokens        int64    `json:"output_tokens"`
+	ReasoningTokens     int64    `json:"reasoning_tokens"`
+	CacheReadTokens     int64    `json:"cache_read_tokens"`
+	CacheCreationTokens int64    `json:"cache_creation_tokens"`
+	TotalTokens         int64    `json:"total_tokens"`
+	TokensSeen          bool     `json:"tokens_seen"`
+	GenTPS              float64  `json:"gen_tps"`
+	E2ETPS              float64  `json:"e2e_tps"`
+	CostUSD             float64  `json:"cost_usd,omitempty"`
+	Repairs             []string `json:"repairs,omitempty"`
+	Finish              string   `json:"finish,omitempty"`
+	Incomplete          bool     `json:"incomplete,omitempty"`
 }
 
 // RequestTotals aggregates the rows returned by one query.
@@ -223,6 +226,9 @@ func (r *Runtime) requestEntry(row reqlog.Entry, display string, clientIDs []str
 		CacheCreationTokens: row.CacheCreation,
 		TotalTokens:         row.TotalTokens,
 		TokensSeen:          row.TokensSeen,
+		Repairs:             row.Repairs,
+		Finish:              row.Finish,
+		Incomplete:          row.Incomplete,
 	}
 	effective := row.Output
 	if roles.Name(row.Role) == roles.Gemini {

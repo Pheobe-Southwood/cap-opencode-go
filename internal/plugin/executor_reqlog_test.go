@@ -126,3 +126,46 @@ func TestHandleExecuteRecordsNonStreamRequest(t *testing.T) {
 		t.Errorf("key = %q", row.Key)
 	}
 }
+
+func TestPumpStreamDetectsIncompleteStream(t *testing.T) {
+	runtime := newStatsTestRuntime(t, roles.Chat)
+	stubHostCall(t, func(string, []byte) ([]byte, error) { return abi.OK(map[string]any{}) })
+
+	// Case 1: Stream closes after emitting content, but WITHOUT any finish_reason
+	sseTruncated := "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n"
+	runtime.pumpStream(&upstream.Stream{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(sseTruncated)),
+	}, "stream-trunc", streamTiming{model: "deepseek-v4.1-flash", key: "main", started: time.Now().Add(-time.Second)})
+
+	// Case 2: Normal stream ending with finish_reason: stop
+	sseNormal := "" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	runtime.pumpStream(&upstream.Stream{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(sseNormal)),
+	}, "stream-normal", streamTiming{model: "deepseek-v4.1-flash", key: "main", started: time.Now().Add(-time.Second)})
+
+	rows := runtime.reqLogStore().Snapshot()
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+
+	truncRow := rows[0]
+	if !truncRow.Incomplete {
+		t.Errorf("truncated stream must be marked incomplete: %+v", truncRow)
+	}
+	if truncRow.Finish != "eof" {
+		t.Errorf("truncated stream finish = %q, want eof", truncRow.Finish)
+	}
+
+	normalRow := rows[1]
+	if normalRow.Incomplete {
+		t.Errorf("normal stream must not be marked incomplete: %+v", normalRow)
+	}
+	if normalRow.Finish != "stop" {
+		t.Errorf("normal stream finish = %q, want stop", normalRow.Finish)
+	}
+}

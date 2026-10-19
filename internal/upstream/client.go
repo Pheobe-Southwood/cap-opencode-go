@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,6 +53,7 @@ type Result struct {
 	Headers    http.Header
 	Body       []byte
 	KeyName    string
+	Repairs    []string
 }
 
 // Stream is an in-flight streaming call. The caller must close Body.
@@ -60,7 +62,13 @@ type Stream struct {
 	Headers    http.Header
 	Body       io.ReadCloser
 	KeyName    string
+	Repairs    []string
 }
+
+const (
+	repairSessionTTL   = 2 * time.Hour
+	repairSessionLimit = 4096
+)
 
 // Client is the shared upstream client.
 type Client struct {
@@ -70,11 +78,17 @@ type Client struct {
 	clients map[string]*http.Client
 
 	modelsCache modelsCache
+
+	repairMu       sync.Mutex
+	repairSessions map[string]time.Time
 }
 
 // New builds a client for the supplied settings.
 func New(settings config.Settings) *Client {
-	client := &Client{clients: map[string]*http.Client{}}
+	client := &Client{
+		clients:        map[string]*http.Client{},
+		repairSessions: map[string]time.Time{},
+	}
 	client.Update(settings)
 	return client
 }
@@ -96,6 +110,56 @@ func (c *Client) Settings() config.Settings {
 	return config.Default()
 }
 
+func (c *Client) reasoningRepairWanted(session string) bool {
+	trimmed := strings.TrimSpace(session)
+	if trimmed == "" {
+		return false
+	}
+	now := time.Now()
+	c.repairMu.Lock()
+	defer c.repairMu.Unlock()
+	if c.repairSessions == nil {
+		return false
+	}
+	expiry, exists := c.repairSessions[trimmed]
+	if !exists {
+		return false
+	}
+	if now.After(expiry) {
+		delete(c.repairSessions, trimmed)
+		return false
+	}
+	c.repairSessions[trimmed] = now.Add(repairSessionTTL)
+	return true
+}
+
+func (c *Client) markReasoningRepair(session string) {
+	trimmed := strings.TrimSpace(session)
+	if trimmed == "" {
+		return
+	}
+	now := time.Now()
+	c.repairMu.Lock()
+	defer c.repairMu.Unlock()
+	if c.repairSessions == nil {
+		c.repairSessions = map[string]time.Time{}
+	}
+	if len(c.repairSessions) >= repairSessionLimit {
+		for s, exp := range c.repairSessions {
+			if now.After(exp) {
+				delete(c.repairSessions, s)
+			}
+		}
+		if len(c.repairSessions) >= repairSessionLimit {
+			for s := range c.repairSessions {
+				delete(c.repairSessions, s)
+				break
+			}
+		}
+	}
+	c.repairSessions[trimmed] = now.Add(repairSessionTTL)
+}
+
 func (c *Client) resolveCredential(call Call, settings config.Settings) (config.Key, error) {
 	if strings.TrimSpace(call.Credential.Key) != "" {
 		return call.Credential, nil
@@ -114,6 +178,15 @@ func (c *Client) resolveCredential(call Call, settings config.Settings) (config.
 	return best, nil
 }
 
+func containsString(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
+}
+
 // Execute performs a non-streaming upstream call with the selected credential.
 func (c *Client) Execute(ctx context.Context, call Call) (Result, error) {
 	settings := c.Settings()
@@ -122,15 +195,15 @@ func (c *Client) Execute(ctx context.Context, call Call) (Result, error) {
 		return Result{}, errCred
 	}
 
-	response, errDo := c.do(ctx, call, credential, settings)
+	response, repairs, errDo := c.do(ctx, call, credential, settings)
 	if errDo != nil {
-		return Result{}, errDo
+		return Result{Repairs: repairs}, errDo
 	}
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		body, errRead := io.ReadAll(response.Body)
 		_ = response.Body.Close()
 		if errRead != nil {
-			return Result{}, abi.StatusErrorf(http.StatusBadGateway, "upstream_read_failed",
+			return Result{Repairs: repairs}, abi.StatusErrorf(http.StatusBadGateway, "upstream_read_failed",
 				"读取 OpenCode Go 响应失败: %v", errRead)
 		}
 		return Result{
@@ -138,11 +211,12 @@ func (c *Client) Execute(ctx context.Context, call Call) (Result, error) {
 			Headers:    response.Header,
 			Body:       body,
 			KeyName:    credential.Name,
+			Repairs:    repairs,
 		}, nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
 	_ = response.Body.Close()
-	return Result{}, upstreamError(response.StatusCode, body, credential.Name)
+	return Result{Headers: response.Header, Repairs: repairs}, upstreamError(response.StatusCode, body, credential.Name)
 }
 
 // Stream performs a streaming upstream call with the selected credential.
@@ -154,7 +228,7 @@ func (c *Client) Stream(ctx context.Context, call Call) (*Stream, error) {
 		return nil, errCred
 	}
 
-	response, errDo := c.do(ctx, call, credential, settings)
+	response, repairs, errDo := c.do(ctx, call, credential, settings)
 	if errDo != nil {
 		return nil, errDo
 	}
@@ -164,6 +238,7 @@ func (c *Client) Stream(ctx context.Context, call Call) (*Stream, error) {
 			Headers:    response.Header,
 			Body:       response.Body,
 			KeyName:    credential.Name,
+			Repairs:    repairs,
 		}, nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
@@ -171,47 +246,92 @@ func (c *Client) Stream(ctx context.Context, call Call) (*Stream, error) {
 	return nil, upstreamError(response.StatusCode, body, credential.Name)
 }
 
-func (c *Client) do(ctx context.Context, call Call, credential config.Key, settings config.Settings) (*http.Response, error) {
+func (c *Client) do(ctx context.Context, call Call, credential config.Key, settings config.Settings) (*http.Response, []string, error) {
 	endpoint := settings.EndpointURL(call.Role, call.Model, call.Stream)
+	client, errClient := c.httpClient(settings, call)
+	if errClient != nil {
+		return nil, nil, errClient
+	}
+
+	devMode := settings.DeveloperRoleMode()
+	replayMode := settings.ReasoningReplayMode()
+	stickyReasoning := c.reasoningRepairWanted(call.Session)
+
 	body := call.Body
+	var appliedRepairs []string
+
 	if call.Role.StripsStreamField() {
-		body = normalizeDeveloperRoles(call.Role, body, settings.DeveloperRoleRewrite())
-		body = ensureReasoningContent(call.Role, body, settings.ReasoningReplayMode())
+		if devMode == config.DeveloperRoleRewrite {
+			body = normalizeDeveloperRoles(call.Role, body, true)
+		}
+		if replayMode == config.ReasoningReplayAlways || replayMode == config.ReasoningReplayAuto || (replayMode == config.ReasoningReplayRetryOnly && stickyReasoning) {
+			mode := replayMode
+			if mode == config.ReasoningReplayRetryOnly {
+				mode = config.ReasoningReplayAuto
+			}
+			next := ensureReasoningContent(call.Role, body, mode)
+			if !bytes.Equal(next, body) {
+				body = next
+				if replayMode == config.ReasoningReplayRetryOnly {
+					appliedRepairs = append(appliedRepairs, "reasoning-replay")
+				}
+			}
+		}
 		body = rewriteModelField(body, call.RequestedModel, call.Model)
 		body = forceStreamFlag(body, call.Stream)
 	}
 
-	client, errClient := c.httpClient(settings, call)
-	if errClient != nil {
-		return nil, errClient
-	}
-
-	// Some OpenCode Go gateway nodes answer the thinking-mode reasoning check
-	// with HTTP 400 even when the body is valid, and replaying the identical
-	// request usually succeeds (the check is per node, not per payload). One
-	// retry converts that intermittent failure back into a normal turn; every
-	// other status is handed to the caller on the first attempt.
-	for attempt := 0; ; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		request, errRequest := newUpstreamRequest(ctx, endpoint, body, call, credential, settings)
 		if errRequest != nil {
-			return nil, errRequest
+			return nil, appliedRepairs, errRequest
 		}
 		response, errDo := client.Do(request)
 		if errDo != nil {
-			return nil, abi.StatusErrorf(http.StatusBadGateway, "upstream_unreachable",
+			return nil, appliedRepairs, abi.StatusErrorf(http.StatusBadGateway, "upstream_unreachable",
 				"连接 OpenCode Go 失败: %v", errDo)
 		}
-		if attempt > 0 || response.StatusCode != http.StatusBadRequest {
-			return response, nil
+		if response.StatusCode != http.StatusBadRequest || attempt == 2 || !call.Role.StripsStreamField() {
+			if response.StatusCode >= 200 && response.StatusCode < 300 {
+				if containsString(appliedRepairs, "reasoning-replay") {
+					c.markReasoningRepair(call.Session)
+				}
+			}
+			return response, appliedRepairs, nil
 		}
+
 		peeked, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
 		_ = response.Body.Close()
-		if !isReasoningReplayRejection(peeked) {
-			// Not our retry case: hand the buffered error body back untouched.
+
+		repaired := false
+		// 1. Check developer role 400 rejection
+		if devMode == config.DeveloperRoleRetryOnly && !containsString(appliedRepairs, "developer-role") && isDeveloperRoleRejection(peeked) {
+			next := normalizeDeveloperRoles(call.Role, body, true)
+			if !bytes.Equal(next, body) {
+				body = next
+				appliedRepairs = append(appliedRepairs, "developer-role")
+				repaired = true
+			}
+		}
+
+		// 2. If not repaired by developer role, check reasoning replay 400 rejection
+		if !repaired && replayMode != config.ReasoningReplayOff && !containsString(appliedRepairs, "reasoning-replay") && isReasoningReplayRejection(peeked) {
+			next := ensureReasoningContent(call.Role, body, config.ReasoningReplayAlways)
+			if !bytes.Equal(next, body) {
+				body = next
+			}
+			appliedRepairs = append(appliedRepairs, "reasoning-replay")
+			repaired = true
+		}
+
+		if !repaired {
+			// Not a recognized recoverable rejection, or repair already applied once.
 			response.Body = io.NopCloser(bytes.NewReader(peeked))
-			return response, nil
+			return response, appliedRepairs, nil
 		}
 	}
+
+	return nil, appliedRepairs, errors.New("upstream retry ladder exhausted")
 }
 
 // newUpstreamRequest builds one upstream HTTP request. It is called once per

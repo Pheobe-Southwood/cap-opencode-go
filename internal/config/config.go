@@ -81,11 +81,14 @@ const (
 
 // Developer role handling for OpenAI-shaped bodies. OpenCode Go's new router
 // rejects the Chat Completions "developer" role on some gateway nodes even
-// though it is a legal OpenAI role, so the default rewrites it to "system";
-// "keep" leaves the request byte-for-byte as the host translated it.
+// though it is a legal OpenAI role. "retry-only" (default) passes "developer"
+// through verbatim and only rewrites it to "system" upon receiving an upstream
+// 400 rejection; "rewrite" proactively rewrites it before every request;
+// "keep" leaves the request byte-for-byte as the host translated it without retry.
 const (
-	DeveloperRoleRewrite = "rewrite"
-	DeveloperRoleKeep    = "keep"
+	DeveloperRoleRetryOnly = "retry-only"
+	DeveloperRoleRewrite   = "rewrite"
+	DeveloperRoleKeep      = "keep"
 )
 
 // Reasoning replay handling for OpenAI-shaped chat bodies. DeepSeek's thinking
@@ -93,12 +96,16 @@ const (
 // passed back, and some OpenCode Go gateway nodes enforce that literally; a
 // client that drops it for older turns (or for compacted history) then gets
 // HTTP 400 "The `reasoning_content` in the thinking mode must be passed back to
-// the API". Auto fills only thinking-mode requests; always fills every chat
-// request; off leaves the body byte-for-byte as the host translated it.
+// the API". "retry-only" (default) passes the body through verbatim, backfilling
+// placeholders and retrying only if the 400 rejection is received, and remembers
+// the session sticky for future turns; "auto" proactively fills only thinking-mode
+// requests; "always" fills every chat request; "off" leaves the body byte-for-byte
+// untouched.
 const (
-	ReasoningReplayAuto   = "auto"
-	ReasoningReplayAlways = "always"
-	ReasoningReplayOff    = "off"
+	ReasoningReplayRetryOnly = "retry-only"
+	ReasoningReplayAuto      = "auto"
+	ReasoningReplayAlways    = "always"
+	ReasoningReplayOff       = "off"
 )
 
 // DefaultReasoningPlaceholder is written into assistant history messages whose
@@ -199,8 +206,8 @@ func Default() Settings {
 		RequestTimeoutSeconds: DefaultTimeoutSeconds,
 		Plan:                  DefaultPlan,
 		EndpointLayout:        LayoutAuto,
-		DeveloperRole:         DeveloperRoleRewrite,
-		ReasoningReplay:       ReasoningReplayAuto,
+		DeveloperRole:         DeveloperRoleRetryOnly,
+		ReasoningReplay:       ReasoningReplayRetryOnly,
 	}
 }
 
@@ -333,40 +340,41 @@ func normalizeLayout(value string) string {
 	}
 }
 
-// normalizeDeveloperRole lowercases the developer-role mode and defaults to the
-// compatibility rewrite.
+// normalizeDeveloperRole lowercases the developer-role mode and defaults to
+// retry-only.
 func normalizeDeveloperRole(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case DeveloperRoleKeep:
 		return DeveloperRoleKeep
-	default:
+	case DeveloperRoleRewrite:
 		return DeveloperRoleRewrite
+	case DeveloperRoleRetryOnly:
+		return DeveloperRoleRetryOnly
+	default:
+		return DeveloperRoleRetryOnly
 	}
 }
 
-// normalizeReasoningReplay lowercases the reasoning-replay mode. Unknown values
-// fall back to auto, which is a no-op for requests that are not in thinking
-// mode.
+// normalizeReasoningReplay lowercases the reasoning-replay mode and defaults to
+// retry-only.
 func normalizeReasoningReplay(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case ReasoningReplayAlways:
 		return ReasoningReplayAlways
+	case ReasoningReplayAuto:
+		return ReasoningReplayAuto
 	case ReasoningReplayOff, "none", "false", "no":
 		return ReasoningReplayOff
+	case ReasoningReplayRetryOnly:
+		return ReasoningReplayRetryOnly
 	default:
-		return ReasoningReplayAuto
+		return ReasoningReplayRetryOnly
 	}
 }
 
 // ReasoningReplayMode returns the normalised reasoning-replay mode.
 func (s Settings) ReasoningReplayMode() string {
-	mode := strings.ToLower(strings.TrimSpace(s.ReasoningReplay))
-	switch mode {
-	case ReasoningReplayAlways, ReasoningReplayOff:
-		return mode
-	default:
-		return ReasoningReplayAuto
-	}
+	return normalizeReasoningReplay(s.ReasoningReplay)
 }
 
 // normalizeBaseURLs keeps only the four known family keys with a non-empty
@@ -467,8 +475,13 @@ func (s Settings) UsageURL() string {
 	return s.baseRoot() + "/usage"
 }
 
+// DeveloperRoleMode returns the normalised developer-role mode.
+func (s Settings) DeveloperRoleMode() string {
+	return normalizeDeveloperRole(s.DeveloperRole)
+}
+
 // DeveloperRoleRewrite reports whether developer messages are rewritten to
-// system for OpenAI-shaped bodies.
+// system for OpenAI-shaped bodies proactively.
 func (s Settings) DeveloperRoleRewrite() bool {
 	return normalizeDeveloperRole(s.DeveloperRole) == DeveloperRoleRewrite
 }

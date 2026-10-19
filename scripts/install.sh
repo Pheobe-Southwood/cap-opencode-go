@@ -7,7 +7,7 @@
 # are owned by the host configuration.
 set -euo pipefail
 
-VERSION="${1:-2.0.1}"
+VERSION="${1:-2.0.2}"
 ROOT="${CPA_ROOT:-/root/cliproxyapi}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
@@ -37,6 +37,15 @@ shopt -s nullglob
 for legacy in "${TARGET_DIR}"/cap-opencode-go*.so; do
   rm -f "${legacy}"
   echo "removed legacy ${legacy}"
+done
+for existing in "${TARGET_DIR}"/cpa-opencodego*.so; do
+  case "${existing}" in
+    *-v"${VERSION}".so) ;;
+    *)
+      rm -f "${existing}"
+      echo "removed older version ${existing}"
+      ;;
+  esac
 done
 shopt -u nullglob
 
@@ -68,8 +77,8 @@ plugins:
       # base-url keeps the legacy single-base layout.
       base-url: "https://opencode.ai/inference/go"
       endpoint-layout: "auto"
-      developer-role: "rewrite"
-      reasoning-replay: "auto"
+      developer-role: "retry-only"
+      reasoning-replay: "retry-only"
       request-log: true
       keys:
         - name: "main"

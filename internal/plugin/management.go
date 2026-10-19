@@ -348,7 +348,7 @@ func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) Stat
 		Endpoints:       endpoints,
 		ModelsURL:       settings.ModelsURL(),
 		UsageURL:        settings.UsageURL(),
-		DeveloperRole:   settings.DeveloperRole,
+		DeveloperRole:   settings.DeveloperRoleMode(),
 		ReasoningReplay: settings.ReasoningReplayMode(),
 		RequestLog:      settings.RequestLogEnabled(),
 		Migration:       r.Migration(),

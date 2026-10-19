@@ -125,7 +125,7 @@ func rewriteRoleArray(raw json.RawMessage) (json.RawMessage, bool) {
 // messages and the messages array are re-encoded. A body that is not JSON, or
 // that is not in thinking mode under "auto", is returned untouched.
 func ensureReasoningContent(role roles.Role, body []byte, mode string) []byte {
-	if role.Name != roles.Chat || mode == config.ReasoningReplayOff {
+	if role.Name != roles.Chat || mode == config.ReasoningReplayOff || mode == config.ReasoningReplayRetryOnly {
 		return body
 	}
 	trimmed := bytes.TrimSpace(body)
@@ -294,6 +294,15 @@ func rawEnablesThinking(raw json.RawMessage) bool {
 		return number > 0
 	}
 	return false
+}
+
+// isDeveloperRoleRejection reports whether an upstream 400 rejection is caused
+// by the router gRPC frontend rejecting the Chat Completions "developer" role.
+func isDeveloperRoleRejection(body []byte) bool {
+	if !bytes.Contains(body, []byte("developer")) {
+		return false
+	}
+	return bytes.Contains(body, []byte("not supported"))
 }
 
 // isReasoningReplayRejection reports whether an upstream 400 is the thinking

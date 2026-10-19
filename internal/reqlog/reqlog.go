@@ -82,6 +82,12 @@ type Entry struct {
 	// or usage-less request leaves it false so the dashboard shows "—" instead
 	// of a misleading zero.
 	TokensSeen bool `json:"tokens_seen,omitempty"`
+	// Repairs lists compatibility fixes applied to this request (e.g. "developer-role", "reasoning-replay").
+	Repairs []string `json:"repairs,omitempty"`
+	// Finish is the completion reason ("stop", "length", "tool_calls", "eof", "error").
+	Finish string `json:"finish,omitempty"`
+	// Incomplete reports whether an SSE stream truncated before carrying any finish_reason marker.
+	Incomplete bool `json:"incomplete,omitempty"`
 	// Version is the record schema version, written for forward compatibility.
 	Version int `json:"version,omitempty"`
 }

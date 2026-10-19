@@ -325,20 +325,22 @@ const pageMarkup = `
           </label>
           <label class="kv"><span class="k">developer 角色</span>
             <select id="cfgDeveloperRole">
-              <option value="rewrite">rewrite（兼容 OpenCode Go 新路由，改写为 system）</option>
-              <option value="keep">keep（原样透传）</option>
+              <option value="retry-only">retry-only（默认，被 400 拒绝时改写并重试）</option>
+              <option value="rewrite">rewrite（主动改写为 system）</option>
+              <option value="keep">keep（原样透传，不重试）</option>
             </select>
           </label>
           <label class="kv"><span class="k">reasoning 回放</span>
             <select id="cfgReasoningReplay">
-              <option value="auto">auto（仅思考请求补齐 reasoning_content）</option>
-              <option value="always">always（所有 chat 请求补齐）</option>
-              <option value="off">off（原样透传）</option>
+              <option value="retry-only">retry-only（默认，被 400 拒绝时补齐并重试，记忆会话）</option>
+              <option value="auto">auto（仅思考请求提前补齐）</option>
+              <option value="always">always（所有 chat 请求提前补齐）</option>
+              <option value="off">off（原样透传，不重试）</option>
             </select>
           </label>
         </div>
         <div class="hint" id="endpointHint" style="margin-top:8px"></div>
-        <div class="hint">思考模型要求历史 assistant 消息回传 reasoning_content，客户端丢弃旧思维链时会触发上游 400。auto 只在思考请求上补齐缺失字段（占位文本，不回放旧思维链），不改动已有内容。</div>
+        <div class="hint">思考模型要求历史 assistant 消息回传 reasoning_content，客户端丢弃旧思维链时会触发上游 400。retry-only 默认原样透传，仅在收到 400 报错时用占位文本补齐并重试一次，且自动记忆该会话避免后续重复重试。</div>
       </div>
 
       <div class="card">

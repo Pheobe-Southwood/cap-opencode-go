@@ -122,7 +122,8 @@ func (r *Runtime) handleExecute(request []byte) []byte {
 	started := time.Now()
 	result, errExecute := r.client.Execute(context.Background(), call)
 	if errExecute != nil {
-		r.recordAttempt(attempt, started, nil, reqlog.Usage{}, abi.Status(errExecute), errExecute.Error(), 0, 0)
+		attempt.repairs = result.Repairs
+		r.recordAttempt(attempt, started, result.Headers, reqlog.Usage{}, abi.Status(errExecute), errExecute.Error(), 0, 0, "error", false)
 		return abi.FailFor(errExecute, "upstream_error")
 	}
 
@@ -131,7 +132,8 @@ func (r *Runtime) handleExecute(request []byte) []byte {
 	if r.role.Name == roles.Responses && strings.EqualFold(strings.TrimSpace(executeRequest.Format), "codex") {
 		payload = terminalEventPayload(payload)
 	}
-	r.recordAttempt(attempt, started, result.Headers, usage, result.StatusCode, "", 0, 0)
+	attempt.repairs = result.Repairs
+	r.recordAttempt(attempt, started, result.Headers, usage, result.StatusCode, "", 0, 0, "stop", false)
 
 	raw, errMarshal := abi.OK(pluginapi.ExecutorResponse{
 		Payload: payload,
@@ -179,11 +181,12 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 	stream, errStream := r.client.Stream(context.Background(), call)
 	if errStream != nil {
 		r.trace("execute_stream upstream error", map[string]any{"model": call.Model, "error": errStream.Error()})
-		r.recordAttempt(attempt, started, nil, reqlog.Usage{}, abi.Status(errStream), errStream.Error(), 0, 0)
+		r.recordAttempt(attempt, started, nil, reqlog.Usage{}, abi.Status(errStream), errStream.Error(), 0, 0, "error", false)
 		return abi.FailFor(errStream, "upstream_error")
 	}
 	r.trace("execute_stream upstream ok", map[string]any{"model": call.Model, "status": stream.StatusCode})
 
+	attempt.repairs = stream.Repairs
 	headers := forwardHeaders(stream.Headers)
 	streamID := strings.TrimSpace(executeRequest.StreamID)
 	if streamID != "" {
@@ -201,7 +204,7 @@ func (r *Runtime) handleExecuteStream(request []byte) []byte {
 		payload, _ := io.ReadAll(stream.Body)
 		_ = stream.Body.Close()
 		r.recordAttempt(attempt, started, stream.Headers, reqlog.ParseBody(r.role.Name, payload),
-			stream.StatusCode, "", 0, 0)
+			stream.StatusCode, "", 0, 0, "stop", false)
 		raw, errMarshal := abi.OK(map[string]any{
 			"headers": headers,
 			"chunks":  []pluginapi.ExecutorStreamChunk{{Payload: payload}},
@@ -241,6 +244,7 @@ type requestAttempt struct {
 	key       string
 	session   string
 	stream    bool
+	repairs   []string
 }
 
 // statsModelID maps the client-facing model id to the id the usage handler
@@ -269,6 +273,8 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 	streamError := false
 	firstContent := time.Time{}
 	lastContent := time.Time{}
+	finishKind := ""
+	finishSeen := false
 	for {
 		line, errRead := reader.ReadBytes('\n')
 		if len(line) > 0 {
@@ -284,6 +290,10 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 					}
 					lastContent = now
 				}
+				if kind, ok := stats.StreamFinish(r.role, chunk); ok {
+					finishSeen = true
+					finishKind = kind
+				}
 				accumulator.Observe(chunk)
 				if errEmit := emitStreamChunk(streamID, chunk); errEmit != nil {
 					closeMessage = errEmit.Error()
@@ -298,6 +308,17 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 			}
 			break
 		}
+	}
+	incomplete := false
+	if closeMessage == "" && !streamError {
+		if !finishSeen && !firstContent.IsZero() {
+			incomplete = true
+			finishKind = "eof"
+		}
+	} else if streamError {
+		finishKind = "error"
+	} else if closeMessage != "" {
+		finishKind = "error"
 	}
 	ttft, generation := streamTimingValues(timing.started, firstContent, lastContent)
 	attempt := timing.attempt
@@ -316,7 +337,7 @@ func (r *Runtime) pumpStream(stream *upstream.Stream, streamID string, timing st
 		errorText = "upstream stream error frame"
 	}
 	r.recordAttempt(attempt, timing.started, stream.Headers, accumulator.Usage(),
-		stream.StatusCode, errorText, ttft, generation)
+		stream.StatusCode, errorText, ttft, generation, finishKind, incomplete)
 	r.trace("stream finished", map[string]any{
 		"role":       string(r.role.Name),
 		"stream_id":  streamID,
@@ -535,7 +556,7 @@ func (r *Runtime) newAttempt(requested, upstreamModel string, stream bool, cred 
 
 // recordAttempt appends one row to the request log. It is best effort: a log
 // failure is surfaced on the dashboard and never fails the request.
-func (r *Runtime) recordAttempt(attempt requestAttempt, started time.Time, headers http.Header, usage reqlog.Usage, status int, errorText string, ttft, generation time.Duration) {
+func (r *Runtime) recordAttempt(attempt requestAttempt, started time.Time, headers http.Header, usage reqlog.Usage, status int, errorText string, ttft, generation time.Duration, finish string, incomplete bool) {
 	store := r.reqLogStore()
 	if store == nil {
 		return
@@ -565,6 +586,9 @@ func (r *Runtime) recordAttempt(attempt requestAttempt, started time.Time, heade
 		CacheCreation: usage.CacheCreation,
 		TotalTokens:   usage.Total,
 		TokensSeen:    usage.Seen,
+		Repairs:       attempt.repairs,
+		Finish:        finish,
+		Incomplete:    incomplete,
 	})
 }
 

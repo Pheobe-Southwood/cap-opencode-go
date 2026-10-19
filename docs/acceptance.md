@@ -1,4 +1,29 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v2.0.1 热重载补充）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v2.0.2 热重载补充）
+
+---
+
+## v2.0.2 懒修复 retry-only + 会话 Sticky 记忆 + 流截断诊断（生产热重载，未重启）
+
+> **2026-10-19 08:19 UTC 生产热重载到 2.0.2**：`PID=179655`（自 Oct 17 15:39:31 持续稳定运行）、
+> 全程**没有重启 CPA 进程**。四个协议面
+> `active_version=2.0.2 retired_version=2.0.1`。
+> 生产公开验收 **56 passed, 0 failed**（messages 没有启用模型，1 项 SKIP；包含全部 6 项管理探测与 retry-only 选项检查）。
+
+### 1. 变更背景与架构落地
+- **变更意图**：
+  1. 将针对上游网关 400 的两处改写（`developer-role` 角色改写、`reasoning-replay` 占位符补齐）转为默认 `retry-only` 按需懒修复：首包 100% 原始透传，仅当上游节点明确拒绝并返回对应 400 时才触发修复重试。
+  2. 会话 Sticky 记忆：首轮触发 reasoning 400 修复后，Client 内存自动记忆该 `x-opencode-session`（TTL 2 小时，容量上限 4096 条），后续各轮直接提前补齐，消除后续每轮多一次往返的延迟惩罚并保护 Prompt Cache 命中率。
+  3. 修复阶梯保护：3 阶重试梯子，每种修复单次请求最多执行一次，非对应 400 或不可恢复错误立即返回。
+  4. 流截断诊断（Stream Truncation）：`StreamFinish` 识别全部 4 族的流结束标志。若上游连接异常中断（未包含 finish_reason），精确记录 `incomplete: true` 与 `finish: "eof"`，并在控制台以「截断」badge 明确标识。
+- **生产热重载**：
+  - 安装四个 v2.0.2 `.so` 库，管理 API 更新配置，触发宿主热重载：
+    `main.log`：`plugin hot reloaded plugin_id=cpa-opencodego active_version=2.0.2 retired_version=2.0.1`。
+- **生产验证结果**：
+  - `GET /v0/resource/plugins/cpa-opencodego/api/state`：`version="2.0.2"`、`developer_role="retry-only"`、`reasoning_replay="retry-only"`。
+  - 真实透传验证：带 `developer` 角色的聊天请求正常应答 HTTP 200。
+  - 思考模型验证：`DeepSeek-V4.1-Flash` 历史无 `reasoning_content` 请求正常应答 HTTP 200。
+  - 流式请求验证：`DeepSeek-V4.1-Flash` SSE 流式返回，请求日志中记录 `finish: "stop"`、`gen_tps: 126.75`、`ttft_ms: 2408.6`。
+  - 公开验收：`scripts/acceptance.sh` **56 passed, 0 failed**。
 
 ---
 
