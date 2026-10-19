@@ -363,6 +363,25 @@ models     {go}/v1/models          usage {go}/v1/usage
 模型族归属没有改变：实测同一模型在 chat 与 anthropic 两个族端点都能正常服务，所以 v2 不做
 跨族迁移，只改端点拼装方式。
 
+## 7.12 思考模式 reasoning_content 补齐与重试（v2.0.1）
+
+现象：DeepSeek 思考模型在长 agentic 会话里偶发 HTTP 400
+`The reasoning_content in the thinking mode must be passed back to the API`。上游要求历史
+assistant 消息（含带 `tool_calls` 的消息）回传 `reasoning_content`，而 DSH 只为当前 turn 保留
+思维链，更早的历史被丢弃；网关的部分节点会严格校验，另一些节点不校验，因此同一份请求可能
+200/400 交替。
+
+处理分两层，都在插件侧、都不触碰模型与 DSH 契约：
+
+- **结构补齐**：`reasoning-replay` 默认 `auto`，仅对思考请求生效。插件为缺少
+  `reasoning_content` 的 assistant 消息写入 `[reasoning unavailable]` 占位符，已有值保留，
+  空串替换。只重编码受影响的 `messages[]`，其他顶层字段逐字节保留。
+- **单次重试**：命中该 400 时用同一份字节重试一次，覆盖“校验节点抖动”的情况；其他 400 不重试。
+
+为什么是占位符而不是缓存回放：回放旧 CoT 会让长会话模型模仿旧的工具调用标记，导致
+`tool_calls == 0`；校验本身只要求字段存在，不要求内容与上一轮一致。代价是补齐后的请求不再与
+客户端原始字节完全一致（本来 `developer` 归一化也已重编码），但不改变 token 计量与模型选择。
+
 ## 8. 版本兼容
 
 插件 ABI 是 `dlopen` + C ABI（`ABIVersion = 1`，注册 `schema_version = 6`），

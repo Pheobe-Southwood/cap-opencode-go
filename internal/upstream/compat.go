@@ -3,7 +3,9 @@ package upstream
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
@@ -99,4 +101,207 @@ func rewriteRoleArray(raw json.RawMessage) (json.RawMessage, bool) {
 		return raw, false
 	}
 	return out, true
+}
+
+// ensureReasoningContent fills reasoning_content on assistant history messages
+// of a Chat Completions request that is in thinking mode.
+//
+// DeepSeek's thinking mode expects the reasoning_content that came back with
+// every assistant message to be replayed on the next turn, including messages
+// that also carry tool calls. A client is free to drop that history (DSH keeps
+// it only for the in-flight turn), but some OpenCode Go gateway nodes enforce
+// the rule literally and answer HTTP 400:
+//
+//	The `reasoning_content` in the thinking mode must be passed back to the API.
+//
+// The plugin cannot recover chain-of-thought the client threw away, so a
+// neutral placeholder is written instead. Passing stale reasoning_content back
+// is itself known to degrade long agentic runs (models imitate their old
+// tool-call markup), so the placeholder is preferred over any attempt to
+// reconstruct it. The field only has to be present for the request to be
+// accepted; the upstream ignores it for generation.
+//
+// The rewrite keeps every other byte of the body intact: only the affected
+// messages and the messages array are re-encoded. A body that is not JSON, or
+// that is not in thinking mode under "auto", is returned untouched.
+func ensureReasoningContent(role roles.Role, body []byte, mode string) []byte {
+	if role.Name != roles.Chat || mode == config.ReasoningReplayOff {
+		return body
+	}
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return body
+	}
+	var object map[string]json.RawMessage
+	if errUnmarshal := json.Unmarshal(trimmed, &object); errUnmarshal != nil {
+		return body
+	}
+	rawMessages, ok := object["messages"]
+	if !ok {
+		return body
+	}
+	var items []json.RawMessage
+	if errUnmarshal := json.Unmarshal(bytes.TrimSpace(rawMessages), &items); errUnmarshal != nil {
+		return body
+	}
+
+	thinking := mode == config.ReasoningReplayAlways || requestThinkingMode(object)
+	entries := make([]map[string]json.RawMessage, len(items))
+	assistants := make([]int, 0, len(items))
+	for index, item := range items {
+		var entry map[string]json.RawMessage
+		if errUnmarshal := json.Unmarshal(item, &entry); errUnmarshal != nil {
+			continue
+		}
+		entries[index] = entry
+		var roleName string
+		if value, hasRole := entry["role"]; hasRole {
+			_ = json.Unmarshal(value, &roleName)
+		}
+		if roleName != "assistant" {
+			continue
+		}
+		assistants = append(assistants, index)
+		// A client that already replays reasoning for some turns is in thinking
+		// mode even when it omits the reasoning_effort switch.
+		if !thinking && hasTextReasoning(entry) {
+			thinking = true
+		}
+	}
+	if len(assistants) == 0 || !thinking {
+		return body
+	}
+
+	placeholder, errPlaceholder := json.Marshal(config.DefaultReasoningPlaceholder)
+	if errPlaceholder != nil {
+		return body
+	}
+	changed := false
+	for _, index := range assistants {
+		entry := entries[index]
+		if hasTextReasoning(entry) {
+			continue
+		}
+		entry["reasoning_content"] = placeholder
+		encoded, errMarshal := json.Marshal(entry)
+		if errMarshal != nil {
+			continue
+		}
+		items[index] = encoded
+		changed = true
+	}
+	if !changed {
+		return body
+	}
+	encodedItems, errMarshal := json.Marshal(items)
+	if errMarshal != nil {
+		return body
+	}
+	object["messages"] = encodedItems
+	out, errMarshal := json.Marshal(object)
+	if errMarshal != nil {
+		return body
+	}
+	return out
+}
+
+// hasTextReasoning reports whether an assistant message already carries a
+// non-empty reasoning_content. An empty string counts as missing because the
+// gateway's proto3 frontend cannot tell it from an absent field.
+func hasTextReasoning(entry map[string]json.RawMessage) bool {
+	value, ok := entry["reasoning_content"]
+	if !ok {
+		return false
+	}
+	var text string
+	if errUnmarshal := json.Unmarshal(value, &text); errUnmarshal != nil {
+		return false
+	}
+	return strings.TrimSpace(text) != ""
+}
+
+// requestThinkingMode reports whether the top-level request asks for thinking.
+// Only fields that actually exist on Chat Completions bodies are consulted, so
+// a tool schema that happens to be called "reasoning" cannot trip the rewrite.
+func requestThinkingMode(object map[string]json.RawMessage) bool {
+	for _, field := range []string{"reasoning_effort", "reasoning", "thinking", "enable_thinking", "reasoning_enabled"} {
+		raw, ok := object[field]
+		if !ok {
+			continue
+		}
+		if rawEnablesThinking(raw) {
+			return true
+		}
+	}
+	return false
+}
+
+// rawEnablesThinking interprets one thinking switch. Strings such as "none" and
+// "off", the booleans false, the number 0, and objects that explicitly disable
+// thinking count as disabled; everything else counts as enabled.
+func rawEnablesThinking(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	switch trimmed[0] {
+	case 't':
+		return bytes.Equal(trimmed, []byte("true"))
+	case 'f', 'n':
+		return false
+	case '{':
+		var fields map[string]json.RawMessage
+		if errUnmarshal := json.Unmarshal(trimmed, &fields); errUnmarshal != nil {
+			return true
+		}
+		for _, key := range []string{"type", "enabled"} {
+			value, ok := fields[key]
+			if !ok {
+				continue
+			}
+			var flag bool
+			if errUnmarshal := json.Unmarshal(value, &flag); errUnmarshal == nil {
+				return flag
+			}
+			var text string
+			if errUnmarshal := json.Unmarshal(value, &text); errUnmarshal == nil {
+				switch strings.ToLower(strings.TrimSpace(text)) {
+				case "disabled", "off", "none", "false":
+					return false
+				default:
+					return true
+				}
+			}
+		}
+		if effort, ok := fields["effort"]; ok {
+			return rawEnablesThinking(effort)
+		}
+		return true
+	case '[':
+		return false
+	}
+	var text string
+	if errUnmarshal := json.Unmarshal(trimmed, &text); errUnmarshal == nil {
+		switch strings.ToLower(strings.TrimSpace(text)) {
+		case "", "none", "off", "false", "no", "disabled", "0":
+			return false
+		default:
+			return true
+		}
+	}
+	var number float64
+	if errUnmarshal := json.Unmarshal(trimmed, &number); errUnmarshal == nil {
+		return number > 0
+	}
+	return false
+}
+
+// isReasoningReplayRejection reports whether an upstream 400 is the thinking
+// mode reasoning-passback check. The gateway answers it sporadically: the same
+// bytes can succeed on the next attempt, so the caller retries once.
+func isReasoningReplayRejection(body []byte) bool {
+	if !bytes.Contains(body, []byte("must be passed back")) {
+		return false
+	}
+	return bytes.Contains(body, []byte("reasoning_content")) || bytes.Contains(body, []byte("reasoning_text"))
 }

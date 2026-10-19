@@ -83,20 +83,21 @@ OpenCode Go 聚合了大量顶级大语言模型（DeepSeek V4.1、Claude Haiku 
 - **四面合一**：主面负责控制台与统一配置，从属面（Responses、Messages、Gemini）自动共享快照，协同提供服务。
 - **跨协议调用**：OpenAI 格式客户端可直接调用 Claude 模型；Claude 格式客户端亦可直接调用 Gemini 4 或 DeepSeek。
 - **极简维护**：仅主面需要配置，从属面零配置运行，架构清晰统一。
+- **思考模式兼容**：自动为历史 assistant 消息补齐 `reasoning_content`，并对网关偶发的 400 自动重试一次，DeepSeek 思考模型的长任务不再中断。
 
 ---
 
-> **v2.0.0**：插件 id 与仓库已更名为 `cpa-opencodego`；新增「请求日志」Tab，并支持 OpenCode Go 新分族端点（旧 `/v1` 端点继续兼容）。升级前请阅读 [v2 升级指南](docs/UPGRADE-v2.md)。
+> **v2.0.1**：插件 id 与仓库已更名为 `cpa-opencodego`；新增「请求日志」Tab，并支持 OpenCode Go 新分族端点（旧 `/v1` 端点继续兼容）。升级前请阅读 [v2 升级指南](docs/UPGRADE-v2.md)。
 
 ## 快速使用
 
 ### 第一步：获取与部署插件
 
 将编译好的 4 个 `.so` 文件复制到 CPA 宿主的插件目录（通常为 `plugins/linux/amd64/`）：
-- `cpa-opencodego-v2.0.0.so`
-- `cpa-opencodego-responses-v2.0.0.so`
-- `cpa-opencodego-messages-v2.0.0.so`
-- `cpa-opencodego-gemini-v2.0.0.so`
+- `cpa-opencodego-v2.0.1.so`
+- `cpa-opencodego-responses-v2.0.1.so`
+- `cpa-opencodego-messages-v2.0.1.so`
+- `cpa-opencodego-gemini-v2.0.1.so`
 
 ### 第二步：添加宿主配置
 
@@ -112,6 +113,7 @@ plugins:
       base-url: "https://opencode.ai/inference/go"
       endpoint-layout: "auto"
       developer-role: "rewrite"
+      reasoning-replay: "auto"   # 补齐思考模型历史 reasoning_content，修偶发 400
       request-log: true
       keys:
         - name: "primary-key"

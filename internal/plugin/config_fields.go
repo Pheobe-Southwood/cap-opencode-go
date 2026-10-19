@@ -24,6 +24,7 @@ func configFields(role roles.Role) []pluginapi.ConfigField {
 		{Name: "endpoint-layout", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"auto", "legacy", "family"}, Description: "端点布局：auto 按 base-url 自动判断，legacy 旧单根 /v1，family 新分族 /openai、/anthropic、/google。"},
 		{Name: "base-urls", Type: pluginapi.ConfigFieldTypeObject, Description: "逐协议面覆盖 API 根：{chat, responses, messages, gemini}，设置后该族路径直接追加到这个根。"},
 		{Name: "developer-role", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"rewrite", "keep"}, Description: "OpenAI 形状请求里 developer 角色的处理：rewrite（默认，改写为 system 以兼容新路由）或 keep。"},
+		{Name: "reasoning-replay", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"auto", "always", "off"}, Description: "思考模式 reasoning_content 回放：auto（默认，仅思考请求补齐）、always（所有 chat 请求补齐）或 off（不改写）。补齐用占位文本，不回放旧思维链。"},
 		{Name: "request-log", Type: pluginapi.ConfigFieldTypeBoolean, Description: "是否记录逐条请求日志（时间、token、TTFT、生成/端到端 TPS、状态）；默认开启，每面保留 2000 条 / 7 天。"},
 		{Name: "keys", Type: pluginapi.ConfigFieldTypeArray, Description: "多账号 Key 列表：[{name, key, priority, enabled}]，路由选择与容灾交由 CPA 宿主调度。"},
 		{Name: "models", Type: pluginapi.ConfigFieldTypeObject, Description: "逐模型设置：{\"<model-id>\": {enabled, proxy, family, aliases}}，proxy 取 inherit/proxy/direct。aliases 会替代原名对外提供（多个别名 = 同一模型的多个对外名）。"},

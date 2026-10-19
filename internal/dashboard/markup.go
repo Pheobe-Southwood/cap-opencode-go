@@ -329,8 +329,16 @@ const pageMarkup = `
               <option value="keep">keep（原样透传）</option>
             </select>
           </label>
+          <label class="kv"><span class="k">reasoning 回放</span>
+            <select id="cfgReasoningReplay">
+              <option value="auto">auto（仅思考请求补齐 reasoning_content）</option>
+              <option value="always">always（所有 chat 请求补齐）</option>
+              <option value="off">off（原样透传）</option>
+            </select>
+          </label>
         </div>
         <div class="hint" id="endpointHint" style="margin-top:8px"></div>
+        <div class="hint">思考模型要求历史 assistant 消息回传 reasoning_content，客户端丢弃旧思维链时会触发上游 400。auto 只在思考请求上补齐缺失字段（占位文本，不回放旧思维链），不改动已有内容。</div>
       </div>
 
       <div class="card">

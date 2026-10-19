@@ -176,10 +176,47 @@ func (c *Client) do(ctx context.Context, call Call, credential config.Key, setti
 	body := call.Body
 	if call.Role.StripsStreamField() {
 		body = normalizeDeveloperRoles(call.Role, body, settings.DeveloperRoleRewrite())
+		body = ensureReasoningContent(call.Role, body, settings.ReasoningReplayMode())
 		body = rewriteModelField(body, call.RequestedModel, call.Model)
 		body = forceStreamFlag(body, call.Stream)
 	}
 
+	client, errClient := c.httpClient(settings, call)
+	if errClient != nil {
+		return nil, errClient
+	}
+
+	// Some OpenCode Go gateway nodes answer the thinking-mode reasoning check
+	// with HTTP 400 even when the body is valid, and replaying the identical
+	// request usually succeeds (the check is per node, not per payload). One
+	// retry converts that intermittent failure back into a normal turn; every
+	// other status is handed to the caller on the first attempt.
+	for attempt := 0; ; attempt++ {
+		request, errRequest := newUpstreamRequest(ctx, endpoint, body, call, credential, settings)
+		if errRequest != nil {
+			return nil, errRequest
+		}
+		response, errDo := client.Do(request)
+		if errDo != nil {
+			return nil, abi.StatusErrorf(http.StatusBadGateway, "upstream_unreachable",
+				"连接 OpenCode Go 失败: %v", errDo)
+		}
+		if attempt > 0 || response.StatusCode != http.StatusBadRequest {
+			return response, nil
+		}
+		peeked, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
+		_ = response.Body.Close()
+		if !isReasoningReplayRejection(peeked) {
+			// Not our retry case: hand the buffered error body back untouched.
+			response.Body = io.NopCloser(bytes.NewReader(peeked))
+			return response, nil
+		}
+	}
+}
+
+// newUpstreamRequest builds one upstream HTTP request. It is called once per
+// attempt so the retry in do() always starts from a fresh body reader.
+func newUpstreamRequest(ctx context.Context, endpoint string, body []byte, call Call, credential config.Key, settings config.Settings) (*http.Request, error) {
 	request, errRequest := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if errRequest != nil {
 		return nil, abi.StatusErrorf(http.StatusInternalServerError, "bad_request",
@@ -208,17 +245,7 @@ func (c *Client) do(ctx context.Context, call Call, credential config.Key, setti
 		}
 		headers.Set(strings.TrimSpace(name), value)
 	}
-
-	client, errClient := c.httpClient(settings, call)
-	if errClient != nil {
-		return nil, errClient
-	}
-	response, errDo := client.Do(request)
-	if errDo != nil {
-		return nil, abi.StatusErrorf(http.StatusBadGateway, "upstream_unreachable",
-			"连接 OpenCode Go 失败: %v", errDo)
-	}
-	return response, nil
+	return request, nil
 }
 
 func acceptHeader(stream bool) string {

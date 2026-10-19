@@ -25,7 +25,8 @@ const pageScript = `
     'base-url':'Base URL', 'session-mode':'Session 模式', 'session':'Session 值', 'proxy-url':'插件代理 URL',
     'default-proxy':'默认代理模式', 'request-timeout-seconds':'请求超时',
     'state-dir':'状态目录', 'debug':'调试日志', 'plan':'套餐',
-    'endpoint-layout':'端点布局', 'developer-role':'developer 角色', 'request-log':'请求日志'
+    'endpoint-layout':'端点布局', 'developer-role':'developer 角色',
+    'reasoning-replay':'reasoning 回放', 'request-log':'请求日志'
   };
   var MODEL_LABELS = {enabled:'启用', family:'协议', proxy:'代理', aliases:'别名'};
 
@@ -869,6 +870,7 @@ const pageScript = `
       ['模型列表', state.models_url],
       ['用量接口', state.usage_url],
       ['developer 角色', state.developer_role],
+      ['reasoning 回放', state.reasoning_replay],
       ['请求日志', state.request_log ? '开启' : '关闭'],
       ['Session', state.session_mode + (state.session_mode === 'fixed' ? ' / ' + state.session : '')],
       ['默认代理', state.default_proxy],
@@ -945,6 +947,7 @@ const pageScript = `
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),
       aboutRow('请求日志', '「请求日志」逐条列出每次上游尝试：时间、输入/输出/合计 token、TTFT、生成 TPS 与端到端 TPS，以及状态与错误。数据由插件在转发时自测，和「统计」的宿主 usage 口径略有差异；可在设置里关闭，默认保留 2000 条 / 7 天。'),
       aboutRow('协议', '插件同时支持旧版单根 /v1 端点和新版 /openai、/anthropic、/google 分族端点：base-url 以 /v1 结尾视为旧布局，以 Go 根结尾视为新布局，也可用 endpoint-layout 显式指定。只额外发送 x-opencode-session，User-Agent 跟随客户端透传。'),
+      aboutRow('思考回放', 'DeepSeek 思考模式要求历史 assistant 消息回传 reasoning_content；客户端丢弃旧思维链时会偶发上游 400。reasoning-replay=auto（默认）只在思考请求上给缺失字段补占位文本，已有内容原样保留；同一 400 还会自动重试一次，因为该检查在部分网关节点上是间歇性的。'),
       aboutRow('热重载', '替换插件文件同样热生效：把新版本 .so 放进 plugins/linux/amd64 后原地改一次 config.yaml 即可（不要用会替换 inode 的方式写文件）。'),
       aboutRow('残留', '插件只在 CPA 目录下写 plugins/、data/cpa-opencodego/（shared.json、stats-&lt;role&gt;.json、requests-&lt;role&gt;.jsonl，可选 debug.log）；v1.12 起不再写任何认证文件，删除插件与配置块后无任何残留。'),
       aboutRow('仓库', '<a href="' + REPO_URL + '" target="_blank" rel="noreferrer noopener">' + esc(REPO_URL.replace('https://', '')) + '</a>')
@@ -965,6 +968,7 @@ const pageScript = `
       case 'plan': return state.plan || 'go';
       case 'endpoint-layout': return state.endpoint_layout || 'auto';
       case 'developer-role': return state.developer_role || 'rewrite';
+      case 'reasoning-replay': return state.reasoning_replay || 'auto';
       case 'request-log': return !!state.request_log;
       case 'debug': return !!state.debug;
       default: return undefined;
@@ -987,6 +991,7 @@ const pageScript = `
     el('cfgPlan').value = value('plan');
     el('cfgEndpointLayout').value = value('endpoint-layout');
     el('cfgDeveloperRole').value = value('developer-role');
+    el('cfgReasoningReplay').value = value('reasoning-replay');
     el('cfgRequestLog').checked = !!value('request-log');
     el('cfgDebug').checked = !!value('debug');
     text(el('stateDirHint'), '实际状态文件：' + (state.state_path || '(未解析)'));
@@ -2044,11 +2049,11 @@ const pageScript = `
       })
       .then(function(){ renderModels(); });
   }
-  ['cfgBaseURL','cfgSession','cfgProxyURL','cfgStateDir','cfgSessionMode','cfgDefaultProxy','cfgTimeout','cfgPlan','cfgEndpointLayout','cfgDeveloperRole','cfgRequestLog','cfgDebug'].forEach(function(id){
+  ['cfgBaseURL','cfgSession','cfgProxyURL','cfgStateDir','cfgSessionMode','cfgDefaultProxy','cfgTimeout','cfgPlan','cfgEndpointLayout','cfgDeveloperRole','cfgReasoningReplay','cfgRequestLog','cfgDebug'].forEach(function(id){
     var field = {
       cfgBaseURL:'base-url', cfgSession:'session', cfgProxyURL:'proxy-url', cfgStateDir:'state-dir',
       cfgSessionMode:'session-mode', cfgDefaultProxy:'default-proxy', cfgTimeout:'request-timeout-seconds',
-      cfgPlan:'plan', cfgEndpointLayout:'endpoint-layout', cfgDeveloperRole:'developer-role',
+      cfgPlan:'plan', cfgEndpointLayout:'endpoint-layout', cfgDeveloperRole:'developer-role', cfgReasoningReplay:'reasoning-replay',
       cfgRequestLog:'request-log', cfgDebug:'debug'
     }[id];
     var node = el(id);

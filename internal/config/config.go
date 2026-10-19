@@ -88,6 +88,25 @@ const (
 	DeveloperRoleKeep    = "keep"
 )
 
+// Reasoning replay handling for OpenAI-shaped chat bodies. DeepSeek's thinking
+// mode requires the reasoning_content of every assistant history message to be
+// passed back, and some OpenCode Go gateway nodes enforce that literally; a
+// client that drops it for older turns (or for compacted history) then gets
+// HTTP 400 "The `reasoning_content` in the thinking mode must be passed back to
+// the API". Auto fills only thinking-mode requests; always fills every chat
+// request; off leaves the body byte-for-byte as the host translated it.
+const (
+	ReasoningReplayAuto   = "auto"
+	ReasoningReplayAlways = "always"
+	ReasoningReplayOff    = "off"
+)
+
+// DefaultReasoningPlaceholder is written into assistant history messages whose
+// reasoning_content the client did not replay. It is deliberately neutral: the
+// upstream only needs the field to be present, and replaying stale
+// chain-of-thought is known to degrade long agentic sessions.
+const DefaultReasoningPlaceholder = "[reasoning unavailable]"
+
 // Key is one upstream credential.
 type Key struct {
 	Name     string `yaml:"name" json:"name"`
@@ -152,6 +171,10 @@ type Settings struct {
 	// DeveloperRole is rewrite (default) or keep; it only affects OpenAI-shaped
 	// chat/responses bodies.
 	DeveloperRole string `yaml:"developer-role" json:"developer-role"`
+	// ReasoningReplay is auto (default), always, or off; it decides whether the
+	// plugin fills reasoning_content on assistant history messages of
+	// OpenAI-shaped chat requests.
+	ReasoningReplay string `yaml:"reasoning-replay" json:"reasoning-replay"`
 	// RequestLog enables the 请求日志 tab's per-request log. Nil means enabled.
 	RequestLog    *bool                   `yaml:"request-log" json:"request-log,omitempty"`
 	Debug         bool                    `yaml:"debug" json:"debug"`
@@ -177,6 +200,7 @@ func Default() Settings {
 		Plan:                  DefaultPlan,
 		EndpointLayout:        LayoutAuto,
 		DeveloperRole:         DeveloperRoleRewrite,
+		ReasoningReplay:       ReasoningReplayAuto,
 	}
 }
 
@@ -240,6 +264,7 @@ func (s *Settings) normalize() {
 	s.Plan = string(pricing.NormalizePlan(s.Plan))
 	s.EndpointLayout = normalizeLayout(s.EndpointLayout)
 	s.DeveloperRole = normalizeDeveloperRole(s.DeveloperRole)
+	s.ReasoningReplay = normalizeReasoningReplay(s.ReasoningReplay)
 	s.BaseURLs = normalizeBaseURLs(s.BaseURLs)
 	s.ProxyURL = strings.TrimSpace(s.ProxyURL)
 	if s.ExtraHeaders == nil {
@@ -316,6 +341,31 @@ func normalizeDeveloperRole(value string) string {
 		return DeveloperRoleKeep
 	default:
 		return DeveloperRoleRewrite
+	}
+}
+
+// normalizeReasoningReplay lowercases the reasoning-replay mode. Unknown values
+// fall back to auto, which is a no-op for requests that are not in thinking
+// mode.
+func normalizeReasoningReplay(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ReasoningReplayAlways:
+		return ReasoningReplayAlways
+	case ReasoningReplayOff, "none", "false", "no":
+		return ReasoningReplayOff
+	default:
+		return ReasoningReplayAuto
+	}
+}
+
+// ReasoningReplayMode returns the normalised reasoning-replay mode.
+func (s Settings) ReasoningReplayMode() string {
+	mode := strings.ToLower(strings.TrimSpace(s.ReasoningReplay))
+	switch mode {
+	case ReasoningReplayAlways, ReasoningReplayOff:
+		return mode
+	default:
+		return ReasoningReplayAuto
 	}
 }
 

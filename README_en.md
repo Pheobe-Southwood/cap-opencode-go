@@ -17,7 +17,7 @@
 
 ---
 
-> **v2.0.0**: the plugin id and repository are now `cpa-opencodego`. This release adds the request-log tab and the new OpenCode Go per-family endpoints (the legacy `/v1` endpoints keep working). Read the [v2 upgrade guide](docs/UPGRADE-v2.md) before upgrading.
+> **v2.0.1**: fixes the intermittent `reasoning_content` HTTP 400 on long DeepSeek thinking-mode runs (history backfill + one retry). v2.0.0 renamed the plugin id and repository to `cpa-opencodego`, added the request-log tab, and added the new OpenCode Go per-family endpoints (the legacy `/v1` endpoints keep working). Read the [v2 upgrade guide](docs/UPGRADE-v2.md) before upgrading.
 
 
 ## Core Value & Key Highlights
@@ -94,10 +94,10 @@ This plugin delivers a unified, turnkey integration for CLIProxyAPI (CPA):
 ### Step 1: Deploy Plugin Libraries
 
 Copy the 4 compiled `.so` files to your CPA plugins folder (typically `plugins/linux/amd64/`):
-- `cpa-opencodego-v2.0.0.so`
-- `cpa-opencodego-responses-v2.0.0.so`
-- `cpa-opencodego-messages-v2.0.0.so`
-- `cpa-opencodego-gemini-v2.0.0.so`
+- `cpa-opencodego-v2.0.1.so`
+- `cpa-opencodego-responses-v2.0.1.so`
+- `cpa-opencodego-messages-v2.0.1.so`
+- `cpa-opencodego-gemini-v2.0.1.so`
 
 ### Step 2: Add Configuration
 
@@ -113,6 +113,7 @@ plugins:
       base-url: "https://opencode.ai/inference/go"
       endpoint-layout: "auto"
       developer-role: "rewrite"
+      reasoning-replay: "auto"   # 补齐思考模型历史 reasoning_content，修偶发 400
       request-log: true
       keys:
         - name: "primary-key"

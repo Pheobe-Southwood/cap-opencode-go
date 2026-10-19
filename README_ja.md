@@ -17,7 +17,7 @@
 
 ---
 
-> **v2.0.0**：プラグイン id とリポジトリ名を `cpa-opencodego` に変更しました。リクエストログタブと OpenCode Go の新しいファミリー別エンドポイントに対応し、旧 `/v1` エンドポイントも引き続き利用できます。アップグレード前に [v2 アップグレードガイド](docs/UPGRADE-v2.md) をご覧ください。
+> **v2.0.1**：DeepSeek 思考モードの長時間実行で散発する `reasoning_content` 400 を修正しました（履歴の補完 + 1 回の再試行）。v2.0.0 でプラグイン id とリポジトリ名を `cpa-opencodego` に変更し、リクエストログタブと OpenCode Go の新しいファミリー別エンドポイントに対応しました（旧 `/v1` エンドポイントも引き続き利用できます）。アップグレード前に [v2 アップグレードガイド](docs/UPGRADE-v2.md) をご覧ください。
 
 
 ## 主な特徴と提供価値
@@ -94,10 +94,10 @@ OpenCode Go には最新鋭の LLM（DeepSeek V4.1、Claude Haiku 5.5、Gemini 4
 ### ステップ 1：プラグインライブラリの配置
 
 ビルド済みの 4 つの `.so` ファイルを CPA のプラグインフォルダ（通常 `plugins/linux/amd64/`）に配置します：
-- `cpa-opencodego-v2.0.0.so`
-- `cpa-opencodego-responses-v2.0.0.so`
-- `cpa-opencodego-messages-v2.0.0.so`
-- `cpa-opencodego-gemini-v2.0.0.so`
+- `cpa-opencodego-v2.0.1.so`
+- `cpa-opencodego-responses-v2.0.1.so`
+- `cpa-opencodego-messages-v2.0.1.so`
+- `cpa-opencodego-gemini-v2.0.1.so`
 
 ### ステップ 2：設定ファイルの追記
 
@@ -113,6 +113,7 @@ plugins:
       base-url: "https://opencode.ai/inference/go"
       endpoint-layout: "auto"
       developer-role: "rewrite"
+      reasoning-replay: "auto"   # 补齐思考模型历史 reasoning_content，修偶发 400
       request-log: true
       keys:
         - name: "primary-key"

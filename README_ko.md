@@ -17,7 +17,7 @@
 
 ---
 
-> **v2.0.0**: 플러그인 id 와 저장소 이름이 `cpa-opencodego` 로 변경되었습니다. 요청 로그 탭과 OpenCode Go 의 새로운 패밀리별 엔드포인트를 추가했으며, 기존 `/v1` 엔드포인트도 계속 호환됩니다. 업그레이드 전에 [v2 업그레이드 가이드](docs/UPGRADE-v2.md) 를 확인하세요.
+> **v2.0.1**: DeepSeek 사고 모드 장기 실행에서 간헐적으로 발생하는 `reasoning_content` 400 을 수정했습니다(히스토리 보완 + 1회 재시도). v2.0.0 에서 플러그인 id 와 저장소 이름을 `cpa-opencodego` 로 변경하고 요청 로그 탭과 OpenCode Go 의 새로운 패밀리별 엔드포인트를 추가했습니다(기존 `/v1` 엔드포인트도 계속 호환). 업그레이드 전에 [v2 업그레이드 가이드](docs/UPGRADE-v2.md) 를 확인하세요.
 
 
 ## 핵심 가치와 주요 특징
@@ -94,10 +94,10 @@ OpenCode Go는 최신 고성능 AI 모델 37종(DeepSeek V4.1, Claude Haiku 5.5,
 ### 1단계: 플러그인 라이브러리 배치
 
 빌드된 4개의 `.so` 파일을 CPA 플러그인 디렉터리(일반적으로 `plugins/linux/amd64/`)에 복사합니다:
-- `cpa-opencodego-v2.0.0.so`
-- `cpa-opencodego-responses-v2.0.0.so`
-- `cpa-opencodego-messages-v2.0.0.so`
-- `cpa-opencodego-gemini-v2.0.0.so`
+- `cpa-opencodego-v2.0.1.so`
+- `cpa-opencodego-responses-v2.0.1.so`
+- `cpa-opencodego-messages-v2.0.1.so`
+- `cpa-opencodego-gemini-v2.0.1.so`
 
 ### 2단계: 호스트 설정 추가
 
@@ -113,6 +113,7 @@ plugins:
       base-url: "https://opencode.ai/inference/go"
       endpoint-layout: "auto"
       developer-role: "rewrite"
+      reasoning-replay: "auto"   # 补齐思考模型历史 reasoning_content，修偶发 400
       request-log: true
       keys:
         - name: "primary-key"

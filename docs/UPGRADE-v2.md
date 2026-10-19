@@ -8,6 +8,12 @@ v2.0.0 是一次大版本升级，包含三件事：
 
 模型 id、别名、代理策略、DSH 调用方式都不变；插件仍然只自行发送 `x-opencode-session` 一个请求头，`User-Agent` 跟随 CPA 透传。
 
+> **v2.0.1 热修复（已在生产中热部署）**：修复 DeepSeek 思考模型长任务偶发的
+> `The reasoning_content in the thinking mode must be passed back to the API`。默认
+> `reasoning-replay: "auto"` 会为缺少 `reasoning_content` 的历史 assistant 消息补占位文本，
+> 并对该 400 自动重试一次。升级只需替换四个 `.so` 并原地改写一次 `config.yaml`（补上
+> `reasoning-replay: "auto"` 可选，默认即 auto），**不需要重启 CPA**。其余步骤与 v2.0.0 相同。
+
 ---
 
 ## 一、升级前检查
@@ -29,11 +35,11 @@ cp -a /root/cliproxyapi/data/cap-opencode-go /root/cliproxyapi/data/cap-opencode
 ```bash
 cd /path/to/cpa-opencodego
 
-# 1. 构建 v2.0.0（四个 .so）
-make build VERSION=2.0.0
+# 1. 构建（四个 .so）；v2.0.1 是当前版本
+make build VERSION=2.0.1
 
 # 2. 安装：会先删除遗留的 cap-opencode-go*.so，再复制新文件
-bash scripts/install.sh 2.0.0
+bash scripts/install.sh 2.0.1
 
 # 3. 迁移配置块与 v1 状态目录（默认 dry-run，先看输出）
 bash scripts/migrate-v1.sh

@@ -451,6 +451,7 @@ page_checks=(
   'data-label="端到端 TPS"|端到端 TPS 列'
   'id="cfgEndpointLayout"|端点布局设置'
   'id="cfgDeveloperRole"|developer 角色设置'
+  'id="cfgReasoningReplay"|reasoning 回放设置'
   'id="cfgRequestLog"|请求日志开关'
   'id="cfgPlan"|套餐设置'
   'id="pane-models"|模型 tab'
@@ -519,7 +520,7 @@ try:
     payload = json.load(sys.stdin)
 except Exception:
     raise SystemExit
-fields = ["timeout_seconds", "plan", "debug"]
+fields = ["timeout_seconds", "plan", "debug", "reasoning_replay"]
 missing = [field for field in fields if field not in payload]
 print("ok" if not missing else "missing:" + ",".join(missing))
 ' 2>/dev/null || echo missing)"

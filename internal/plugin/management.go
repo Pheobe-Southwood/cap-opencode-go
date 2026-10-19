@@ -214,36 +214,37 @@ type KeyState struct {
 // dashboard edits the plugin configuration without ever reading a key back, and
 // a save merges the edits into the host configuration it reads at write time.
 type StatePayload struct {
-	Role           string            `json:"role"`
-	Provider       string            `json:"provider"`
-	Version        string            `json:"version"`
-	PluginID       string            `json:"plugin_id"`
-	BaseURL        string            `json:"base_url"`
-	SessionMode    string            `json:"session_mode"`
-	Session        string            `json:"session"`
-	DefaultProxy   string            `json:"default_proxy"`
-	ProxyURL       string            `json:"proxy_url"`
-	HostProxyURL   string            `json:"host_proxy_url"`
-	StatePath      string            `json:"state_path"`
-	StateDir       string            `json:"state_dir"`
-	ModelsDefault  string            `json:"models_default_proxy"`
-	TimeoutSeconds int               `json:"timeout_seconds"`
-	Plan           string            `json:"plan"`
-	EndpointLayout string            `json:"endpoint_layout"`
-	Endpoints      map[string]string `json:"endpoints"`
-	ModelsURL      string            `json:"models_url"`
-	UsageURL       string            `json:"usage_url"`
-	DeveloperRole  string            `json:"developer_role"`
-	RequestLog     bool              `json:"request_log"`
-	Migration      string            `json:"migration,omitempty"`
-	Debug          bool              `json:"debug"`
-	Keys           []KeyState        `json:"keys"`
-	Models         []ModelRow        `json:"models"`
-	Siblings       []SiblingRow      `json:"siblings"`
-	ConfigError    string            `json:"config_error,omitempty"`
-	StartedAt      time.Time         `json:"started_at"`
-	Extra          map[string]string `json:"extra_headers,omitempty"`
-	Upstream       *UpstreamSummary  `json:"upstream,omitempty"`
+	Role            string            `json:"role"`
+	Provider        string            `json:"provider"`
+	Version         string            `json:"version"`
+	PluginID        string            `json:"plugin_id"`
+	BaseURL         string            `json:"base_url"`
+	SessionMode     string            `json:"session_mode"`
+	Session         string            `json:"session"`
+	DefaultProxy    string            `json:"default_proxy"`
+	ProxyURL        string            `json:"proxy_url"`
+	HostProxyURL    string            `json:"host_proxy_url"`
+	StatePath       string            `json:"state_path"`
+	StateDir        string            `json:"state_dir"`
+	ModelsDefault   string            `json:"models_default_proxy"`
+	TimeoutSeconds  int               `json:"timeout_seconds"`
+	Plan            string            `json:"plan"`
+	EndpointLayout  string            `json:"endpoint_layout"`
+	Endpoints       map[string]string `json:"endpoints"`
+	ModelsURL       string            `json:"models_url"`
+	UsageURL        string            `json:"usage_url"`
+	DeveloperRole   string            `json:"developer_role"`
+	ReasoningReplay string            `json:"reasoning_replay"`
+	RequestLog      bool              `json:"request_log"`
+	Migration       string            `json:"migration,omitempty"`
+	Debug           bool              `json:"debug"`
+	Keys            []KeyState        `json:"keys"`
+	Models          []ModelRow        `json:"models"`
+	Siblings        []SiblingRow      `json:"siblings"`
+	ConfigError     string            `json:"config_error,omitempty"`
+	StartedAt       time.Time         `json:"started_at"`
+	Extra           map[string]string `json:"extra_headers,omitempty"`
+	Upstream        *UpstreamSummary  `json:"upstream,omitempty"`
 }
 
 // SiblingRow describes one protocol face of the provider.
@@ -328,29 +329,30 @@ func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) Stat
 	}
 	_ = upstream
 	return StatePayload{
-		Role:           string(r.role.Name),
-		Provider:       r.role.Provider,
-		Version:        r.Version(),
-		PluginID:       r.PluginID(),
-		BaseURL:        settings.BaseURL,
-		SessionMode:    settings.SessionMode,
-		Session:        settings.Session,
-		DefaultProxy:   settings.DefaultProxy,
-		ProxyURL:       settings.ProxyURL,
-		HostProxyURL:   settings.HostProxyURL,
-		StatePath:      r.sharedPath,
-		StateDir:       settings.StateDir,
-		ModelsDefault:  settings.ModelConfig("__default__").Proxy,
-		TimeoutSeconds: settings.RequestTimeoutSeconds,
-		Plan:           settings.Plan,
-		EndpointLayout: string(settings.Layout()),
-		Endpoints:      endpoints,
-		ModelsURL:      settings.ModelsURL(),
-		UsageURL:       settings.UsageURL(),
-		DeveloperRole:  settings.DeveloperRole,
-		RequestLog:     settings.RequestLogEnabled(),
-		Migration:      r.Migration(),
-		Debug:          settings.Debug,
+		Role:            string(r.role.Name),
+		Provider:        r.role.Provider,
+		Version:         r.Version(),
+		PluginID:        r.PluginID(),
+		BaseURL:         settings.BaseURL,
+		SessionMode:     settings.SessionMode,
+		Session:         settings.Session,
+		DefaultProxy:    settings.DefaultProxy,
+		ProxyURL:        settings.ProxyURL,
+		HostProxyURL:    settings.HostProxyURL,
+		StatePath:       r.sharedPath,
+		StateDir:        settings.StateDir,
+		ModelsDefault:   settings.ModelConfig("__default__").Proxy,
+		TimeoutSeconds:  settings.RequestTimeoutSeconds,
+		Plan:            settings.Plan,
+		EndpointLayout:  string(settings.Layout()),
+		Endpoints:       endpoints,
+		ModelsURL:       settings.ModelsURL(),
+		UsageURL:        settings.UsageURL(),
+		DeveloperRole:   settings.DeveloperRole,
+		ReasoningReplay: settings.ReasoningReplayMode(),
+		RequestLog:      settings.RequestLogEnabled(),
+		Migration:       r.Migration(),
+		Debug:           settings.Debug,
 		Keys: func() []KeyState {
 			out := make([]KeyState, len(settings.Keys))
 			for i, k := range settings.Keys {

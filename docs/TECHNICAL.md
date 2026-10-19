@@ -70,6 +70,31 @@ OpenCode Go 的 37 个模型分布在 4 个完全不同的上游端点上：
 - **保留**：每面最多 2000 条 / 7 天，文件超过 4 MiB 自动压缩；可在设置里关闭。
 - **隐私**：不记录提示词、响应正文、Key 密文或原始会话 ID。
 
+### 思考模式 reasoning_content 补齐（v2.0.1）
+
+DeepSeek 思考模式要求把上一轮 assistant 消息携带的 `reasoning_content` 原样回传，包含同时带
+`tool_calls` 的消息。DSH 只保留最近一两条（本次 turn 的思维链），更早的历史会丢弃；当请求变长、
+且 OpenCode Go 命中严格校验的网关节点时，上游返回：
+
+```
+The `reasoning_content` in the thinking mode must be passed back to the API.
+```
+
+插件在发送前做两件事，均不改变模型能力与 DSH 的调用方式：
+
+1. **补齐字段**：`reasoning-replay=auto`（默认）在检测到思考请求（`reasoning_effort` /
+   `reasoning` / `thinking` / `enable_thinking`，或历史里已有一条非空 `reasoning_content`）时，
+   为所有缺少该字段的 assistant 消息写入中性占位文本 `[reasoning unavailable]`。已有内容原样
+   保留；空字符串会被替换（proto3 前端无法区分空串与缺省）。`always` 对所有 chat 请求生效，
+   `off` 完全透传。
+2. **单次重试**：同一份请求在部分节点上会偶发该 400（相同字节重放通常成功），插件对
+   “`must be passed back` + `reasoning_content`/`reasoning_text`” 的 400 自动重试一次，其他 400
+   立即返回。
+
+补齐用占位文本而不是回放旧思维链：把历史 CoT 原样送回会让长会话模型模仿旧的工具调用格式，
+反而造成工具调用丢失（见上游 issue 记录），而校验只要求字段存在。该改写只影响 chat 协议的
+请求体，messages/responses/gemini 三族不变；请求日志仍只记录元数据。
+
 ---
 
 ## 3. 环境要求与构建
@@ -87,7 +112,7 @@ export PATH=/opt/go/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 
 # 编译 4 个协议面 .so
-make build VERSION=2.0.0
+make build VERSION=2.0.1
 
 # 执行单元测试与代码检查
 make test
@@ -95,10 +120,10 @@ make vet
 ```
 
 编译产出位于 `dist/` 目录：
-- `dist/cpa-opencodego-v2.0.0.so`
-- `dist/cpa-opencodego-responses-v2.0.0.so`
-- `dist/cpa-opencodego-messages-v2.0.0.so`
-- `dist/cpa-opencodego-gemini-v2.0.0.so`
+- `dist/cpa-opencodego-v2.0.1.so`
+- `dist/cpa-opencodego-responses-v2.0.1.so`
+- `dist/cpa-opencodego-messages-v2.0.1.so`
+- `dist/cpa-opencodego-gemini-v2.0.1.so`
 
 ---
 
@@ -116,6 +141,7 @@ plugins:
       base-url: "https://opencode.ai/inference/go"
       endpoint-layout: "auto"
       developer-role: "rewrite"
+      reasoning-replay: "auto"
       request-log: true
       session-mode: "auto"
       session: "$CPA-SESSION-ID"
@@ -155,6 +181,7 @@ plugins:
 | `endpoint-layout` | enum | `auto` | `auto` 按 base-url 判断、`legacy` 旧单根、`family` 新分族 |
 | `base-urls` | map | `{}` | 逐族 API 根覆盖：`{chat, responses, messages, gemini}`，设置的族不再追加前缀 |
 | `developer-role` | enum | `rewrite` | OpenAI 形状请求的 `developer` → `system` 兼容改写；`keep` 关闭 |
+| `reasoning-replay` | enum | `auto` | 思考模式历史 `reasoning_content` 补齐：`auto` 只在思考请求上补齐，`always` 所有 chat 请求补齐，`off` 不改写 |
 | `request-log` | bool | `true` | 是否写逐条请求日志（每面 2000 条 / 7 天） |
 | `keys` | array | `[]` | 多账号 Key 列表，包含 `name`、`key`、`priority`、`enabled` |
 | `models` | map | `{}` | 逐模型个性化配置（启用状态、代理策略、别名、协议面覆盖） |
@@ -205,8 +232,8 @@ plugins:
 systemctl stop cliproxyapi
 
 # 编译并执行回放
-make VERSION=2.0.0 replay
-./dist/replay-tracker-v2.0.0 \
+make VERSION=2.0.1 replay
+./dist/replay-tracker-v2.0.1 \
   -tracker /root/cliproxyapi/data/token-usage-tracker.db \
   -stats-dir /root/cliproxyapi/data/cpa-opencodego -apply
 

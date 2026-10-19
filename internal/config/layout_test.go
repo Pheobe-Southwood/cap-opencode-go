@@ -144,6 +144,18 @@ func TestNewProtocolDefaults(t *testing.T) {
 	if keep.DeveloperRoleRewrite() {
 		t.Error("developer-role: keep must not rewrite")
 	}
+	if settings.ReasoningReplayMode() != ReasoningReplayAuto {
+		t.Errorf("reasoning-replay default = %q, want auto", settings.ReasoningReplayMode())
+	}
+	if got := parseSettings(t, "reasoning-replay: always"); got.ReasoningReplayMode() != ReasoningReplayAlways {
+		t.Errorf("reasoning-replay: always parsed as %q", got.ReasoningReplayMode())
+	}
+	if got := parseSettings(t, "reasoning-replay: off"); got.ReasoningReplayMode() != ReasoningReplayOff {
+		t.Errorf("reasoning-replay: off parsed as %q", got.ReasoningReplayMode())
+	}
+	if got := parseSettings(t, "reasoning-replay: nonsense"); got.ReasoningReplayMode() != ReasoningReplayAuto {
+		t.Errorf("a typo must fall back to auto, got %q", got.ReasoningReplayMode())
+	}
 	// Empty base-url keeps the new default root rather than an empty endpoint.
 	empty := Settings{}
 	if got := empty.EndpointURL(roles.ByName("chat"), "m", false); !strings.HasPrefix(got, roles.DefaultBaseURL) {

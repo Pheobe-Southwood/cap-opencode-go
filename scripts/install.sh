@@ -7,7 +7,7 @@
 # are owned by the host configuration.
 set -euo pipefail
 
-VERSION="${1:-2.0.0}"
+VERSION="${1:-2.0.1}"
 ROOT="${CPA_ROOT:-/root/cliproxyapi}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
@@ -69,6 +69,7 @@ plugins:
       base-url: "https://opencode.ai/inference/go"
       endpoint-layout: "auto"
       developer-role: "rewrite"
+      reasoning-replay: "auto"
       request-log: true
       keys:
         - name: "main"

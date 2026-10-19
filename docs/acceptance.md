@@ -1,43 +1,33 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v2.0.0 热重载补充）
+# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v2.0.1 热重载补充）
 
-> v1.7.1（含 1.7.0 的统计口径修正与历史回放；1.7.1 只修两处页脚注/空状态文案）
-> 在生产实例 127.0.0.1:8317 重启到 1.7.1：四个面均加载 `-v1.7.1.so`，`plan=go`，PID `3651300`；
-> 1.7.0 阶段回放 5,628 条历史记录（366,045,455 tokens，$27.835431 刊例价，4,531 条 TTFT）；
-> 1.7.1 公开验收 **32 passed, 0 failed**（管理密钥不可用，6 项管理检查跳过；messages 无启用模型，1 项跳过）。
-> `go test ./...`、`go vet ./...`、`go test -race ./internal/...` 通过。
-> 本轮没有重跑隔离实例的 40 项，因此不以旧隔离结果代替 1.7.1；真实上游请求的 chat /
-> responses / gemini 路径由生产公开验收覆盖。
-> 2026-10-17 03:16 UTC 起又以 `config.yaml` 原地增注释热重载到 1.7.2 / 1.7.3，**PID `3651300` 不变、没有重启**；
-> 1.7.2 新增生成 TPS 指标，1.7.3 修正覆盖率；API `avg_gen_tps/gen_tps_samples`、页面「生成 TPS」列
-> 和一次真实 Beam 流式请求已验证。下面的 32 项完整验收仍是 1.7.1 的结果，未把 1.7.3 的热重载检查
-> 冒充成完整验收。
-> 2026-10-17 03:34 UTC 再热重载到 1.7.6，**PID `3651300` 仍不变、没有重启**；1.7.6 在统计页新增
-> 价目核对日期与「数据该更新了」周期提醒，四个面均映射到 `-v1.7.6.so`。API、页面常驻状态和
-> 到期横幅（Chromium 拦截 `/api/stats` 模拟第 30 天）已验证；统计文件 schema 没有变化。
-> 2026-10-17 03:46 UTC 再热重载到 1.7.8，**PID `3651300` 仍不变、没有重启**；1.7.8 在同一个提醒里
-> 加入上游模型列表变更：四个面均映射到 `-v1.7.8.so`，API 返回 `model_list_*`，模型列表新增/移除
-> 由 Chromium 拦截模拟验证。完整公开验收仍以 1.7.1 的 32 项为准。
-> **2026-10-17 06:03 UTC 热重载到 1.8.0**（配额管理 → Plugin + 账号投影），**PID `3651300`、启动时间
-> `03:07:04 UTC` 均未变**，inode 不变；四个面均映射到 `-v1.8.0.so`，生产公开验收 **36 passed, 0 failed**
-> （新增 2 项账号检查；管理密钥仍不可用，管理 API 检查在隔离实例上以同一份二进制验证）。
-> **06:41 UTC 热重载到 1.8.1** 修复 1.8.0 的仪表盘脚本语法错误（页面能加载但 Tab/数据全失效），
-> **PID `3651300` 仍不变**；线上页面脚本 `node --check` 通过，生产公开验收 **37 passed, 0 failed**
-> （新增 `dashboard script parses`）。
-> **2026-10-17 07:23 / 07:26 UTC 热重载到 1.9.0 → 1.9.1**（仪表盘 Key 改名），**PID `3651300`、
-> 启动时间 `03:07:04 UTC`、config inode 均未变**；四个面 `active_version=1.9.1 retired_version=1.9.0`。
-> 生产公开验收 **39 passed, 0 failed**（messages 无启用模型跳过 1 项；新增 2 项页面改名标记）。
-> 宿主 `static/management.html` 哈希未变，未关闭面板自动更新，未改宿主配置。
-> 下面是 v1.7.8 / v1.7.6 的热重载记录，之后是 v1.7.1 记录与更早历史（v1.6 统计面板、v1.5.0 品牌整合、v1.4.1 仪表盘改造等）。
-> **2026-10-17 14:03 UTC 热重载到 1.11.0**（账号投影瘦身：每 Key 4 个认证文件 → 1 个），
-> `MainPID=4128447`、`ActiveEnterTimestamp=10:02:25 UTC`、config inode `10621868` 均不变；
-> 四个面 `active_version=1.11.0`，auth 目录收敛为 1 个 chat 面文件，生产公开验收
-> **39 passed, 0 failed**（messages 无启用模型跳过 1 项）；隔离实例 **50 passed, 0 failed** 覆盖四族。
-> 详见下面第一节。
-> **2026-10-17 15:06 / 15:14 UTC 热重载到 1.12.0**（移除账号投影与宿主配额集成），
-> `MainPID=4128447`、`ActiveEnterTimestamp=10:02:25 UTC`、config inode `10621868` 均不变；
-> 四个面 `active_version=1.12.0`（gemini 首次安装被 `head -6` 截断，15:14 补装后重载），
-> 生产公开验收 **37 passed, 0 failed**（messages 无启用模型跳过 1 项；删除了 5 项账号/配额检查），
-> 隔离实例（messages 启用、auth 目录为空）**45 passed, 0 failed**。详见下面第一节。
+---
+
+## v2.0.1 修复思考模式 reasoning_content 400（生产热重载，未重启）
+
+> **2026-10-19 06:27 UTC 生产热重载到 2.0.1**：`PID=179655`（自 Oct 17 15:39:31 持续运行）、
+> config inode `10621868` 均未变，**没有重启 CPA 进程**。四个面
+> `active_version=2.0.1 retired_version=2.0.0`。
+> 生产公开验收 **49 passed, 0 failed**（messages 没有启用模型，1 项 SKIP；新增 1 项 reasoning 回放设置检查）。
+
+### 1. 故障根因与修复
+- **报错现象**：`{"message":"invalid_request_error: Upstream request failed: [invalid_request_error] The \`reasoning_content\` in the thinking mode must be passed back to the API. (request_id: ...)"}`
+- **根本原因**：DeepSeek 思考模式（如 `deepseek-v4.1-flash`）的 OpenCode Go 网关路由在多轮或工具调用长会话中，要求历史 assistant 消息必须回传 `reasoning_content`。DSH 等客户端在长会话或紧凑会话中仅保留当轮思维链，早先 assistant 消息丢失该字段，命中严格校验的网关节点时报错 400。
+- **解决机制**：
+  1. `reasoning-replay: "auto"`（默认）：在检测到思考模式请求（带 `reasoning_effort`、`thinking`、`reasoning` 或历史已有 reasoning 字段）时，自动为缺失该字段的 assistant 消息填入中性占位文本 `[reasoning unavailable]`。已有思维链内容 100% 原样保留，且绝不盲目回放旧思维链（避免引发工具调用标记泄漏导致 `tool_calls == 0`）。
+  2. 网关偶发重试：部分网关节点校验间歇性抖动，客户端发送相同字节在另一个节点通常直接 200；插件对包含 `must be passed back` + `reasoning_content`/`reasoning_text` 的 400 自动进行一次原地重试。
+
+### 2. 隔离与生产双重验证
+- **隔离实例（8399）Mock 桩与真实上游**：
+  - Mock 测试：请求传入包含工具调用但缺少 `reasoning_content` 的 assistant 消息，抓取上游实测报文，验证已被正确注入 `reasoning_content: "[reasoning unavailable]"`，且 `developer` 角色被正确转换为 `system`。
+  - Mock 重试测试：首个请求返回该特定 400，模拟上游两阶段应答，验证 executor 成功捕获并原地重试成功（HTTP 200，upstream posts: 2）。
+  - 真实 OpenCode Go 上游测试：发往真实端点返回 HTTP 200，有效输出 24 tokens。
+- **生产热重载**：
+  - 原地写入 `config.yaml`（inode `10621868` 保持），fsnotify 触发重载：
+    `main.log`：`plugin hot reloaded plugin_id=cpa-opencodego active_version=2.0.1 retired_version=2.0.0`。
+  - 真实请求验证：生产 8317 端口发送思考模式（`reasoning_effort: "max"`）且带工具调用历史、无 `reasoning_content` 的请求：
+    - 非流式：HTTP 200（`prompt_tokens: 89, completion_tokens: 31, total_tokens: 120`，端到端 TPS 5.12）。
+    - 流式：HTTP 200（TTFT 5172.6 ms，端到端 TPS 0.39）。
+  - 公开验收：`scripts/acceptance.sh` **49 passed, 0 failed**。
 
 ---
 
