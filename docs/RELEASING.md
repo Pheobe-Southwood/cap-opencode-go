@@ -61,13 +61,15 @@ ls dist/release
 
 | 字段 | 值 |
 | --- | --- |
-| `id` | `cpa-opencodego` |
-| `name` | `OpenCode Go Provider` |
+| `id` | `cpa-opencodego`（主面）、`cpa-opencodego-responses`、`cpa-opencodego-messages`、`cpa-opencodego-gemini` |
+| `name` | `OpenCode Go` / `OpenCode Go · Responses` / `· Messages` / `· Gemini` |
 | `author` | `Pheobe-Southwood` |
 | `repository` | `https://github.com/Pheobe-Southwood/cpa-opencodego` |
 | `logo` | `https://raw.githubusercontent.com/Pheobe-Southwood/cpa-opencodego/main/assets/logo.png` |
 | `license` | `MIT` |
-| `tags` | `Provider`, `OpenCode`, `Management`, `Usage`, `Quota`, `Dashboard` |
+| `tags` | 主面：`Provider`, `OpenCode`, `Management`, `Usage`, `Quota`, `Dashboard`；从属面追加对应协议标签 |
+
+四个协议面各占一个 registry 条目，因为 CLIProxyAPI 的插件 id 来自库文件名，且商店安装器一次只安装一个动态库。四个条目指向同一仓库和同一 release；安装全部四个才能获得完整 37 模型目录。
 
 发布新版本后，向商店仓库提交只修改 `registry.json` 的 PR，附上 release 链接、tag 与附件证据即可。商店读取最新 release，不需要为每个版本改 registry。
 
