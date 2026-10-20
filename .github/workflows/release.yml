@@ -97,14 +97,13 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          install: mingw-w64-x86_64-gcc zip
+          install: mingw-w64-x86_64-gcc
 
       - name: Add MinGW to PATH
         if: matrix.mingw
         shell: bash
         run: |
-          echo "/c/msys64/mingw64/bin" >> "$GITHUB_PATH"
-          echo "/c/msys64/usr/bin" >> "$GITHUB_PATH"
+          echo "C:/msys64/mingw64/bin" >> "$GITHUB_PATH"
 
       - name: Resolve version
         id: version
