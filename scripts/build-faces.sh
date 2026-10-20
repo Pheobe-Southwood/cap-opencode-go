@@ -54,9 +54,19 @@ mkdir -p "$outdir"
 for face in "${faces[@]}"; do
   role="$(role_for "$face")"
   target="$outdir/${face}-v${version}.${ext}"
+  # The Go linker writes the output basename into the Windows import library
+  # (.def) as "LIBRARY <name>", and GNU ld rejects unquoted names containing
+  # hyphens. Link to a neutral name, then rename to the versioned asset.
+  link_target="$target"
+  if [[ "$goos" == "windows" ]]; then
+    link_target="$outdir/plugin.${ext}"
+  fi
   echo "building ${role} -> ${target}"
   CGO_ENABLED=1 go build -buildmode=c-shared -trimpath \
     -ldflags "-s -w -X main.role=${role} -X main.version=${version}" \
-    -o "$target" ./cmd/plugin
-  rm -f "${outdir}/${face}-v${version}.h"
+    -o "$link_target" ./cmd/plugin
+  rm -f "${link_target%.*}.h"
+  if [[ "$link_target" != "$target" ]]; then
+    mv -f "$link_target" "$target"
+  fi
 done
