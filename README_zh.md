@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" width="88" alt="OpenCode Go">
+
 # OpenCode Go Provider 插件
 
 **将 OpenCode Go 全量 37 个模型无缝接入 CLIProxyAPI 的原生插件**
@@ -10,6 +12,8 @@
   <img src="https://img.shields.io/badge/CPA-v8.0.27+-blue?style=flat-square" alt="CPA Version">
   <img src="https://img.shields.io/badge/OpenCode_Go-37_Models-success?style=flat-square" alt="Models">
   <img src="https://img.shields.io/badge/Protocol-4_Families-orange?style=flat-square" alt="Protocols">
+  <img src="https://img.shields.io/github/v/release/Pheobe-Southwood/cpa-opencodego?style=flat-square" alt="Release">
+  <img src="https://img.shields.io/npm/v/cpa-opencodego?style=flat-square" alt="npm">
   <img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="License">
 </p>
 
@@ -93,7 +97,17 @@ OpenCode Go 聚合了大量顶级大语言模型（DeepSeek V4.1、Claude Haiku 
 
 ### 第一步：获取与部署插件
 
-将编译好的 4 个 `.so` 文件复制到 CPA 宿主的插件目录（通常为 `plugins/linux/amd64/`）：
+**方式 A（推荐）：npm 一键安装**
+
+```bash
+npx cpa-opencodego install --dir /path/to/CLIProxyAPI
+```
+
+安装器会自动识别平台与架构、下载对应 GitHub Release、校验 `checksums.txt`，并把 4 个插件库写入 `plugins/<goos>/<goarch>/`。
+
+**方式 B：手动复制**
+
+从 [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases) 下载 `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip`，解压后把 4 个库复制到 CPA 插件目录（通常为 `plugins/linux/amd64/`）：
 - `cpa-opencodego-v2.0.2.so`
 - `cpa-opencodego-responses-v2.0.2.so`
 - `cpa-opencodego-messages-v2.0.2.so`
@@ -146,4 +160,4 @@ plugins:
 
 ## 开源协议
 
-本项目采用 [MIT 许可证](LICENSE.txt)。
+本项目采用 [MIT 许可证](LICENSE)。

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "cpa-opencodego",
+      "name": "OpenCode Go Provider",
+      "description": "Native OpenCode Go provider for CLIProxyAPI: all four upstream protocol faces (chat-completions, responses, messages, Gemini), one shared multi-key pool, per-model proxy routing, live quota and usage dashboard.",
+      "author": "Pheobe-Southwood",
+      "version": "2.0.2",
+      "repository": "https://github.com/Pheobe-Southwood/cpa-opencodego",
+      "logo": "https://raw.githubusercontent.com/Pheobe-Southwood/cpa-opencodego/main/assets/logo.png",
+      "homepage": "https://github.com/Pheobe-Southwood/cpa-opencodego",
+      "license": "MIT",
+      "tags": [
+        "Provider",
+        "OpenCode",
+        "Management",
+        "Usage",
+        "Quota",
+        "Dashboard"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" width="88" alt="OpenCode Go">
+
 # OpenCode Go Provider プラグイン
 
 **OpenCode Go の全 37 モデルを CLIProxyAPI に完全統合するネイティブプラグイン**
@@ -10,6 +12,8 @@
   <img src="https://img.shields.io/badge/CPA-v8.0.27+-blue?style=flat-square" alt="CPA Version">
   <img src="https://img.shields.io/badge/OpenCode_Go-37_Models-success?style=flat-square" alt="Models">
   <img src="https://img.shields.io/badge/Protocol-4_Families-orange?style=flat-square" alt="Protocols">
+  <img src="https://img.shields.io/github/v/release/Pheobe-Southwood/cpa-opencodego?style=flat-square" alt="Release">
+  <img src="https://img.shields.io/npm/v/cpa-opencodego?style=flat-square" alt="npm">
   <img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="License">
 </p>
 
@@ -146,4 +150,4 @@ plugins:
 
 ## ライセンス
 
-本プロジェクトは [MIT License](LICENSE.txt) のもとで公開されています。
+本プロジェクトは [MIT License](LICENSE) のもとで公開されています。

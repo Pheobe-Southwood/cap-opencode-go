@@ -1,0 +1,39 @@
+{
+  "name": "cpa-opencodego",
+  "version": "2.0.2",
+  "description": "Install the OpenCode Go provider plugin for CLIProxyAPI: four protocol faces, 37 models, one shared key pool.",
+  "bin": {
+    "cpa-opencodego": "bin/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pheobe-Southwood/cpa-opencodego.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/Pheobe-Southwood/cpa-opencodego",
+  "bugs": {
+    "url": "https://github.com/Pheobe-Southwood/cpa-opencodego/issues"
+  },
+  "keywords": [
+    "cliproxyapi",
+    "cpa",
+    "cpa-plugin",
+    "opencode",
+    "opencode-go",
+    "llm",
+    "proxy",
+    "plugin"
+  ],
+  "license": "MIT"
+}

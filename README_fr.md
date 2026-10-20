@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" width="88" alt="OpenCode Go">
+
 # Plugin Provider OpenCode Go
 
 **Intégrez en toute transparence les 37 modèles OpenCode Go à CLIProxyAPI via un plugin natif, propre et sans résidus**
@@ -10,6 +12,8 @@
   <img src="https://img.shields.io/badge/CPA-v8.0.27+-blue?style=flat-square" alt="CPA Version">
   <img src="https://img.shields.io/badge/OpenCode_Go-37_Modèles-success?style=flat-square" alt="Modèles">
   <img src="https://img.shields.io/badge/Protocole-4_Familles-orange?style=flat-square" alt="Protocoles">
+  <img src="https://img.shields.io/github/v/release/Pheobe-Southwood/cpa-opencodego?style=flat-square" alt="Release">
+  <img src="https://img.shields.io/npm/v/cpa-opencodego?style=flat-square" alt="npm">
   <img src="https://img.shields.io/badge/Licence-MIT-lightgrey?style=flat-square" alt="Licence">
 </p>
 
@@ -146,4 +150,4 @@ Pour examiner les mécanismes C ABI, les détails d'interception de flux SSE, la
 
 ## Licence
 
-Ce projet est distribué sous la [Licence MIT](LICENSE.txt).
+Ce projet est distribué sous la [Licence MIT](LICENSE).

@@ -17,7 +17,7 @@ SUFFIX_gemini    := cpa-opencodego-gemini
 
 TARGETS := $(foreach role,$(ROLES),$(DIST)/$(SUFFIX_$(role))-v$(VERSION).so)
 
-.PHONY: all build test vet fmt clean list install uninstall replay
+.PHONY: all build test vet fmt clean list install uninstall replay package release-linux-amd64 npm-test npm-pack
 
 all: build
 
@@ -61,6 +61,23 @@ install: build
 
 uninstall:
 	@bash scripts/uninstall.sh
+
+# Package the locally built libraries for the current platform following the
+# CLIProxyAPI plugin-store layout: one zip per face, one bundle, checksums.
+package: build
+	@goos=$$(go env GOOS); goarch=$$(go env GOARCH); \
+	bash scripts/package-release.sh "$(VERSION)" "$$goos" "$$goarch" "$(DIST)" "$(DIST)/release"
+
+# Build and package the linux/amd64 release used by CI and npm.
+release-linux-amd64:
+	@bash scripts/build-faces.sh "$(VERSION)" "$(DIST)/release-libs/linux-amd64"
+	@bash scripts/package-release.sh "$(VERSION)" linux amd64 "$(DIST)/release-libs/linux-amd64" "$(DIST)/release"
+
+npm-test:
+	@cd npm && npm test
+
+npm-pack:
+	@cd npm && npm pack
 
 # Build the one-time importer separately from the plugin .so files. The plugin
 # itself does not link bbolt; only this operator tool does.

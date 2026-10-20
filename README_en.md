@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" width="88" alt="OpenCode Go">
+
 # OpenCode Go Provider Plugin
 
 **Seamlessly integrate all 37 OpenCode Go models into CLIProxyAPI as a native, zero-residue plugin**
@@ -10,6 +12,8 @@
   <img src="https://img.shields.io/badge/CPA-v8.0.27+-blue?style=flat-square" alt="CPA Version">
   <img src="https://img.shields.io/badge/OpenCode_Go-37_Models-success?style=flat-square" alt="Models">
   <img src="https://img.shields.io/badge/Protocol-4_Families-orange?style=flat-square" alt="Protocols">
+  <img src="https://img.shields.io/github/v/release/Pheobe-Southwood/cpa-opencodego?style=flat-square" alt="Release">
+  <img src="https://img.shields.io/npm/v/cpa-opencodego?style=flat-square" alt="npm">
   <img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="License">
 </p>
 
@@ -93,7 +97,17 @@ This plugin delivers a unified, turnkey integration for CLIProxyAPI (CPA):
 
 ### Step 1: Deploy Plugin Libraries
 
-Copy the 4 compiled `.so` files to your CPA plugins folder (typically `plugins/linux/amd64/`):
+**Option A (recommended): install with npm**
+
+```bash
+npx cpa-opencodego install --dir /path/to/CLIProxyAPI
+```
+
+The installer detects your platform and architecture, downloads the matching GitHub Release, verifies its `checksums.txt`, and writes all four libraries to `plugins/<goos>/<goarch>/`.
+
+**Option B: copy manually**
+
+Download `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip` from [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases), unzip it, and copy the four libraries to your CPA plugins folder (typically `plugins/linux/amd64/`):
 - `cpa-opencodego-v2.0.2.so`
 - `cpa-opencodego-responses-v2.0.2.so`
 - `cpa-opencodego-messages-v2.0.2.so`
@@ -141,9 +155,10 @@ For deep-dive technical architecture, C ABI runtime protocols, SSE first-frame t
 - 📐 [Design Specifications (docs/design.md)](docs/design.md)
 - 🛡️ [Zero-Residue Rollback Guide (docs/rollback.md)](docs/rollback.md)
 - 🧪 [Acceptance Test Suite & Reports (docs/acceptance.md)](docs/acceptance.md)
+- 🚀 [Release and plugin store guide (docs/RELEASING.md)](docs/RELEASING.md)
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE.txt).
+This project is licensed under the [MIT License](LICENSE).

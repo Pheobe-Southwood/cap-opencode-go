@@ -15,13 +15,14 @@ import (
 	"strings"
 )
 
-// embeddedMarkup is the OpenCode mark, embedded verbatim from
-// https://opencode.ai/favicon.svg: the inner SVG only, with the redundant
-// wrapper and the unused prefers-color-scheme <style> block dropped.
+// embeddedMarkup is the OpenCode Go mark: the official OpenCode square icon
+// from https://opencode.ai/favicon.svg, with the redundant wrapper and the
+// unused prefers-color-scheme <style> block dropped. The same file is published
+// as assets/logo.svg for the repository, README and plugin store listing.
 //
-// OpenCode is a project of SST (https://github.com/sst/opencode). The mark is
-// used here descriptively, to identify the upstream service this plugin talks
-// to; it is not covered by this repository's license.
+// OpenCode is a project of Anomaly (https://github.com/anomalyco/opencode,
+// MIT). The mark is used here descriptively, to identify the upstream service
+// this plugin talks to; it is not covered by this repository's license.
 //
 //go:embed opencode.svg
 var embeddedMarkup string
@@ -50,5 +51,5 @@ const (
 	// and the dashboard links it from the about panel.
 	Repository = "https://github.com/Pheobe-Southwood/cpa-opencodego"
 	// Attribution credits the upstream project whose mark is embedded above.
-	Attribution = "OpenCode 图标 © SST (https://opencode.ai, MIT)"
+	Attribution = "OpenCode icon © 2025 opencode (https://opencode.ai, MIT)"
 )

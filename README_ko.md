@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" width="88" alt="OpenCode Go">
+
 # OpenCode Go Provider 플러그인
 
 **OpenCode Go의 37개 전체 모델을 CLIProxyAPI에 완벽하게 연동하는 네이티브 플러그인**
@@ -10,6 +12,8 @@
   <img src="https://img.shields.io/badge/CPA-v8.0.27+-blue?style=flat-square" alt="CPA Version">
   <img src="https://img.shields.io/badge/OpenCode_Go-37_Models-success?style=flat-square" alt="Models">
   <img src="https://img.shields.io/badge/Protocol-4_Families-orange?style=flat-square" alt="Protocols">
+  <img src="https://img.shields.io/github/v/release/Pheobe-Southwood/cpa-opencodego?style=flat-square" alt="Release">
+  <img src="https://img.shields.io/npm/v/cpa-opencodego?style=flat-square" alt="npm">
   <img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="License">
 </p>
 
@@ -146,4 +150,4 @@ plugins:
 
 ## 라이선스
 
-이 프로젝트는 [MIT 라이선스](LICENSE.txt)에 따라 배포됩니다.
+이 프로젝트는 [MIT 라이선스](LICENSE)에 따라 배포됩니다.
