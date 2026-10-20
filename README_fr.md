@@ -97,7 +97,15 @@ Ce plugin apporte une intégration complète et immédiate à CLIProxyAPI (CPA) 
 
 ### Étape 1 : Déploiement des Fichiers du Plugin
 
-Copiez les 4 fichiers `.so` compilés dans le dossier des plugins de CPA (généralement `plugins/linux/amd64/`) :
+**Option A (recommandé) : installation via npm**
+
+```bash
+npx cpa-opencodego install --dir /path/to/CLIProxyAPI
+```
+
+**Option B : copie manuelle**
+
+Téléchargez `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip` depuis les [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases), puis copiez les quatre fichiers dans le dossier des plugins de CPA (généralement `plugins/linux/amd64/`) :
 - `cpa-opencodego-v2.0.2.so`
 - `cpa-opencodego-responses-v2.0.2.so`
 - `cpa-opencodego-messages-v2.0.2.so`

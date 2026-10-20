@@ -97,7 +97,15 @@ OpenCode Go には最新鋭の LLM（DeepSeek V4.1、Claude Haiku 5.5、Gemini 4
 
 ### ステップ 1：プラグインライブラリの配置
 
-ビルド済みの 4 つの `.so` ファイルを CPA のプラグインフォルダ（通常 `plugins/linux/amd64/`）に配置します：
+**方法 A（推奨）：npm でインストール**
+
+```bash
+npx cpa-opencodego install --dir /path/to/CLIProxyAPI
+```
+
+**方法 B：手動コピー**
+
+[GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases) から `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip` をダウンロードし、4 つのライブラリを CPA のプラグインフォルダ（通常 `plugins/linux/amd64/`）に配置します：
 - `cpa-opencodego-v2.0.2.so`
 - `cpa-opencodego-responses-v2.0.2.so`
 - `cpa-opencodego-messages-v2.0.2.so`

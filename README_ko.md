@@ -97,7 +97,15 @@ OpenCode Go는 최신 고성능 AI 모델 37종(DeepSeek V4.1, Claude Haiku 5.5,
 
 ### 1단계: 플러그인 라이브러리 배치
 
-빌드된 4개의 `.so` 파일을 CPA 플러그인 디렉터리(일반적으로 `plugins/linux/amd64/`)에 복사합니다:
+**방법 A(권장): npm으로 설치**
+
+```bash
+npx cpa-opencodego install --dir /path/to/CLIProxyAPI
+```
+
+**방법 B: 수동 복사**
+
+[GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases)에서 `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip`을 내려받아 4개 라이브러리를 CPA 플러그인 디렉터리(일반적으로 `plugins/linux/amd64/`)에 복사합니다:
 - `cpa-opencodego-v2.0.2.so`
 - `cpa-opencodego-responses-v2.0.2.so`
 - `cpa-opencodego-messages-v2.0.2.so`
