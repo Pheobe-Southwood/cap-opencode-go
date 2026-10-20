@@ -18,7 +18,11 @@ fi
 version="${1#v}"
 outdir="$2"
 shift 2
-requested=("$@")
+requested=()
+while [[ $# -gt 0 ]]; do
+  requested+=("$1")
+  shift
+done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
@@ -31,8 +35,8 @@ case "$goos" in
 esac
 
 all_faces=(cpa-opencodego cpa-opencodego-responses cpa-opencodego-messages cpa-opencodego-gemini)
-faces=("${requested[@]}")
-if [[ ${#faces[@]} -eq 0 ]]; then
+faces=("${requested[@]:-}")
+if [[ -z "${faces[*]:-}" ]]; then
   faces=("${all_faces[@]}")
 fi
 

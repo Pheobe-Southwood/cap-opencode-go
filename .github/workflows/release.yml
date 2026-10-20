@@ -71,9 +71,10 @@ jobs:
             apt: ""
           - goos: windows
             goarch: amd64
-            runner: ubuntu-24.04
-            cc: x86_64-w64-mingw32-gcc
-            apt: gcc-mingw-w64-x86-64
+            runner: windows-2025
+            cc: gcc
+            apt: ""
+            mingw: true
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -89,6 +90,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Setup MSYS2 MinGW
+        if: matrix.mingw
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc zip
+
+      - name: Add MinGW to PATH
+        if: matrix.mingw
+        shell: bash
+        run: |
+          echo "/c/msys64/mingw64/bin" >> "$GITHUB_PATH"
+          echo "/c/msys64/usr/bin" >> "$GITHUB_PATH"
 
       - name: Resolve version
         id: version
@@ -177,7 +193,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sort -k2 dist/checksums-*.txt > dist/checksums.txt
+          cat dist/checksums-*.txt | tr -d '\r' | sort -k2 > dist/checksums.txt
           cat dist/checksums.txt
           test -s dist/checksums.txt
 
