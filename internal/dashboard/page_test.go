@@ -509,3 +509,23 @@ func inlineScript(document string) (string, bool) {
 	}
 	return document[start : start+end], true
 }
+
+// The account page must explain that CPA's AuthManager owns scheduling and that
+// the plugin only projects the keys into auth files.
+func TestPageDocumentsCPAScheduling(t *testing.T) {
+	document := page(t)
+	for _, want := range []string{
+		"CPA AuthManager",
+		"CPA 认证文件",
+		"managed_by: cpa-opencodego",
+		"同步重命名对应的 CPA 认证文件",
+		"插件自身不实现 Key 轮询",
+	} {
+		if !strings.Contains(document, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	if strings.Contains(document, "插件不再向 CPA 投影认证文件") {
+		t.Error("the page still claims that the auth projection was removed")
+	}
+}

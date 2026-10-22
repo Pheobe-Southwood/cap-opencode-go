@@ -1,4 +1,70 @@
-# 验收记录（CLIProxyAPI v8.0.27 / 插件 v1.7.1 基线，v1.7.2–v2.0.2 热重载补充）
+# 验收记录（CLIProxyAPI v8.0.27 / v8.0.36 / 插件 v1.7.1 基线，v1.7.2–v2.0.3 热重载与重启补充）
+
+---
+
+## v2.0.3 恢复 CPA 原生 Key 调度（生产重启 + 隔离 429→200 故障转移）
+
+> **2026-10-22 08:39 UTC 生产部署到 2.0.3**：hk-vps `cli-proxy-api`（v8.0.36，`network_mode: host`）
+> 因 `.so` 替换需要重启容器，重启后四个协议面均为 `2.0.3`。所有验证只读或使用少量真实对话请求，
+> 未重新启用额度已耗尽的 hannu666。
+
+### 1. 事故与修复设计
+
+- 事故：2026-10-21 19:57 UTC 起 hannu666 月额度 100% 被上游限流，2026-10-22 04:47 UTC 前
+  2,580 次 200 / 24 次 429，最后成功 19:57:15；04:47:55 操作者才在配置里禁用 hannu666。
+- 根因：v2.0.2 的 `model_router` 返回 `TargetKind: "self"`，CPA `AuthManager` 不参与选择；
+  插件在多 Key 时只取第一把 Key，429 直接透传给客户端，既没有优先级也没有故障转移。
+- 修复：恢复 v1.8 的 `TargetKind: "provider"` + 每 Key 4 个认证文件投影；插件不再选择/轮询/
+  冷却 Key，宿主 `AuthManager` 按 `priority` + `routing.strategy` 调度，429 由宿主重试到下一个
+  认证文件。插件保留模型映射、协议执行、仪表盘额度与请求日志。**不恢复** `quota_provider`。
+
+### 2. 生产验证
+
+| 检查 | 结果 |
+|---|---|
+| 插件版本 | `/v0/resource/plugins/cpa-opencodego/api/state` → `version=2.0.3`，四个面同版本 |
+| 认证文件 | `/opt/cliproxyapi/auth/opencode-go-*.json` → **8 个**（2 Key × 4 协议面），`0600` |
+| 文件字段 | `type`、`name`、`key_name`、`role`、`api_key`、`priority`、`disabled`、`note`、`managed_by: cpa-opencodego` |
+| 启停投影 | hannu666 四个文件 `disabled: true`；goldenrice686 四个文件 `disabled: false` |
+| 状态接口 | `accounts.enabled=true`、`synced=true`、`auth_dir=/root/.cli-proxy-api`、`total=8`、`files` 两个 Key |
+| 宿主选择 | `main.log`：`session-affinity ... auth=opencode-go-goldenrice686-163.com.json` |
+| 真实请求 | `POST /v1/chat/completions`，`model=DeepSeek-V4.1-Flash` → **200**；插件请求日志
+  `key=goldenrice686@163.com, status=200` |
+| 仪表盘 | 资源页包含「CPA AuthManager」「CPA 认证文件」「managed_by: cpa-opencodego」「插件自身不实现 Key 轮询」 |
+| 其它 provider | `antigravity-*.json` / `codex-*.json` 未被修改或删除 |
+
+> 说明：hannu666 的月额度到 2026-11-04 才重置，且生产管理密钥只有 bcrypt 哈希、明文不可得，
+> 因此没有在**生产配置**里临时重新启用它来触发真实 429；生产侧验证的是投影、宿主加载和正常调度。
+> 真实 429→200 的跨 Key 故障转移由下面的隔离宿主测试覆盖。
+
+### 3. 隔离宿主 429→200 故障转移
+
+`scripts/failover-smoke.sh` 使用 CPA v8.0.27 二进制、临时 auth 目录和假上游：
+
+- 两个 Key A/B，A `priority=10`、B `priority=1`，插件投影 8 个认证文件；
+- A 返回 429 `GoUsageLimitError`，B 返回 200；
+- 一个客户端请求最终 **200**，插件请求日志严格为 `A/429` → `B/200` 两行；
+- 结果：`PASS: CPA failed over A(429) -> B(200); plugin projected 8 auth files (2 keys x 4 faces)`。
+
+```bash
+CPA_BIN=/root/cliproxyapi/cli-proxy-api \
+PLUGIN_SO=dist/cpa-opencodego-v2.0.3.so \
+bash scripts/failover-smoke.sh
+```
+
+### 4. 单元/静态检查
+
+- `go test -race ./...`：全部通过（新增 `internal/accounts`、投影、路由、宿主凭据、多 Key 503、
+  AuthID→Key 映射、仪表盘文案等测试）。
+- `go vet ./...`：无输出。
+- `make build VERSION=2.0.3`：四个 `c-shared` 库构建成功。
+
+### 5. 回滚
+
+- v2.0.2 备份：`/opt/cliproxyapi/backup-v2.0.2-20261022T083832Z/`（四个 `.so` + `config.yaml`）。
+- 回滚：停容器 → 放回 v2.0.2 `.so`、移除 v2.0.3 `.so` → 删除
+  `/opt/cliproxyapi/auth/opencode-go-*.json`（带标记）→ 启动；保持 hannu666 `enabled: false`。
+- 详见 [rollback.md](rollback.md) §11。
 
 ---
 

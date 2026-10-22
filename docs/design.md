@@ -152,10 +152,11 @@ if typeStr != "response.completed" && typeStr != "response.incomplete" { return 
 `RegisterExecutors` 会跳过"已被原生 provider 服务的模型 ID"，因此当用户的 CPA 已经通过
 codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是同时声明 `model_router`：
 
-- 只在模型属于本协议族**且**配置为启用时返回 `{Handled: true, TargetKind: "provider", Target: r.role.Provider, TargetModel: upstreamModel}`
+- 只在模型属于本协议族**且**配置为启用时返回 `{Handled: true, TargetKind: "provider", Target: r.role.Provider}`
+- **不设置 `TargetModel`**：宿主把客户端请求的目录模型（或别名）原样交给插件执行器，插件继续用 `Resolver().Upstream()` 映射到上游模型。这样请求日志与统计的模型口径保持目录 ID，也避免宿主侧 API-key 模型别名与插件别名叠加翻译。
 - 宿主在 provider 解析之前询问所有 router，因此插件可以稳定认领模型。
-- 通过返回 `TargetKind: "provider"`，插件将认证选择、多 Key 轮询与故障转移完全委托给 CPA 宿主的 `AuthManager`（遵循 CPA 宿主「网络配置」的路由策略，如轮询、填满优先等）。
-- 插件仅设置 Key 的 `priority` 优先级，相同优先级由宿主调度。
+- 通过返回 `TargetKind: "provider"`，插件将认证选择、多 Key 轮询、429/401/403 冷却与故障转移完全委托给 CPA 宿主的 `AuthManager`（遵循宿主 `routing.strategy` / `routing.retry` / `routing.cooldown`）。
+- 插件只把 Key 的 `priority`、启停状态和密钥投影成宿主认证文件（§7.9）；相同优先级由宿主调度。
 - 网络代理（`proxy-url`、`default-proxy`、模型 `proxy`）依然由插件自行持有 transport 并在出站请求中应用。
 - 逐模型的 `enabled` 开关同时也是"把这个模型让回内置通道"的开关
 
@@ -303,17 +304,28 @@ codex OAuth 提供 `gpt-6-luna` 时，插件默认抢不到它。解决办法是
   没有新增运行时依赖。价目/模型核对状态只占一行，任何提醒横幅都在概览上方，不改变模型明细的
   折叠行为。
 
-## 7.9 已移除的宿主配额集成（v1.8–v1.11）
+## 7.9 Key 投影与 CPA 调度（v2.0.3 恢复）
 
-v1.8 起，插件曾把每个 Key 投影成宿主的认证文件（v1.11 起每 Key 1 个 chat 面文件），并在主面
-注册 `quota_provider` 能力、实现 `quota.identifier/describe/fetch/reset`，让 CPA 自带的
-「配额管理 → Plugin」把 Key 当成账号列出余量。这条通道的代价是：宿主的「认证文件」页与配额页
-共用同一份账号列表（v8.0.27 没有“只对配额页可见”的隐藏标记），认证文件必然出现在「认证文件」页。
+路由走 `TargetKind: "provider"` 时，宿主只认认证文件里的账号。插件因此把每个 Key 投影成
+**4 个认证文件**（chat / responses / messages / gemini 各一个）：
 
-v1.12 按操作者要求整体移除：不再写认证文件、不再声明 `quota_provider`、不再应答 `quota.*`。
-余量改由插件自己的仪表盘「账号管理」Tab 提供（直接查询上游 `/usage`，见 §7.8），与宿主无关。
-路由一直由插件自己的 `model_router` 负责（§7.5），所以这次移除不影响任何协议面的转发；
-`scripts/uninstall.sh` 保留对历史 `opencode-go-*.json` 的标记清理。
+- 文件名 `opencode-go-<slug>.json`、`--responses.json`、`--messages.json`、`--gemini.json`；
+- 内容 `{type: <该协议面的 provider>, name, key_name, role, api_key, priority, disabled, note, managed_by: "cpa-opencodego"}`；
+- 权限 `0600`，同目录 `.tmp` + `rename` 原子写入；内容未变不重写，避免宿主无意义重载；
+- 只增删带 `managed_by` 标记的文件；旧版 `cap-opencode-go` 标记视为本插件所有，升级时覆盖/清理；无标记的同名文件、其它 provider 的文件一律不碰；
+- 投影是单向的：插件配置是唯一源，CPA 认证文件页的启停/优先级修改会被下一次同步覆盖；请在插件「账号管理」页改；
+- 插件被卸载（删配置块/禁用/停服）时 `Shutdown` 删除标记文件；热替换（`plugin.quiesce`）跳过删除，由新实例接管；`scripts/uninstall.sh` 按标记兜底；
+- 宿主侧由 `AuthManager` 按 `priority` 分层、`routing.strategy` 轮询、`routing.retry` 重试、`routing.cooldown` 冷却；插件不实现任何 Key 轮询/冷却循环。
+
+历史沿革：v1.8 曾用同样的 provider 路由 + 投影把调度交给 CPA；v1.10.2 为了减少「认证文件」页的
+4 行/Key 噪音改成 `TargetKind: "self"`，宿主 `AuthManager` 被绕开，插件只剩“第一把 Key”，
+多 Key 故障转移实际失效；v1.12 又移除了投影。v2.0.3 恢复 provider 路由和投影，但**不恢复**
+`quota_provider` / `quota.*`：CPA 认证文件页只显示账号与调度状态，OpenCode Go 的 5 小时/周/月
+余量仍由插件仪表盘直接查上游 `/usage`（§7.8）。
+
+代价：CPA「认证文件」页每个 Key 显示 4 行（2 Key = 8 行）。这是四个 provider 各自走 CPA 调度的
+必要条件；只保留 chat 文件会让另外三个协议面失去故障转移。插件的「账号管理」页按 Key 聚合展示，
+CPA 页只作为调度/冷却状态入口。
 
 ## 7.10 请求日志：插件自测与宿主记账分离（v2.0）
 

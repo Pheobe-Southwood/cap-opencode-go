@@ -21,7 +21,7 @@
 
 ---
 
-> **v2.0.2** : bascule les deux correctifs HTTP 400 (rôle developer et replay du reasoning_content) en mode par défaut `retry-only` (réparation paresseuse) avec persistance sticky par session ; ajoute le diagnostic de troncature de flux. Lisez le [guide de mise à niveau v2](docs/UPGRADE-v2.md) avant de mettre à jour.
+> **v2.0.3** : rétablit l'ordonnancement natif des clés par CPA (`TargetKind: provider` et quatre fichiers d'authentification projetés par clé) et corrige l'absence de bascule après épuisement d'un quota ; le `quota_provider` de l'hôte n'est pas rétabli. Lisez le [guide de retour arrière](docs/rollback.md) avant de mettre à jour.
 
 
 ## Points Forts et Valeur Clé
@@ -60,7 +60,7 @@ Ce plugin apporte une intégration complète et immédiate à CLIProxyAPI (CPA) 
 ![Gestion Multi-Clés et Quotas en Temps Réel](docs/screenshots/desktop-accounts.png)
 
 - **Visualisation Multi-Fenêtres des Quotas** : Interroge directement l'API officielle `/usage` d'OpenCode Go. Affiche les pourcentages restants et le compte à rebours de réinitialisation pour les fenêtres de 5 heures glissantes, hebdomadaire et mensuelle.
-- **Ordonnancement Pondéré par Priorité** : Enregistrez plusieurs clés d'API avec des niveaux de priorité distincts. CPA gère la répartition de charge et le basculement en cas de panne de manière transparente.
+- **Ordonnancement par Priorité (natif CPA)** : Enregistrez plusieurs clés d'API ; le plugin projette chaque clé dans quatre fichiers d'authentification CPA (chat/responses/messages/gemini), puis l'`AuthManager` de CPA sélectionne, fait tourner, refroidit (429) et bascule entre elles selon `priority` et les réglages `routing` de l'hôte. Le plugin n'implémente aucune rotation de clés. La page « fichiers d'authentification » de CPA affiche quatre lignes par clé.
 - **Renommage Instantané sur Place** : Modifiez le nom d'une clé en un clic directement depuis l'interface ; la configuration se recharge à chaud sans coupure de service.
 
 ---
@@ -105,11 +105,11 @@ npx cpa-opencodego install --dir /path/to/CLIProxyAPI
 
 **Option B : copie manuelle**
 
-Téléchargez `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip` depuis les [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases), puis copiez les quatre fichiers dans le dossier des plugins de CPA (généralement `plugins/linux/amd64/`) :
-- `cpa-opencodego-v2.0.2.so`
-- `cpa-opencodego-responses-v2.0.2.so`
-- `cpa-opencodego-messages-v2.0.2.so`
-- `cpa-opencodego-gemini-v2.0.2.so`
+Téléchargez `cpa-opencodego-bundle_2.0.3_<goos>_<goarch>.zip` depuis les [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases), puis copiez les quatre fichiers dans le dossier des plugins de CPA (généralement `plugins/linux/amd64/`) :
+- `cpa-opencodego-v2.0.3.so`
+- `cpa-opencodego-responses-v2.0.3.so`
+- `cpa-opencodego-messages-v2.0.3.so`
+- `cpa-opencodego-gemini-v2.0.3.so`
 
 ### Étape 2 : Ajout de la Configuration
 

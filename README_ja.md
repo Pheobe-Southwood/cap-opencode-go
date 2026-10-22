@@ -21,7 +21,7 @@
 
 ---
 
-> **v2.0.2**：developer ロールおよび reasoning 回放の 400 互換対応をデフォルト `retry-only` の遅延修復に変更し、セッション sticky 記憶を追加しました。アップグレード前に [v2 アップグレードガイド](docs/UPGRADE-v2.md) をご覧ください。
+> **v2.0.3**：CPA ネイティブのキー スケジューリング（`TargetKind: provider` とキーごと 4 つの認証ファイル投影）を復元し、クォータ枯渇後にキーが切り替わらない不具合を修正しました。ホストの `quota_provider` は復元しません。アップグレード前に [ロールバック手順](docs/rollback.md) をご覧ください。
 
 
 ## 主な特徴と提供価値
@@ -60,7 +60,7 @@ OpenCode Go には最新鋭の LLM（DeepSeek V4.1、Claude Haiku 5.5、Gemini 4
 ![複数キー管理とリアルタイム枠残量モニタリング](docs/screenshots/desktop-accounts.png)
 
 - **マルチウィンドウ残量可視化**：OpenCode Go 上流の `/usage` API から直接データを取得。5時間ローリング、週間枠、月間枠の残量パーセンテージと更新までの残り時間を表示。
-- **優先順位付きキー運用**：複数の API キーを登録し、優先度（Priority）に応じた自動振り分けやフェイルオーバーに対応。
+- **優先順位付きキー運用（CPA ネイティブ）**：複数の API キーを登録すると、プラグインが各キーを 4 つの CPA 認証ファイル（chat/responses/messages/gemini）に投影し、CPA の `AuthManager` が `priority` とホストの `routing` 設定に従って選択・ローテーション・429 クールダウン・フェイルオーバーを行います。プラグイン自身はキーローテーションを実装しません。CPA の「認証ファイル」画面には 1 キーにつき 4 行表示されます。
 - **インプレース即時改名**：画面上のキー名をクリックするだけで編集可能。設定は自動でホットリロードされ、再起動は不要です。
 
 ---
@@ -105,11 +105,11 @@ npx cpa-opencodego install --dir /path/to/CLIProxyAPI
 
 **方法 B：手動コピー**
 
-[GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases) から `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip` をダウンロードし、4 つのライブラリを CPA のプラグインフォルダ（通常 `plugins/linux/amd64/`）に配置します：
-- `cpa-opencodego-v2.0.2.so`
-- `cpa-opencodego-responses-v2.0.2.so`
-- `cpa-opencodego-messages-v2.0.2.so`
-- `cpa-opencodego-gemini-v2.0.2.so`
+[GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases) から `cpa-opencodego-bundle_2.0.3_<goos>_<goarch>.zip` をダウンロードし、4 つのライブラリを CPA のプラグインフォルダ（通常 `plugins/linux/amd64/`）に配置します：
+- `cpa-opencodego-v2.0.3.so`
+- `cpa-opencodego-responses-v2.0.3.so`
+- `cpa-opencodego-messages-v2.0.3.so`
+- `cpa-opencodego-gemini-v2.0.3.so`
 
 ### ステップ 2：設定ファイルの追記
 

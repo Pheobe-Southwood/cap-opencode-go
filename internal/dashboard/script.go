@@ -355,6 +355,15 @@ const pageScript = `
     for(var i=0;i<all.length;i++){ if(all[i].key_name === name) return all[i]; }
     return null;
   }
+  // accounts is the plugin's projection of the keys onto host auth files. CPA's
+  // AuthManager schedules those accounts; the dashboard shows which file
+  // represents each key so an operator can find it on the credentials page.
+  function accountsInfo(){ return (state && state.accounts) || null; }
+  function accountFileOf(name){
+    var info = accountsInfo();
+    if(!info || !info.files) return '';
+    return info.files[name] || '';
+  }
 
   // ------------------------------------------------------- pending changes
   function countEdits(){
@@ -532,12 +541,10 @@ const pageScript = `
   }
   function keyHealth(key){
     if(!key) return '<span class="pill">未生效</span>';
-    if(key.cooldown_till && new Date(key.cooldown_till) > new Date()){
-      return '<span class="pill err">冷却至 ' + esc(fmtTime(key.cooldown_till)) + '</span>';
-    }
     if(!key.enabled) return '<span class="pill">已停用</span>';
-    if(key.failures > 0 && key.successes === 0) return '<span class="pill warn">未成功</span>';
-    return '<span class="pill ok">正常</span>';
+    // Scheduling and cooldown belong to CPA's AuthManager; the plugin only
+    // configures the key and projects it into an auth file.
+    return '<span class="pill ok">CPA 调度</span>';
   }
   function quotaRow(label, percent, resetsAt){
     var used = Number(percent);
@@ -564,10 +571,12 @@ const pageScript = `
   function renderKeyCard(view){
     var key = view.state;
     var meta = [];
-    if(key){
-      meta.push('<span class="hint">成功 ' + key.successes + ' / 失败 ' + key.failures + '</span>');
-      if(key.last_used) meta.push('<span class="hint">最近使用 ' + esc(relPast(key.last_used)) + '</span>');
-      if(key.last_status) meta.push('<span class="hint">最近状态 ' + esc(key.last_status) + '</span>');
+    var authFile = accountFileOf(view.name);
+    if(authFile){
+      var info = accountsInfo() || {};
+      meta.push('<span class="hint">CPA 认证文件 ' + esc(authFile) + ' · 共 ' + (info.total || 0) + ' 个协议面文件</span>');
+    } else if(accountsInfo() && accountsInfo().error){
+      meta.push('<span class="hint">认证投影失败：' + esc(accountsInfo().error) + '</span>');
     }
     // Only persisted keys are renameable in place. A pending addition is
     // renamed in the add form, which keeps the add map and the rename map from
@@ -575,9 +584,8 @@ const pageScript = `
     var nameField = view.isNew
       ? '<span class="key-name">' + esc(view.label) + '</span>'
       : '<input class="key-name-input" type="text" data-key-rename="' + esc(view.name) + '" value="' + esc(view.label) + '" ' +
-        'aria-label="Key 名称" title="点击修改名称，回车或失焦生效" ' +
+        'aria-label="Key 名称" title="点击修改名称，回车或失焦生效；保存后同步重命名 CPA 认证文件" ' +
         'autocomplete="off" spellcheck="false" size="' + Math.max(6, Math.min(32, String(view.label).length + 1)) + '">';
-    var error = key && key.last_error ? '<div class="err-text" style="font-size:12px">' + esc(String(key.last_error).slice(0, 160)) + '</div>' : '';
     return '<div class="key-card' + (view.enabled ? '' : ' is-off') + (view.isNew ? ' is-new' : '') + '" data-key-card="' + esc(view.name) + '">' +
       '<div class="key-head">' +
         nameField +
@@ -594,7 +602,6 @@ const pageScript = `
       '</div>' +
       '<div class="key-quota">' + quotaBlock(view) + '</div>' +
       '<div class="key-meta">' + meta.join('') + '</div>' +
-      error +
     '</div>';
   }
   function renderKeyList(){
@@ -619,10 +626,12 @@ const pageScript = `
         if(!worst || left < worst.left) worst = {left:left, key:view.name, label:window.label || window.key};
       });
     });
+    var accounts = accountsInfo();
     var stats = [
       ['Key', enabled + ' 启用 / ' + views.length],
       ['最低剩余', worst ? worst.left.toFixed(0) + '%' : '—', worst ? worst.key + ' · ' + worst.label : '尚无窗口数据'],
-      ['调度方式', '跟随宿主', 'CPA 网络配置管理'],
+      ['调度方式', 'CPA AuthManager', '按认证文件 priority + 宿主 routing 选择'],
+      ['CPA 认证文件', accounts ? accounts.total + ' 个' : '—', accounts ? (accounts.synced ? '已同步；每 Key 4 个协议面文件' : (accounts.error || '等待宿主 auth 目录')) : ''],
       ['协议面', (state && state.siblings ? state.siblings.length : 0) + ' 个', '四个协议族共用这份配置'],
       ['余量更新', quota && quota.at ? new Date(quota.at).toLocaleTimeString() : '—']
     ];
@@ -630,12 +639,12 @@ const pageScript = `
       return '<div class="stat"><span class="k">' + esc(stat[0]) + '</span><span class="v">' + esc(stat[1]) + '</span>' +
         (stat[2] ? '<span class="hint">' + esc(stat[2]) + '</span>' : '') + '</div>';
     }).join('');
-    text(el('quotaHint'), quota === null ? '正在读取余量…' : '余量来自上游 /usage 接口 · 路由方式完全跟随 CPA 宿主');
+    text(el('quotaHint'), quota === null ? '正在读取余量…' : '余量来自上游 /usage 接口 · Key 的调度/冷却由 CPA AuthManager 负责');
   }
   function renderRotationGrid(){
     var settings = [
-      ['路由策略', '跟随宿主网络配置', '完全由 CPA 宿主管理策略与故障转移'],
-      ['Key 调度', '按优先级降序', '数字越大越优先，同优先级由宿主调度'],
+      ['路由策略', '跟随宿主网络配置', 'CPA routing.strategy（轮询/填满优先等）'],
+      ['Key 调度', '按优先级降序', '数字越大越优先；同层与 429 冷却后的切换由 CPA 决定'],
       ['请求超时', (state && state.timeout_seconds ? state.timeout_seconds : 900) + ' 秒', '上游单个请求的最长等待时间'],
       ['插件代理', state ? (state.proxy_url || (state.host_proxy_url ? '继承 CPA：' + state.host_proxy_url : '未设置')) : '—', '可在「设置」里修改']
     ];
@@ -942,14 +951,15 @@ const pageScript = `
       aboutRow('版本', '插件 <code>' + esc(version) + '</code> · 主实例 <code>' + esc(PLUGIN_ID) + '</code>'),
       aboutRow('协议面', '一个主插件 + 三个协议面插件（responses / messages / gemini），每个 .so 只声明一种上游协议，协议翻译由 CPA 完成。四个 .so 必须同版本安装，只有主插件需要配置，四个面在「状态」里逐面说明。'),
       aboutRow('别名', '在「模型」里为模型填写的别名会替代原名对外提供；清空别名即恢复原名，多个别名等于多个对外 id。'),
-      aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。v1.12 起插件不再向 CPA 投影认证文件，「配额管理 → Plugin」不再列出 OpenCode Go，余量请在本页查看。'),
+      aboutRow('Key 调度', '插件把每个 Key 投影成 4 个 CPA 认证文件（chat / responses / messages / gemini 各一个，带 <code>managed_by: cpa-opencodego</code>，权限 0600），由 CPA AuthManager 按 <code>priority</code> 与宿主 <code>routing.strategy</code> 选择、轮询、冷却并在 429 时自动切换；插件自身不实现 Key 轮询。投影是单向的：在 CPA 认证文件页改启停/优先级会被下一次同步覆盖，请在「账号管理」页修改。'),
+      aboutRow('余量', '「账号管理」的余量来自上游 <code>/usage</code> 接口，按 Key 统计 5 小时 / 本周 / 本月三个窗口，只查询上游、不消耗额度。Key 的调度状态与冷却看 CPA 认证文件页；额度与 Key 配置看本页。'),
       aboutRow('统计', '「统计」按模型汇总 token、刊例价、月额度百分比、整体 TPS、生成 TPS 与 TTFT。token、失败与请求总延迟来自宿主 usage 事件；整体 TPS 含首字，生成 TPS 只算插件测到的首内容到末内容，TTFT 由插件读流自测。v1.7 起可回放旧 Token Usage Tracker 中 opencode-go 的历史。'),
       aboutRow('保存', '保存写回 CPA 的 config.yaml，由 CPA 热加载给插件，不需要重启；未勾选「记住密码」时会先弹出一次密码输入框。'),
       aboutRow('请求日志', '「请求日志」逐条列出每次上游尝试：时间、输入/输出/合计 token、TTFT、生成 TPS 与端到端 TPS，以及状态与错误。数据由插件在转发时自测，和「统计」的宿主 usage 口径略有差异；可在设置里关闭，默认保留 2000 条 / 7 天。'),
       aboutRow('协议', '插件同时支持旧版单根 /v1 端点和新版 /openai、/anthropic、/google 分族端点：base-url 以 /v1 结尾视为旧布局，以 Go 根结尾视为新布局，也可用 endpoint-layout 显式指定。只额外发送 x-opencode-session，User-Agent 跟随客户端透传。'),
       aboutRow('思考回放', 'DeepSeek 思考模式要求历史 assistant 消息回传 reasoning_content；客户端丢弃旧思维链时会偶发上游 400。reasoning-replay=auto（默认）只在思考请求上给缺失字段补占位文本，已有内容原样保留；同一 400 还会自动重试一次，因为该检查在部分网关节点上是间歇性的。'),
       aboutRow('热重载', '替换插件文件同样热生效：把新版本 .so 放进 plugins/linux/amd64 后原地改一次 config.yaml 即可（不要用会替换 inode 的方式写文件）。'),
-      aboutRow('残留', '插件只在 CPA 目录下写 plugins/、data/cpa-opencodego/（shared.json、stats-&lt;role&gt;.json、requests-&lt;role&gt;.jsonl，可选 debug.log）；v1.12 起不再写任何认证文件，删除插件与配置块后无任何残留。'),
+      aboutRow('残留', '插件只在 CPA 目录下写 plugins/、data/cpa-opencodego/（shared.json、stats-&lt;role&gt;.json、requests-&lt;role&gt;.jsonl，可选 debug.log）和 auth 目录里的 <code>opencode-go-*.json</code> 认证文件；认证文件在插件被卸载（删配置块 / 禁用 / 停服）时自动删除，<code>scripts/uninstall.sh</code> 也会按 <code>managed_by</code> 标记兜底清理。'),
       aboutRow('仓库', '<a href="' + REPO_URL + '" target="_blank" rel="noreferrer noopener">' + esc(REPO_URL.replace('https://', '')) + '</a>')
     ].join('');
   }

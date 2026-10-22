@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
 
@@ -55,22 +56,31 @@ func (c *Client) ProbeFamilies(ctx context.Context, model string, preferred role
 		}
 	}
 
+	// A probe is a dashboard diagnostic, not a routed client request. Use the
+	// first enabled key so it still works before CPA has an auth record; this
+	// never participates in request scheduling.
+	var credential config.Key
+	if enabled := settings.EnabledKeys(); len(enabled) > 0 {
+		credential = enabled[0]
+	}
+
 	results := make([]FamilyProbe, 0, len(order))
 	for _, role := range order {
-		results = append(results, c.probeFamily(ctx, role, trimmed, settings.Session))
+		results = append(results, c.probeFamily(ctx, role, trimmed, settings.Session, credential))
 	}
 	return results
 }
 
-func (c *Client) probeFamily(ctx context.Context, role roles.Role, model, session string) FamilyProbe {
+func (c *Client) probeFamily(ctx context.Context, role roles.Role, model, session string, credential config.Key) FamilyProbe {
 	started := time.Now()
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
 	result, errExecute := c.Execute(probeCtx, Call{
-		Role:  role,
-		Model: model,
-		Body:  probeBody(role, model),
+		Role:       role,
+		Model:      model,
+		Body:       probeBody(role, model),
+		Credential: credential,
 		// A probe must not disturb the key pool's failure accounting beyond
 		// what a real request would do, so it reports its own outcome only.
 		Session: session,

@@ -2,10 +2,10 @@
 # Remove the OpenCode Go provider plugins and every file they own.
 #
 # Deleting the plugin libraries plus the plugins.configs.* entries restores the
-# previous state. v1.12 removed the v1.8-v1.11 auth projection, so the current
-# plugin writes no auth files at all; the scan below only removes leftovers from
-# an older version (or from a rollback to one), and it never touches an
-# operator's own auth files or files of any other provider.
+# previous state. v2.0.3 projects one auth file per key and protocol face so CPA
+# can schedule the keys; the plugin removes them on shutdown, and the scan below
+# also removes leftovers from v1.8-v1.11 (older marker) or a rollback. It never
+# touches an operator's own auth files or files of any other provider.
 set -euo pipefail
 
 ROOT="${CPA_ROOT:-/root/cliproxyapi}"
@@ -73,7 +73,7 @@ for name in sorted(os.listdir(directory)):
         continue
     if not isinstance(payload, dict):
         continue
-    if str(payload.get("managed_by", "")).strip() != "cpa-opencodego":
+    if str(payload.get("managed_by", "")).strip().lower() not in ("cpa-opencodego", "cap-opencode-go"):
         continue
     try:
         os.remove(path)
@@ -105,6 +105,7 @@ Now delete the matching entries from ${ROOT}/config.yaml and restart CLIProxyAPI
 Leave plugins.enabled and any other plugin entries untouched.
 Then run:  systemctl restart cliproxyapi
 
-Note: v1.12+ never writes auth files, so the cleanup above only matters for a
-host that previously ran v1.8-v1.11 (or was rolled back to one).
+Note: v2.0.3 writes one auth file per key and protocol face for CPA scheduling;
+the plugin removes them on shutdown, and the scan above also cleans leftovers
+from v1.8-v1.11 (managed_by: cap-opencode-go) or a rollback.
 EOF

@@ -70,7 +70,7 @@ const pageMarkup = `
             <button id="refreshQuota" class="small" type="button">刷新余量</button>
           </div>
         </div>
-        <div class="hint key-name-hint" id="keyNameHint">已有 Key 的名称可直接点击修改，回车或失焦生效。新增 Key 请在下方表单里命名。</div>
+        <div class="hint key-name-hint" id="keyNameHint">已有 Key 的名称可直接点击修改，回车或失焦生效；保存后会同步重命名对应的 CPA 认证文件。新增 Key 请在下方表单里命名。</div>
         <div id="keyList" class="key-list"></div>
 
         <details class="adder" id="keyAdder">

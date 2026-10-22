@@ -104,6 +104,9 @@ func (r *Runtime) handleManagementHandle(request []byte) []byte {
 			Body:       dashboard.Page(r.PluginID(), string(r.role.Name)),
 		})
 	case strings.HasSuffix(path, resourceState):
+		// Opening the dashboard is also the self-healing hook for the account
+		// projection: if a sync failed earlier it is retried here.
+		r.syncAccountsAsync()
 		return okJSON(pluginapi.ManagementResponse{
 			StatusCode: http.StatusOK,
 			Headers:    jsonHeaders(),
@@ -239,6 +242,7 @@ type StatePayload struct {
 	Migration       string            `json:"migration,omitempty"`
 	Debug           bool              `json:"debug"`
 	Keys            []KeyState        `json:"keys"`
+	Accounts        AccountsPayload   `json:"accounts"`
 	Models          []ModelRow        `json:"models"`
 	Siblings        []SiblingRow      `json:"siblings"`
 	ConfigError     string            `json:"config_error,omitempty"`
@@ -365,6 +369,7 @@ func (r *Runtime) stateWithRows(rows []ModelRow, upstream *UpstreamSummary) Stat
 			}
 			return out
 		}(),
+		Accounts:    r.accountsState(),
 		Models:      rows,
 		Siblings:    siblings,
 		ConfigError: r.LastError(),

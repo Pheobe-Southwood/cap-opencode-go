@@ -85,10 +85,17 @@ func extractCredential(authID string, storageJSON []byte, authMetadata map[strin
 	// Fallback to configured keys by matching AuthID if possible
 	if authID != "" {
 		for _, k := range settings.Keys {
-			if strings.Contains(authID, k.Name) {
+			if k.Name != "" && strings.Contains(authID, k.Name) {
 				return k
 			}
 		}
+	}
+	// A single-key deployment stays usable even before the host's auth
+	// projection has loaded (or when the host calls the executor without an
+	// auth). With more than one key the plugin must not choose: CPA's
+	// AuthManager owns that decision.
+	if enabled := settings.EnabledKeys(); len(enabled) == 1 {
+		return enabled[0]
 	}
 	return key
 }
@@ -536,19 +543,16 @@ func (r *Runtime) trace(message string, fields map[string]any) {
 }
 
 // newAttempt builds the request-log metadata shared by both execution paths.
-// An empty credential name falls back to the highest-priority configured key so
-// the log still says which account served the request.
+// The key comes from the host-selected credential; when CPA did not name one
+// (only possible with a single-key configuration) extractCredential has already
+// filled it in, so an empty key here means no key was used at all.
 func (r *Runtime) newAttempt(requested, upstreamModel string, stream bool, cred config.Key, session string) requestAttempt {
-	key := strings.TrimSpace(cred.Name)
-	if key == "" {
-		key = r.primaryKeyName()
-	}
 	return requestAttempt{
 		role:      r.role.Name,
 		requested: requested,
 		upstream:  upstreamModel,
 		model:     statsModelID(r, requested, upstreamModel),
-		key:       key,
+		key:       strings.TrimSpace(cred.Name),
 		session:   session,
 		stream:    stream,
 	}
@@ -590,20 +594,6 @@ func (r *Runtime) recordAttempt(attempt requestAttempt, started time.Time, heade
 		Finish:        finish,
 		Incomplete:    incomplete,
 	})
-}
-
-// primaryKeyName is the configured key the upstream client would pick when the
-// host did not name one: highest priority, first configured on a tie.
-func (r *Runtime) primaryKeyName() string {
-	best := ""
-	bestPriority := 0
-	for _, key := range r.Settings().EnabledKeys() {
-		if best == "" || key.Priority > bestPriority {
-			best = key.Name
-			bestPriority = key.Priority
-		}
-	}
-	return best
 }
 
 // inboundUserAgent returns the client's User-Agent so the plugin can pass it to

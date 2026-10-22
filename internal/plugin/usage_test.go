@@ -222,3 +222,30 @@ func TestUsageMalformedRecordDoesNotFail(t *testing.T) {
 		t.Errorf("received = %d, want 1", got)
 	}
 }
+
+// CPA reports the projected auth file id in usage events; every protocol face
+// must map back to the same configured key so per-key statistics stay correct.
+func TestResolveKeyNameFromProjectedAuthID(t *testing.T) {
+	runtime := New(rolesChat())
+	settings := config.Default()
+	settings.Keys = []config.Key{
+		{Name: "main", Key: "sk-main"},
+		{Name: "backup", Key: "sk-backup"},
+	}
+	runtime.applySettings(settings)
+
+	cases := map[string]string{
+		"opencode-go-main.json":                        "main",
+		"/root/.cli-proxy-api/opencode-go-backup.json": "backup",
+		"opencode-go-main--responses.json":             "main",
+		"opencode-go-backup--messages.json":            "backup",
+		"opencode-go-main--gemini.json":                "main",
+		"":                                             "",
+		"codex-account.json":                           "",
+	}
+	for authID, want := range cases {
+		if got := runtime.resolveKeyName(authID); got != want {
+			t.Errorf("resolveKeyName(%q) = %q, want %q", authID, got, want)
+		}
+	}
+}

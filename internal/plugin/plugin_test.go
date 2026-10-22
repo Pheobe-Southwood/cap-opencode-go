@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/brand"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
@@ -487,5 +489,77 @@ func TestStatePayloadCarriesPlan(t *testing.T) {
 	runtime.applySettings(settings)
 	if got := runtime.StatePayload().Plan; got != "go-plus" {
 		t.Errorf("state plan = %q", got)
+	}
+}
+
+// The model route must hand execution to CPA's AuthManager instead of running
+// the upstream call from the plugin. TargetKind "self" was the v1.10-v2.0.2
+// regression that bypassed key selection, rotation, cooldown and failover.
+func TestModelRouteTargetsCPAProvider(t *testing.T) {
+	for _, role := range roles.All {
+		runtime := New(role)
+		runtime.applySettings(config.Default())
+
+		models := runtime.models()
+		if len(models) == 0 {
+			t.Fatalf("role %s has no enabled model to route", role.Name)
+		}
+		request, errMarshal := json.Marshal(pluginapi.ModelRouteRequest{RequestedModel: models[0].ID})
+		if errMarshal != nil {
+			t.Fatalf("marshal route request: %v", errMarshal)
+		}
+		var envelope struct {
+			OK     bool               `json:"ok"`
+			Result modelRouteResponse `json:"result"`
+		}
+		if errUnmarshal := json.Unmarshal(runtime.handleModelRoute(request), &envelope); errUnmarshal != nil {
+			t.Fatalf("decode route response: %v", errUnmarshal)
+		}
+		if !envelope.OK {
+			t.Fatalf("role %s route returned an error", role.Name)
+		}
+		if !envelope.Result.Handled {
+			t.Fatalf("role %s did not claim %q", role.Name, models[0].ID)
+		}
+		if envelope.Result.TargetKind != "provider" {
+			t.Fatalf("role %s TargetKind = %q, want provider", role.Name, envelope.Result.TargetKind)
+		}
+		if envelope.Result.Target != role.Provider {
+			t.Fatalf("role %s Target = %q, want %q", role.Name, envelope.Result.Target, role.Provider)
+		}
+		// The plugin keeps owning model mapping, so the host must pass the
+		// catalogue model through unchanged.
+		if envelope.Result.TargetModel != "" {
+			t.Fatalf("role %s set TargetModel = %q; the plugin maps the model itself", role.Name, envelope.Result.TargetModel)
+		}
+	}
+}
+
+func TestStatePayloadReportsAccountProjection(t *testing.T) {
+	dir := t.TempDir()
+	runtime := New(rolesChat())
+	settings := config.Default()
+	settings.Keys = []config.Key{
+		{Name: "main", Key: "oc_sk_main"},
+		{Name: "backup", Key: "oc_sk_backup"},
+	}
+	runtime.applySettings(settings)
+	runtime.rememberHostSummary(pluginapi.HostConfigSummary{AuthDir: dir})
+	runtime.syncAccountsAsync()
+	waitForSync(t, runtime)
+	t.Cleanup(runtime.Shutdown)
+
+	payload := runtime.StatePayload()
+	if !payload.Accounts.Enabled || !payload.Accounts.Synced {
+		t.Fatalf("accounts payload = %+v", payload.Accounts)
+	}
+	if payload.Accounts.Total != 8 {
+		t.Fatalf("accounts total = %d, want 8", payload.Accounts.Total)
+	}
+	if payload.Accounts.Files["main"] != "opencode-go-main.json" {
+		t.Fatalf("accounts files = %v", payload.Accounts.Files)
+	}
+	if payload.Accounts.AuthDir != dir {
+		t.Fatalf("accounts auth dir = %q, want %q", payload.Accounts.AuthDir, dir)
 	}
 }

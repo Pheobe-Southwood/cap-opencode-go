@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -167,5 +168,100 @@ func TestPumpStreamDetectsIncompleteStream(t *testing.T) {
 	}
 	if normalRow.Finish != "stop" {
 		t.Errorf("normal stream finish = %q, want stop", normalRow.Finish)
+	}
+}
+
+// CPA's AuthManager selects an account and passes it as StorageJSON; the plugin
+// must use that key even when another configured key has a higher priority.
+func TestHandleExecuteUsesHostCredential(t *testing.T) {
+	var seen atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		seen.Store(request.Header.Get("Authorization"))
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"id":"x","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer server.Close()
+
+	runtime := New(roles.ByName("chat"))
+	runtime.sharedPath = t.TempDir() + "/shared.json"
+	settings := config.Default()
+	settings.BaseURL = server.URL
+	settings.EndpointLayout = config.LayoutLegacy
+	settings.Keys = []config.Key{
+		{Name: "main", Key: "sk-main", Priority: 10},
+		{Name: "backup", Key: "sk-backup", Priority: 1},
+	}
+	runtime.applySettings(settings)
+	t.Cleanup(runtime.Shutdown)
+
+	request, errMarshal := json.Marshal(pluginapi.ExecutorRequest{
+		Model:       "deepseek-v4.1-flash",
+		Format:      "openai",
+		Stream:      false,
+		Payload:     []byte(`{"model":"deepseek-v4.1-flash","messages":[{"role":"user","content":"hi"}]}`),
+		AuthID:      "opencode-go-backup.json",
+		StorageJSON: []byte(`{"type":"opencode-go","name":"backup","key_name":"backup","api_key":"sk-backup"}`),
+	})
+	if errMarshal != nil {
+		t.Fatalf("marshal request: %v", errMarshal)
+	}
+	envelopeResult(t, runtime.handleExecute(request))
+
+	if got, _ := seen.Load().(string); got != "Bearer sk-backup" {
+		t.Fatalf("upstream Authorization = %q, want the host-selected backup key", got)
+	}
+	rows := runtime.reqLogStore().Snapshot()
+	if len(rows) != 1 || rows[0].Key != "backup" {
+		t.Fatalf("request log = %+v, want the host-selected key", rows)
+	}
+}
+
+// With more than one configured key and no host selection, the plugin must
+// refuse instead of silently using the first key (the v1.10-v2.0.2 bug).
+func TestHandleExecuteRefusesToPickAmongKeys(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	runtime := New(roles.ByName("chat"))
+	runtime.sharedPath = t.TempDir() + "/shared.json"
+	settings := config.Default()
+	settings.BaseURL = server.URL
+	settings.EndpointLayout = config.LayoutLegacy
+	settings.Keys = []config.Key{
+		{Name: "main", Key: "sk-main", Priority: 10},
+		{Name: "backup", Key: "sk-backup", Priority: 1},
+	}
+	runtime.applySettings(settings)
+	t.Cleanup(runtime.Shutdown)
+
+	request, errMarshal := json.Marshal(pluginapi.ExecutorRequest{
+		Model:   "deepseek-v4.1-flash",
+		Format:  "openai",
+		Stream:  false,
+		Payload: []byte(`{"model":"deepseek-v4.1-flash","messages":[{"role":"user","content":"hi"}]}`),
+	})
+	if errMarshal != nil {
+		t.Fatalf("marshal request: %v", errMarshal)
+	}
+	var envelope abi.Envelope
+	if errUnmarshal := json.Unmarshal(runtime.handleExecute(request), &envelope); errUnmarshal != nil {
+		t.Fatalf("decode response: %v", errUnmarshal)
+	}
+	if envelope.OK || envelope.Error == nil {
+		t.Fatalf("multi-key request without a host credential must fail: %+v", envelope)
+	}
+	if envelope.Error.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("http status = %d, want 503", envelope.Error.HTTPStatus)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("upstream was called %d times without a selected key", calls.Load())
+	}
+	rows := runtime.reqLogStore().Snapshot()
+	if len(rows) != 1 || rows[0].Key != "" || rows[0].Status != http.StatusServiceUnavailable {
+		t.Fatalf("request log = %+v, want one failed row with no key", rows)
 	}
 }

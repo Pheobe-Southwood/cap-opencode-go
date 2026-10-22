@@ -21,7 +21,7 @@
 
 ---
 
-> **v2.0.2**: developer 역할 및 reasoning_content 회생의 400 대응을 기본 `retry-only` 지연 복구 모드로 전환하고 세션 sticky 기억을 추가했습니다. 업그레이드 전에 [v2 업그레이드 가이드](docs/UPGRADE-v2.md) 를 확인하세요.
+> **v2.0.3**: CPA 네이티브 키 스케줄링(`TargetKind: provider` 및 키당 4개 인증 파일 투영)을 복원하여 할당량 소진 후 키가 전환되지 않던 문제를 수정했습니다. 호스트 `quota_provider`는 복원하지 않습니다. 업그레이드 전에 [롤백 안내](docs/rollback.md)를 확인하세요.
 
 
 ## 핵심 가치와 주요 특징
@@ -60,7 +60,7 @@ OpenCode Go는 최신 고성능 AI 모델 37종(DeepSeek V4.1, Claude Haiku 5.5,
 ![멀티 키 풀 및 실시간 쿼터 모니터링](docs/screenshots/desktop-accounts.png)
 
 - **다중 윈도우 쿼터 시각화**: OpenCode Go의 공식 `/usage` API를 직접 조회하여 5시간 롤링, 주간 한도, 월간 한도의 잔여 퍼센티지와 갱신 카운트다운을 명확하게 표시합니다.
-- **우선순위 가중 스케줄링**: 여러 API 키를 등록하고 우선순위(Priority)에 따라 내림차순 스케줄링 및 장애 발생 시 자동 페일오버를 수행합니다.
+- **우선순위 기반 키 스케줄링(CPA 네이티브)**: 여러 API 키를 등록하면 플러그인이 각 키를 4개의 CPA 인증 파일(chat/responses/messages/gemini)로 투영하고, CPA의 `AuthManager`가 `priority`와 호스트 `routing` 설정에 따라 선택·순환·429 쿨다운·페일오버를 수행합니다. 플러그인 자체는 키 순환을 구현하지 않습니다. CPA의 '인증 파일' 페이지에는 키당 4행이 표시됩니다.
 - **화면 내 즉시 이름 변경**: 대시보드에서 키 이름을 클릭하여 바로 수정할 수 있으며, 서비스 중단 없이 설정이 즉시 핫 리로드됩니다.
 
 ---
@@ -105,11 +105,11 @@ npx cpa-opencodego install --dir /path/to/CLIProxyAPI
 
 **방법 B: 수동 복사**
 
-[GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases)에서 `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip`을 내려받아 4개 라이브러리를 CPA 플러그인 디렉터리(일반적으로 `plugins/linux/amd64/`)에 복사합니다:
-- `cpa-opencodego-v2.0.2.so`
-- `cpa-opencodego-responses-v2.0.2.so`
-- `cpa-opencodego-messages-v2.0.2.so`
-- `cpa-opencodego-gemini-v2.0.2.so`
+[GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases)에서 `cpa-opencodego-bundle_2.0.3_<goos>_<goarch>.zip`을 내려받아 4개 라이브러리를 CPA 플러그인 디렉터리(일반적으로 `plugins/linux/amd64/`)에 복사합니다:
+- `cpa-opencodego-v2.0.3.so`
+- `cpa-opencodego-responses-v2.0.3.so`
+- `cpa-opencodego-messages-v2.0.3.so`
+- `cpa-opencodego-gemini-v2.0.3.so`
 
 ### 2단계: 호스트 설정 추가
 

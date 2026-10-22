@@ -21,7 +21,7 @@
 
 ---
 
-> **v2.0.2**: switches both 400 fixes (developer role and reasoning_content replay) to `retry-only` default mode with session stickiness; adds stream truncation diagnostics. Read the [v2 upgrade guide](docs/UPGRADE-v2.md) before upgrading.
+> **v2.0.3**: restores CPA-native key scheduling (`TargetKind: provider` plus four projected auth files per key), fixing the no-failover behaviour after a key exhausted its quota; the host `quota_provider` is not restored. Read the [rollback guide](docs/rollback.md) before upgrading.
 
 
 ## Core Value & Key Highlights
@@ -31,7 +31,7 @@ OpenCode Go hosts 37 leading AI models (DeepSeek V4.1, Claude Haiku 5.5, Gemini 
 This plugin delivers a unified, turnkey integration for CLIProxyAPI (CPA):
 - **Universal Protocol Coverage**: Unifies `chat/completions`, `responses`, `messages`, and `generateContent`. Downstream clients can query any model using any protocol format.
 - **Granular Per-Model Proxy Control**: Choose between **Proxy**, **Direct connection**, or **Inherit global** independently for each model to satisfy regional compliance and performance needs.
-- **Native Embedded Management WebUI**: Manage everything directly from the CPA sidebar — weighted multi-key pools, real-time quota progress bars, and live throughput/latency analytics.
+- **Native Embedded Management WebUI**: Manage everything directly from the CPA sidebar — multi-key pools scheduled by CPA's AuthManager, real-time quota progress bars, and live throughput/latency analytics.
 - **Zero-Invasion & Zero Residue**: Runs as standalone dynamic libraries (`.so`) without patching CPA source code or touching internal databases. Clean uninstallation leaves no trace.
 
 ---
@@ -55,12 +55,12 @@ This plugin delivers a unified, turnkey integration for CLIProxyAPI (CPA):
 
 ### 2. Multi-Key Pool & Live Multi-Window Quota Tracking
 
-> **Highlight**: Real-time quota visibility across 5-hour rolling, weekly, and monthly windows with prioritized multi-key scheduling.
+> **Highlight**: Real-time quota visibility across 5-hour rolling, weekly, and monthly windows with prioritized multi-key scheduling driven by CPA's AuthManager.
 
 ![Multi-Key Pool & Real-Time Quota Tracking](docs/screenshots/desktop-accounts.png)
 
 - **Live Multi-Window Quota Visualization**: Queries official upstream `/usage` metrics directly. Displays rolling 5-hour, weekly, and monthly remaining percentages alongside reset countdown timers.
-- **Priority-Based Key Scheduling**: Add multiple keys with priority ratings. CPA automatically handles failover and load distribution.
+- **Priority-Based Key Scheduling (CPA native)**: Add multiple keys with priority ratings. The plugin projects every key into four CPA auth files (chat/responses/messages/gemini); CPA's `AuthManager` selects, rotates, cools down and fails over between them using `priority` and the host `routing` settings. The plugin never runs a key-rotation loop itself. CPA's credentials page shows four rows per key by design.
 - **In-Place Key Renaming**: Click any key label to rename it instantly. Settings hot-reload automatically without server downtime.
 
 ---
@@ -107,11 +107,11 @@ The installer detects your platform and architecture, downloads the matching Git
 
 **Option B: copy manually**
 
-Download `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip` from [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases), unzip it, and copy the four libraries to your CPA plugins folder (typically `plugins/linux/amd64/`):
-- `cpa-opencodego-v2.0.2.so`
-- `cpa-opencodego-responses-v2.0.2.so`
-- `cpa-opencodego-messages-v2.0.2.so`
-- `cpa-opencodego-gemini-v2.0.2.so`
+Download `cpa-opencodego-bundle_2.0.3_<goos>_<goarch>.zip` from [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases), unzip it, and copy the four libraries to your CPA plugins folder (typically `plugins/linux/amd64/`):
+- `cpa-opencodego-v2.0.3.so`
+- `cpa-opencodego-responses-v2.0.3.so`
+- `cpa-opencodego-messages-v2.0.3.so`
+- `cpa-opencodego-gemini-v2.0.3.so`
 
 ### Step 2: Add Configuration
 

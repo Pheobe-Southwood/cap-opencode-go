@@ -173,7 +173,7 @@ plugins:
 | `developer-role` | enum | `retry-only` | OpenAI 形状请求的 `developer` 角色处理：`retry-only` 默认原样透传并在命中 400 时改写为 `system` 重试一次，`rewrite` 预先改写，`keep` 关闭 |
 | `reasoning-replay` | enum | `retry-only` | 思考模式历史 `reasoning_content` 回放：`retry-only` 默认命中 400 时补齐并重试，并开启会话 sticky 记忆；`auto` 只在思考请求提前补齐；`always` 所有 chat 请求补齐；`off` 不改写 |
 | `request-log` | bool | `true` | 是否写逐条请求日志（每面 2000 条 / 7 天） |
-| `keys` | array | `[]` | 多账号 Key 列表，包含 `name`、`key`、`priority`、`enabled` |
+| `keys` | array | `[]` | Key 列表，包含 `name`、`key`、`priority`、`enabled`。插件把每个 Key 投影成 CPA 认证文件（每个协议面 1 个），由 CPA AuthManager 选择、轮询、冷却并故障转移 |
 | `models` | map | `{}` | 逐模型个性化配置（启用状态、代理策略、别名、协议面覆盖） |
 | `models-default` | object | `{}` | 未显式声明模型的默认基线行为 |
 | `default-proxy` | enum | `inherit` | 全局默认代理模式：`inherit` / `proxy` / `direct` |
@@ -193,6 +193,38 @@ plugins:
 3. **插件级代理 (`proxy-url`)**：当上述判定需要走代理时优先使用的代理地址。
 4. **宿主全局代理 (`requests.proxy-url`)**：当插件未设置专用代理时继承宿主配置。
 
+### Key 调度与认证文件
+
+v2.0.3 起，Key 的选择、优先级分层、同层轮询、429/401/403 冷却和失败转移全部由 CPA 宿主的
+`AuthManager` 完成；插件只负责把配置投影成宿主认证文件：
+
+- 每个 Key 生成 4 个文件：`<auth-dir>/opencode-go-<slug>.json`、`--responses.json`、
+  `--messages.json`、`--gemini.json`，分别对应四个 provider；
+- 文件字段：`type`、`name`、`key_name`、`role`、`api_key`、`priority`、`disabled`、`note`、
+  `managed_by: cpa-opencodego`；权限 0600，原子写入，内容未变不重写；
+- 投影单向：插件配置是源；在 CPA 认证文件页改启停/优先级会被下一次同步覆盖；
+- 卸载/停服时 `Shutdown` 删除标记文件；`scripts/uninstall.sh` 按 `cpa-opencodego` 与旧版
+  `cap-opencode-go` 两个标记兜底清理。
+
+宿主必须满足以下配置（hk-vps 已满足）：
+
+```yaml
+routing:
+  strategy: "round-robin"       # 或 fill-first
+  retry:
+    request-retry: 3
+    max-retry-credentials: 0    # 0 = 同一轮尝试所有凭据；设为 1 会禁用同请求换 Key
+    max-retry-interval: 30
+  cooldown:
+    disable-cooling: false      # true 会禁用 429/401 冷却
+    save-cooldown-status: false # 插件同步不覆盖持久化冷却文件
+```
+
+无 `Retry-After` 的 429 冷却从 1s 开始倍增，上限 30m；401/402/403 为 30m；404 为 12h。
+一次客户端请求在失败转移时会在插件请求日志里留下两条“上游尝试”（失败 + 成功），客户端只看到
+最终状态。多 Key 且宿主没有传认证时，插件返回 503 `auth_not_selected`，不会使用第一把 Key；
+单 Key 部署保留唯一 Key 的兜底。
+
 ---
 
 ## 5. 卸载与零残留设计
@@ -209,7 +241,8 @@ plugins:
    bash scripts/uninstall.sh
    ```
 2. 从 `config.yaml` 的 `plugins.configs` 列表中移除 `cpa-opencodego` 及其三个从属协议面配置块。
-3. 重启 CPA 宿主即可彻底恢复纯净状态。
+3. 重启 CPA 宿主即可恢复纯净状态；插件 `Shutdown` 会删除 auth 目录里的标记文件，
+   `scripts/uninstall.sh` 也会按标记兜底清理（含 v1.8–v1.11 的旧标记）。
 
 ---
 

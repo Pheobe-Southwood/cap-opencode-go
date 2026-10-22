@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/abi"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/config"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
 )
@@ -132,5 +133,37 @@ func TestRewriteModelField(t *testing.T) {
 	geminiBody := []byte(`{"contents":[{"parts":[{"text":"hi"}]}]}`)
 	if got := rewriteModelField(geminiBody, "grok", "grok-4.7"); string(got) != string(geminiBody) {
 		t.Errorf("a body without a model field should be untouched, got %s", got)
+	}
+}
+
+// The plugin must not choose among several configured keys: CPA's AuthManager
+// selects one and passes it in Call.Credential. Only a single-key deployment may
+// fall back to its only key.
+func TestResolveCredentialRequiresHostSelectionForMultipleKeys(t *testing.T) {
+	client := New(config.Default())
+	settings := config.Default()
+
+	if _, err := client.resolveCredential(Call{}, settings); err == nil || abi.Status(err) != http.StatusUnauthorized {
+		t.Fatalf("no keys: err = %v, want 401", err)
+	}
+
+	settings.Keys = []config.Key{{Name: "only", Key: "sk-only"}}
+	credential, err := client.resolveCredential(Call{}, settings)
+	if err != nil || credential.Name != "only" || credential.Key != "sk-only" {
+		t.Fatalf("single key: credential = %+v, err = %v", credential, err)
+	}
+
+	settings.Keys = []config.Key{
+		{Name: "main", Key: "sk-main", Priority: 10},
+		{Name: "backup", Key: "sk-backup", Priority: 1},
+	}
+	if _, err = client.resolveCredential(Call{}, settings); err == nil || abi.Status(err) != http.StatusServiceUnavailable {
+		t.Fatalf("multiple keys without a host auth: err = %v, want 503", err)
+	}
+
+	hostSelected := config.Key{Name: "backup", Key: "sk-backup"}
+	credential, err = client.resolveCredential(Call{Credential: hostSelected}, settings)
+	if err != nil || credential.Key != "sk-backup" {
+		t.Fatalf("host credential: credential = %+v, err = %v", credential, err)
 	}
 }

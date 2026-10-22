@@ -26,7 +26,7 @@ func configFields(role roles.Role) []pluginapi.ConfigField {
 		{Name: "developer-role", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"retry-only", "rewrite", "keep"}, Description: "OpenAI 形状请求里 developer 角色的处理：retry-only（默认，被上游 400 拒绝时改写并重试）、rewrite（主动改写为 system）或 keep（原样透传不重试）。"},
 		{Name: "reasoning-replay", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"retry-only", "auto", "always", "off"}, Description: "思考模式 reasoning_content 回放：retry-only（默认，被 400 拒绝时补齐占位符并重试，并记住会话 sticky）、auto（仅思考请求提前补齐）、always（所有 chat 提前补齐）或 off（原样透传）。"},
 		{Name: "request-log", Type: pluginapi.ConfigFieldTypeBoolean, Description: "是否记录逐条请求日志（时间、token、TTFT、生成/端到端 TPS、状态）；默认开启，每面保留 2000 条 / 7 天。"},
-		{Name: "keys", Type: pluginapi.ConfigFieldTypeArray, Description: "多账号 Key 列表：[{name, key, priority, enabled}]，路由选择与容灾交由 CPA 宿主调度。"},
+		{Name: "keys", Type: pluginapi.ConfigFieldTypeArray, Description: "Key 列表：[{name, key, priority, enabled}]。插件会把它们投影成 CPA 认证文件（每个协议面一个），由 CPA AuthManager 按 priority 与宿主 routing 策略选择、轮询、冷却并自动故障转移。"},
 		{Name: "models", Type: pluginapi.ConfigFieldTypeObject, Description: "逐模型设置：{\"<model-id>\": {enabled, proxy, family, aliases}}，proxy 取 inherit/proxy/direct。aliases 会替代原名对外提供（多个别名 = 同一模型的多个对外名）。"},
 		{Name: "models-default", Type: pluginapi.ConfigFieldTypeObject, Description: "未单独列出的模型使用的默认设置。"},
 		{Name: "default-proxy", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"inherit", "proxy", "direct"}, Description: "模型未指定代理时的默认策略。"},

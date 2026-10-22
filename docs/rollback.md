@@ -2,8 +2,8 @@
 
 插件的设计前提是**零残留**：它不修改 CPA 源码，不改动任何内置 provider 组
 （`openai-compatibility` / `gemini` / `codex` …），也不写 CPA 自己的数据库。
-v1.8–v1.11 它曾**投影**认证文件（每个 Key 一个，见 §10），v1.12 已移除该功能，
-现在插件完全不碰 auth 目录。它落盘的东西只有下面这些。
+v1.8–v1.11 它曾**投影**认证文件，v1.12 移除了该功能，v2.0.3 为恢复 CPA 原生 Key 调度
+重新投影（见 §11）。插件卸载/停服时会删除带标记的认证文件。
 
 ## 1. 插件拥有的文件
 
@@ -13,7 +13,7 @@ v1.8–v1.11 它曾**投影**认证文件（每个 Key 一个，见 §10），v1
 | 配置块 | `config.yaml` 的 `plugins.configs.cpa-opencodego*` | 操作者手动删除（脚本会打印清单） |
 | 数据目录 | `<root>/data/cpa-opencodego/`（`shared.json`、`stats-<role>.json`、`requests-<role>.jsonl`、可选的 `replay-tracker-import.json` / `migrated-from-v1.json` / `debug.log`） | `scripts/uninstall.sh` |
 | v1 数据目录（升级遗留） | `<root>/data/cap-opencode-go/`（升级时只复制、不删除，保留用于回滚） | `scripts/uninstall.sh` |
-| 历史投影账号（v1.8–v1.11） | `<auth-dir>/opencode-go-<key 名>.json`（带 `managed_by: cpa-opencodego`） | v1.12 不再生成；`scripts/uninstall.sh` 按标记兜底清理 |
+| 投影账号（v2.0.3） | `<auth-dir>/opencode-go-<slug>.json` 及 `--responses` / `--messages` / `--gemini`（每 Key 4 个，带 `managed_by: cpa-opencodego`，0600） | 插件 `Shutdown` 自动删除；`scripts/uninstall.sh` 按标记兜底（含旧标记 `cap-opencode-go`） |
 
 `<root>` 默认 `/root/cliproxyapi`，可用 `CPA_ROOT` 覆盖。
 
@@ -79,7 +79,7 @@ ls /root/cliproxyapi/data/cpa-opencodego 2>/dev/null || echo "无残留"
 | `GET /v0/resource/plugins/cpa-opencodego/dashboard` | 404 |
 | `<root>/data/cpa-opencodego/` | 不存在 |
 | `<root>/plugins/linux/amd64/*.so` | 0 个 |
-| `<root>/auth` 目录 | 0 个文件（v1.12 起插件不写 auth 目录；历史投影文件见 §10） |
+| `<root>/auth` 目录 | 0 个插件文件（`Shutdown`/`uninstall.sh` 已按标记清理；其它 provider 的认证文件保留） |
 
 ## 6. v1.2.0 之后仍然零残留
 
@@ -165,35 +165,45 @@ v1.7 回放工具只在停服时读 `token-usage-tracker.db`，不修改该库�
 1.7.8 的价目/模型核对提醒只新增 `/api/stats` 字段和页面元素，不改 stats 文件、不新增状态文件；
 回滚到 1.7.3 / 1.7.1 时这些字段会被旧页面忽略，提醒消失，统计数字不变。
 
-## 11. v1.12 起不再写认证文件（历史投影由 uninstall.sh 兜底）
+## 11. v2.0.3 恢复认证文件投影（Key 调度交回 CPA）
 
-v1.8–v1.11 为了把 Key 显示在 CPA 自带的「配额管理 → Plugin」里，会往宿主的 auth 目录写
-`opencode-go-<key 名>.json`（v1.11 起每 Key 1 个 chat 面文件）。v1.12 已整体移除该功能：
-插件不再创建、改写或删除任何 auth 文件，也不再声明宿主配额 Provider。
+v1.8 曾把每个 Key 投影成宿主认证文件，并用 `TargetKind: "provider"` 让 CPA 的 `AuthManager`
+选择 Key、轮询、冷却和故障转移。v1.10.2 为了减少「认证文件」页每 Key 4 行的噪音改成
+`TargetKind: "self"`，绕开了 `AuthManager`；v1.12 又移除了投影和 `quota_provider`。结果是
+插件只剩“配置里第一把 Key”，多 Key 故障转移实际失效（v2.0.2 的 429 事故）。
 
-| 位置 | v1.12.0 之后 |
+v2.0.3 恢复 **provider 路由 + 4 文件/Key 投影**，但不恢复 `quota_provider`：额度仍看插件
+仪表盘，CPA 认证文件页只用于调度/冷却状态。
+
+| 位置 | v2.0.3 |
 |---|---|
-| `plugins/linux/amd64/*.so` | 只有插件库（当前版本；重启会清理旧版本） |
-| `data/cpa-opencodego/` | 与 v1.6 / v1.7 相同 |
-| `<auth-dir>/opencode-go-*.json` | **不再生成**；从旧版本升级时手动删一次，`uninstall.sh` 也会按 `managed_by` 标记兜底 |
-| `config.yaml` | 不再有 `register-accounts`（旧配置里残留该行会被宽松 YAML 忽略） |
+| `plugins/linux/amd64/*.so` | 四个同版本插件库 |
+| `data/cpa-opencodego/` | `shared.json`、`stats-<role>.json`、`requests-<role>.jsonl`、可选 `debug.log` |
+| `<auth-dir>/opencode-go-*.json` | **每 Key 4 个**（chat/responses/messages/gemini），带 `managed_by: cpa-opencodego`，0600；插件卸载/停服自动删除，`uninstall.sh` 按标记兜底 |
+| `config.yaml` | 仍没有 `register-accounts`（投影始终开启；旧行被宽松 YAML 忽略） |
 | 浏览器 | 与 v1.4 相同，默认不存任何东西 |
 
-从 v1.8–v1.11 升级到 v1.12：热重载完成后删一次历史文件即可（1.11 只留 1 个 chat 面文件，
-更早版本是 4 个协议面文件）：
+升级：
+
+- 从 v2.0.2 / v1.12 升级：新插件启动后自动写 8 个文件（2 Key），宿主 watcher 加载；无需手工操作。
+- 从 v1.8–v1.11 升级：旧文件带 `cap-opencode-go` 标记，仍被视为本插件所有；chat 文件原地更新，
+  另外三个协议面文件新建；不再使用的旧协议面文件会被清理。
+- 同名但无本插件标记的文件不会被覆盖/删除，仪表盘 `accounts.skipped` 会提示，需操作者改名或删除。
+
+回滚：
 
 ```bash
+# 回滚到 v2.0.2 / v1.12（不再投影或只投影 chat）：
+# 旧插件不认这些文件，但 CPA「认证文件」页会残留，先删标记文件。
 rm -f "${HOME}/.cli-proxy-api"/opencode-go-*.json   # auth-dir 若改过，用实际路径
-# 或只做标记清理：CPA_AUTH_DIR=… bash scripts/uninstall.sh
+
+# 回滚到 v1.8–v1.11：
+# 旧版会重新投影（1.11 = 1 个 chat 文件，v1.8–v1.10 = 4 个协议面文件），这是旧版正常行为；
+# 再升级回 v2.0.3 后按上面的命令清理一次旧标记文件即可。
 ```
 
-**回滚到 v1.11 或更早会重新出现这些文件**：旧版本仍会投影（1.11 = 1 个 chat 面文件，
-v1.8–v1.10 = 4 个协议面文件）。这是旧版本的正常行为；再升级回 v1.12 后按上面命令再删一次。
-
-v1.12 的卸载流程因此更简单：`Shutdown` 只 flush 统计文件，auth 目录不再需要任何清理；
-`scripts/uninstall.sh` 仍会扫描 `${CPA_AUTH_DIR:-}`、`<root>/auth`、`~/.cli-proxy-api` 并删除
-带 `managed_by: cpa-opencodego` 标记的历史文件，其它 provider 的认证文件与操作者自己放的同名
-文件不会被碰。
+`scripts/uninstall.sh` 的标记扫描同时接受 `cpa-opencodego` 与 `cap-opencode-go`，其它 provider
+的认证文件与操作者自己放的同名文件不会被碰。
 
 ## 12. 常见疑问
 

@@ -7,7 +7,7 @@
 # are owned by the host configuration.
 set -euo pipefail
 
-VERSION="${1:-2.0.2}"
+VERSION="${1:-2.0.3}"
 ROOT="${CPA_ROOT:-/root/cliproxyapi}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"

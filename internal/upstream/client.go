@@ -169,13 +169,17 @@ func (c *Client) resolveCredential(call Call, settings config.Settings) (config.
 		return config.Key{}, abi.StatusErrorf(http.StatusUnauthorized, "no_api_key",
 			"OpenCode Go 没有可用的 API Key，请在插件页面的 Key 池中添加")
 	}
-	best := enabled[0]
-	for _, k := range enabled[1:] {
-		if k.Priority > best.Priority {
-			best = k
-		}
+	if len(enabled) == 1 {
+		// A single-key deployment works without a host auth record. This is not
+		// key selection: there is only one possible key.
+		return enabled[0], nil
 	}
-	return best, nil
+	// Multiple keys are selected by CPA's AuthManager through the projected auth
+	// files. Picking the first configured key here was the v1.10-v2.0.2
+	// failover bug, so refuse instead of silently routing to a single account.
+	return config.Key{}, abi.StatusErrorf(http.StatusServiceUnavailable, "auth_not_selected",
+		"CPA 没有为本请求选择认证文件；多 Key 配置必须由 CPA 的 AuthManager 调度，"+
+			"请确认认证文件已投影且宿主路由/重试配置允许切换 Key")
 }
 
 func containsString(slice []string, val string) bool {

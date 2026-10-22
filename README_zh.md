@@ -28,7 +28,7 @@ OpenCode Go 聚合了大量顶级大语言模型（DeepSeek V4.1、Claude Haiku 
 本插件为 CLIProxyAPI (CPA) 带来了开箱即用的完整整合方案：
 - **四大协议族全覆盖**：统一接入 `chat/completions`、`responses`、`messages` 与 `generateContent` 四大端点，客户端用任意协议都能无缝调用所有模型。
 - **逐模型独立代理通道**：每个模型均可独立设定为「走代理」、「直连」或「继承全局」，完美应对不同地区路由策略。
-- **原生内嵌控制台**：在 CPA 管理中心拥有独立可视化操作面板，多 Key 池加权调度、实时上游额度监控、吞吐速率及首字延迟统计一目了然。
+- **原生内嵌控制台**：在 CPA 管理中心拥有独立可视化操作面板，多 Key 认证池由 CPA AuthManager 调度，实时上游额度监控、吞吐速率及首字延迟统计一目了然。
 - **纯净安全零残留**：纯动态库架构，不入侵 CPA 源码，不污染数据库，卸载后无残留。
 
 ---
@@ -52,12 +52,12 @@ OpenCode Go 聚合了大量顶级大语言模型（DeepSeek V4.1、Claude Haiku 
 
 ### 2. 多账号 Key 池与实时多窗口额度追踪
 
-> **核心亮点**：直观掌握上游 5 小时、本周与本月多维度配额余量，支持多 Key 优先级调度。
+> **核心亮点**：直观掌握上游 5 小时、本周与本月多维度配额余量，支持多 Key 优先级调度（由 CPA AuthManager 执行）。
 
 ![多 Key 池与实时额度看板](docs/screenshots/desktop-accounts.png)
 
 - **多窗口配额可视化**：直接从 OpenCode Go 上游 `/usage` 接口拉取真实额度，同时呈现 5 小时滚动、周额度、月额度剩余百分比与刷新倒计时。
-- **优先级加权调度**：支持配置多个 Key，按照优先级降序调度与故障转移，主备切换平滑无感。
+- **CPA 原生优先级调度**：支持配置多个 Key；插件把每个 Key 投影成 4 个 CPA 认证文件（chat/responses/messages/gemini），由 CPA `AuthManager` 按 `priority` 与宿主 `routing` 策略选择、轮询、429 冷却并故障转移。插件自身不实现 Key 轮询，主备切换平滑无感（CPA「认证文件」页会显示 4 行/Key）。
 - **即时就地改名**：直接在界面中点击 Key 名称即可修改，配置自动热重载，无需重启服务。
 
 ---
@@ -91,7 +91,7 @@ OpenCode Go 聚合了大量顶级大语言模型（DeepSeek V4.1、Claude Haiku 
 
 ---
 
-> **v2.0.2**：两处 400 兼容修复（developer 角色、思考模式 reasoning 回放）改为默认 `retry-only` 懒修复，会话 sticky 记忆；新增流截断诊断。升级前请阅读 [v2 升级指南](docs/UPGRADE-v2.md)。
+> **v2.0.3**：恢复 CPA 原生 Key 调度（`TargetKind: provider` + 每 Key 4 个认证文件投影），修复某个 Key 额度用尽后不切换、客户端持续 429/报错的问题；不恢复宿主 `quota_provider`，余量仍看插件看板。升级前请阅读 [回滚手册](docs/rollback.md)。
 
 ## 快速使用
 
@@ -107,11 +107,11 @@ npx cpa-opencodego install --dir /path/to/CLIProxyAPI
 
 **方式 B：手动复制**
 
-从 [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases) 下载 `cpa-opencodego-bundle_2.0.2_<goos>_<goarch>.zip`，解压后把 4 个库复制到 CPA 插件目录（通常为 `plugins/linux/amd64/`）：
-- `cpa-opencodego-v2.0.2.so`
-- `cpa-opencodego-responses-v2.0.2.so`
-- `cpa-opencodego-messages-v2.0.2.so`
-- `cpa-opencodego-gemini-v2.0.2.so`
+从 [GitHub Releases](https://github.com/Pheobe-Southwood/cpa-opencodego/releases) 下载 `cpa-opencodego-bundle_2.0.3_<goos>_<goarch>.zip`，解压后把 4 个库复制到 CPA 插件目录（通常为 `plugins/linux/amd64/`）：
+- `cpa-opencodego-v2.0.3.so`
+- `cpa-opencodego-responses-v2.0.3.so`
+- `cpa-opencodego-messages-v2.0.3.so`
+- `cpa-opencodego-gemini-v2.0.3.so`
 
 ### 第二步：添加宿主配置
 

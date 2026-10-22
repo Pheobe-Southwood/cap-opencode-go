@@ -42,6 +42,14 @@ type Runtime struct {
 	settings  atomic.Pointer[config.Settings]
 	resolver  atomic.Pointer[catalog.Resolver]
 	hostProxy atomic.Pointer[string]
+	// hostAuth is the host auth directory learned from the model registration
+	// summary; only the main face writes into it.
+	hostAuth atomic.Pointer[string]
+
+	// accounts is the background projection of the configured keys onto host
+	// auth files. It is a separate struct so the sync goroutine never takes
+	// Runtime.mu.
+	accounts accountSyncState
 
 	buildVersion string
 	debugMode    atomic.Bool
@@ -135,6 +143,7 @@ func (r *Runtime) Dispatch(method string, request []byte) []byte {
 	case pluginabi.MethodPluginShutdown:
 		return r.handleShutdown()
 	case pluginabi.MethodPluginQuiesce:
+		r.markQuiesced()
 		return okEmpty()
 	case pluginabi.MethodExecutorIdentifier:
 		return okJSON(identifierResponse{Identifier: r.role.Provider})
@@ -251,6 +260,13 @@ func (r *Runtime) handleRegister(method string, request []byte) []byte {
 	}
 
 	r.applySettings(settings)
+	if r.role.Name == roles.Chat {
+		// A reconfigure can change the key list, so re-project the accounts.
+		// The sync runs in the background: register must not touch the auth
+		// directory while the host is still assembling its runtime state.
+		r.resetAccountSyncState()
+		r.syncAccountsAsync()
+	}
 	_ = method
 	return r.registrationPayload()
 }
@@ -302,10 +318,12 @@ func (r *Runtime) handleShutdown() []byte {
 	return okEmpty()
 }
 
-// Shutdown flushes the statistics store and closes the request log when the
-// host unloads the plugin. The plugin owns no host-side files any more (the
-// v1.8-v1.11 auth projection was removed in v1.12), so this is purely local.
+// Shutdown flushes the statistics store, closes the request log, and removes
+// the auth files the main face projected. A hot replacement is announced with
+// plugin.quiesce first, in which case the successor owns the files and the
+// purge is skipped.
 func (r *Runtime) Shutdown() {
+	r.closeAndPurge()
 	r.statsMu.Lock()
 	store := r.stats
 	r.statsMu.Unlock()
@@ -395,19 +413,8 @@ func (r *Runtime) hostProxyURL() string {
 	return ""
 }
 
-// rememberHostSummary records the host configuration the plugin needs: the
-// upstream proxy for inherited-proxy models. It reports whether the proxy value
-// changed.
-func (r *Runtime) rememberHostSummary(summary pluginapi.HostConfigSummary) (proxyChanged bool) {
-	proxy := strings.TrimSpace(summary.ProxyURL)
-	if current := r.hostProxy.Load(); current == nil || *current != proxy {
-		value := proxy
-		r.hostProxy.Store(&value)
-		proxyChanged = true
-	}
-	return proxyChanged
-}
-
+// models returns the catalogue entries this protocol face serves, in the shape
+// the host registers them.
 func (r *Runtime) models() []pluginapi.ModelInfo {
 	resolver := r.Resolver()
 	entries := resolver.EntriesForFamily(r.role.Name)
@@ -442,6 +449,9 @@ func (r *Runtime) handleStaticModels(request []byte) []byte {
 				// inherited proxy models stop going out direct.
 				r.applySettings(r.Settings())
 			}
+			// The host publishes its auth directory in this summary, so this is
+			// where the account projection can start.
+			r.syncAccountsAsync()
 		}
 	}
 	raw, errMarshal := abi.OK(pluginapi.ModelResponse{
@@ -472,7 +482,8 @@ func (r *Runtime) handleModelRoute(request []byte) []byte {
 	}
 	raw, errMarshal := abi.OK(modelRouteResponse{
 		Handled:    true,
-		TargetKind: "self",
+		TargetKind: "provider",
+		Target:     r.role.Provider,
 		Reason:     "opencode-go/" + string(r.role.Name),
 	})
 	if errMarshal != nil {

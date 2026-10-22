@@ -7,6 +7,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
+	"github.com/Pheobe-Southwood/cpa-opencodego/internal/accounts"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/models"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/pricing"
 	"github.com/Pheobe-Southwood/cpa-opencodego/internal/roles"
@@ -178,14 +179,18 @@ func (r *Runtime) usageSample(record pluginapi.UsageRecord) (stats.UsageSample, 
 	}, true
 }
 
-// resolveKeyName maps the host's auth id (or any label carrying the key name)
-// back to a configured key. With the plugin's own router the host usually
-// reports no auth id at all; the stats store then falls back to the single
-// configured key.
+// resolveKeyName maps the host's auth id (the projected auth file name) back to
+// the configured key, so per-key statistics stay correct when CPA schedules more
+// than one key. The name fallback covers hosts that report a label instead of a
+// file id.
 func (r *Runtime) resolveKeyName(authID string) string {
 	authID = strings.TrimSpace(authID)
 	if authID == "" {
 		return ""
+	}
+	planned := accounts.Plan(r.Settings().Keys)
+	if name, _, ok := accounts.KeyNameFromAuthID(authID, planned); ok {
+		return name
 	}
 	for _, k := range r.Settings().Keys {
 		if k.Name != "" && (authID == k.Name || strings.Contains(authID, k.Name)) {

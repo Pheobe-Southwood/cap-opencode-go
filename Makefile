@@ -5,7 +5,7 @@
 # translation and the plugin only forwards bytes.
 
 MODULE      := github.com/Pheobe-Southwood/cpa-opencodego
-VERSION     ?= 2.0.2
+VERSION     ?= 2.0.3
 GO          ?= go
 DIST        := dist
 GOFLAGS_EXTRA ?=
